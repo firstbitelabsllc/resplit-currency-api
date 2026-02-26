@@ -18,8 +18,8 @@ GitHub Actions (daily cron @ 00:00 UTC)
 
 ## Cloudflare Setup
 
-- **Account**: leojkwan@gmail.com
-- **Account ID**: `baa939aaed53db50cb4692ec045c9d7a`
+- **Account**: (see 1Password / team admin)
+- **Account ID**: (see .env.local or GitHub secrets)
 - **Pages Project**: `resplit-currency-api`
 - **Production URL**: https://resplit-currency-api.pages.dev
 - **Wrangler CLI**: authenticated via `npx wrangler login` (OAuth stored at `~/.wrangler/config/default.toml`)
@@ -28,7 +28,7 @@ GitHub Actions (daily cron @ 00:00 UTC)
 
 | Secret | Status | Notes |
 |--------|--------|-------|
-| `CLOUDFLARE_ACCOUNT_ID` | Set | `baa939aaed53db50cb4692ec045c9d7a` |
+| `CLOUDFLARE_ACCOUNT_ID` | Set | (see .env.local or GitHub secrets) |
 | `CLOUDFLARE_API_TOKEN` | **PENDING** | Create at dash.cloudflare.com/profile/api-tokens using "Edit Cloudflare Workers" template |
 | `GITHUB_TOKEN` | Auto | Provided by GitHub Actions |
 

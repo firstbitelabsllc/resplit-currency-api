@@ -92,7 +92,7 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 
 **Fix**:
 1. Go to dash.cloudflare.com → Profile → API Tokens
-2. Create new token (use "Edit Cloudflare Workers" template, select `leojkwan` account)
+2. Create new token (use "Edit Cloudflare Workers" template, select the team account)
 3. Update the GitHub secret:
    ```bash
    gh secret set CLOUDFLARE_API_TOKEN --repo firstbitelabsllc/resplit-currency-api --body "NEW_TOKEN_HERE"
