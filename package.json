@@ -1,12 +1,8 @@
 {
-  "name": "currency-api",
+  "name": "resplit-currency-api",
   "version": "1.0.0",
+  "private": true,
   "dependencies": {
-    "fs-extra": "^11.2.0",
-    "playwright": "^1.49.1",
-    "semver": "^7.6.0"
-  },
-  "devDependencies": {
-    "wrangler": "^3.30.1"
+    "fs-extra": "^11.2.0"
   }
 }
