@@ -61,18 +61,6 @@ async function fetchRates() {
     console.error('Primary source (open.er-api.com) failed:', e.message)
   }
 
-  // Fallback: Frankfurter (ECB, ~30 currencies)
-  try {
-    const res = await fetch('https://api.frankfurter.dev/latest?from=EUR')
-    const data = await res.json()
-    if (data.rates) {
-      const combined = { EUR: 1, ...data.rates }
-      return toLowerSorted(combined)
-    }
-  } catch (e) {
-    console.error('Fallback source (frankfurter.dev) failed:', e.message)
-  }
-
   return null
 }
 

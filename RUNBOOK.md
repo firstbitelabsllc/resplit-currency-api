@@ -34,7 +34,7 @@ gh run view <RUN_ID> --repo firstbitelabsllc/resplit-currency-api --log-failed
 **Common causes**:
 | Cause | Fix |
 |-------|-----|
-| `open.er-api.com` is down | Pipeline auto-retries once. If both fail, Frankfurter fallback kicks in (~30 currencies). If both sources are down, wait and re-trigger manually. |
+| `open.er-api.com` is down | Pipeline auto-retries once. If still failing, wait and re-trigger manually. Consider adding a backup source (see "Upstream data source dies" below). |
 | `npm ci` fails | Check `package-lock.json` integrity, run `npm ci` locally to reproduce. |
 | Cloudflare deploy fails | Check `CLOUDFLARE_API_TOKEN` hasn't expired/been revoked. Verify at dash.cloudflare.com/profile/api-tokens. |
 | GitHub Pages deploy fails | Check repo settings — Pages must be enabled, source set to `gh-pages` branch. |
