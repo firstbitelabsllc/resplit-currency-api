@@ -2,13 +2,13 @@ const fs = require('fs-extra')
 const path = require('path')
 
 const indent = '\t'
-const dateToday = new Date().toISOString().substring(0, 10)
 const apiVersion = 1
 const rootDir = path.join(__dirname, 'package', `v${apiVersion}`)
 
 main()
 
 async function main() {
+  const dateToday = new Date().toISOString().substring(0, 10)
   const rates = await fetchRates()
   if (!rates || Object.keys(rates).length === 0) {
     throw new Error('Failed to fetch currency rates from any source')
@@ -52,7 +52,10 @@ async function main() {
 async function fetchRates() {
   // Primary: open.er-api.com — free, ~160 fiat currencies, no API key
   try {
-    const res = await fetch('https://open.er-api.com/v6/latest/EUR')
+    const res = await fetch('https://open.er-api.com/v6/latest/EUR', { signal: AbortSignal.timeout(30_000) })
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+    }
     const data = await res.json()
     if (data.result === 'success' && data.rates) {
       return toLowerSorted(data.rates)
@@ -73,6 +76,7 @@ function toLowerSorted(obj) {
 }
 
 function significantNum(num) {
+  if (!Number.isFinite(num) || num <= 0) return 0
   const minDigits = 8
   if (num >= 0.1) return parseFloat(num.toFixed(minDigits))
   const str = num.toFixed(100)
