@@ -1,0 +1,13 @@
+{
+	"generatedAt": "2026-02-27T16:05:12.274Z",
+	"latestDate": "2026-02-27",
+	"currencyCount": 166,
+	"historyDays": 7,
+	"snapshotRetentionDays": 14,
+	"availableSnapshotDates": [
+		"2026-02-27"
+	],
+	"availableHistoryDates": [
+		"2026-02-27"
+	]
+}
