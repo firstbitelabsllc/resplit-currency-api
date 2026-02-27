@@ -4,15 +4,14 @@
 
 ```bash
 # Is the API serving data?
-curl -s https://resplit-currency-api.pages.dev/v1/currencies/aed.json | head -c 100
 curl -s https://resplit-currency-api.pages.dev/v2/latest/aed.json | head -c 100
 curl -s https://resplit-currency-api.pages.dev/v2/history/7d/aed.json | head -c 100
 
 # Is today's historical snapshot deployed?
-curl -s https://$(date -u +%Y-%m-%d).resplit-currency-api.pages.dev/v1/currencies/aed.json | head -c 100
+curl -s https://$(date -u +%Y-%m-%d).resplit-currency-api.pages.dev/v2/snapshots/base-rates.json | head -c 100
 
-# Is the GitHub Pages fallback alive?
-curl -s https://firstbitelabsllc.github.io/resplit-currency-api/v1/currencies/aed.json | head -c 100
+# Is the GitHub Pages fallback alive (v2)?
+curl -s https://firstbitelabsllc.github.io/resplit-currency-api/v2/latest/aed.json | head -c 100
 
 # Last workflow run status
 gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5
@@ -53,7 +52,7 @@ gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api
 **Triage**:
 ```bash
 # Check what date the API is serving
-curl -s https://resplit-currency-api.pages.dev/v1/currencies/usd.json | python3 -c "import json,sys; print(json.load(sys.stdin)['date'])"
+curl -s https://resplit-currency-api.pages.dev/v2/latest/usd.json | python3 -c "import json,sys; print(json.load(sys.stdin)['date'])"
 
 # Check if cron is actually running
 gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
@@ -70,13 +69,13 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 **Symptoms**: Conversion workbench can't fetch rates for a currency pair.
 
 **Triage**:
-1. Check if the API returns data for that currency:
+1. Check if the API returns latest data for that currency:
    ```bash
-   curl -s https://resplit-currency-api.pages.dev/v1/currencies/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('usd' in d.get('aed',{}))"
+   curl -s https://resplit-currency-api.pages.dev/v2/latest/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('from') == 'aed' and 'usd' in d.get('rates',{}))"
    ```
-2. Check if the historical date exists:
+2. Check if the historical date snapshot exists:
    ```bash
-   curl -sI https://2026-01-15.resplit-currency-api.pages.dev/v1/currencies/aed.json | head -1
+   curl -sI https://2026-01-15.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json | head -1
    ```
 3. If 404 — that date was before the pipeline started. Historical data only exists from the first run onward.
 4. Validate v2 fast-path artifacts:
@@ -133,7 +132,6 @@ Add to `.github/workflows/run.yml` after the deploy steps:
 
 ### Uptime ping (free)
 Set up UptimeRobot to check:
-- `https://resplit-currency-api.pages.dev/v1/currencies/usd.json`
 - `https://resplit-currency-api.pages.dev/v2/latest/usd.json`
 - `https://resplit-currency-api.pages.dev/v2/history/7d/usd.json`
 

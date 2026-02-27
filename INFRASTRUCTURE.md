@@ -38,10 +38,10 @@ GitHub Actions (daily cron @ 00:00 UTC)
 
 | Purpose | URL Pattern |
 |---------|-------------|
-| Historical (primary) | `https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/v1/currencies/{code}.json` |
 | Latest (v2) | `https://resplit-currency-api.pages.dev/v2/latest/{code}.json` |
 | 7-day history (v2) | `https://resplit-currency-api.pages.dev/v2/history/7d/{code}.json` |
-| Fallback | `https://firstbitelabsllc.github.io/resplit-currency-api/v1/currencies/{code}.json` |
+| Dated snapshot (v2) | `https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json` |
+| Fallback | `https://firstbitelabsllc.github.io/resplit-currency-api/v2/latest/{code}.json` |
 
 ### Deployments Per Run
 

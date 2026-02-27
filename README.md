@@ -8,21 +8,11 @@ Forked from [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-a
 
 1. GitHub Actions runs daily at midnight UTC
 2. Fetches latest rates from [open.er-api.com](https://open.er-api.com) (free, no API key)
-3. Generates v1 compatibility files plus v2 latest/history artifacts
+3. Generates v2 latest/history artifacts
 4. Deploys to Cloudflare Pages (branch-per-day for historical access)
 5. Deploys to GitHub Pages as fallback
 
 ## URL structure
-
-**v1 latest (compatibility):**
-```
-https://resplit-currency-api.pages.dev/v1/currencies/{code}.json
-```
-
-**v1 historical (dated branch):**
-```
-https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/v1/currencies/{code}.json
-```
 
 **v2 latest (one file per base currency):**
 ```
@@ -40,15 +30,15 @@ https://resplit-currency-api.pages.dev/v2/meta.json
 https://resplit-currency-api.pages.dev/v2/snapshots/base-rates.json
 ```
 
-**GitHub Pages fallback:**
+**GitHub Pages fallback (v2):**
 ```
-https://firstbitelabsllc.github.io/resplit-currency-api/v1/currencies/{code}.json
+https://firstbitelabsllc.github.io/resplit-currency-api/v2/latest/{code}.json
 ```
 
 ## Examples
 
 ```
-GET https://resplit-currency-api.pages.dev/v1/currencies/aed.json
+GET https://resplit-currency-api.pages.dev/v2/latest/aed.json
 ```
 
 ```json

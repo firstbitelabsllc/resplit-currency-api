@@ -2,12 +2,10 @@ const fs = require('fs-extra')
 const path = require('path')
 
 const indent = '\t'
-const v1Version = 1
 const v2Version = 2
 const historyDays = 7
 const snapshotRetentionDays = 14
 const rootDir = path.join(__dirname, 'package')
-const v1RootDir = path.join(rootDir, `v${v1Version}`)
 const v2RootDir = path.join(rootDir, `v${v2Version}`)
 
 if (require.main === module) {
@@ -34,10 +32,9 @@ async function main() {
   const historySnapshots = snapshots.slice(-historyDays)
 
   fs.mkdirpSync(rootDir)
-  fs.emptyDirSync(v1RootDir)
+  fs.emptyDirSync(rootDir)
   fs.emptyDirSync(v2RootDir)
 
-  writeV1Artifacts({ root: v1RootDir, dateToday, latestRates })
   writeV2Artifacts({
     root: v2RootDir,
     dateToday,
@@ -47,10 +44,9 @@ async function main() {
   })
   writeRootPackageMetadata({ root: rootDir, dateToday })
 
-  fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(v1RootDir, 'country.json'))
   fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(v2RootDir, 'country.json'))
 
-  console.log(`Generated v1 + v2 files in ${rootDir}`)
+  console.log(`Generated v2 files in ${rootDir}`)
 }
 
 function writeRootPackageMetadata({ root, dateToday }) {
@@ -59,21 +55,6 @@ function writeRootPackageMetadata({ root, dateToday }) {
   pkg.version = semverDate
   fs.writeJsonSync(path.join(root, 'package.json'), pkg)
   fs.writeFileSync(path.join(root, 'index.js'), '')
-}
-
-function writeV1Artifacts({ root, dateToday, latestRates }) {
-  const currenciesDir = path.join(root, 'currencies')
-  fs.mkdirpSync(currenciesDir)
-
-  const currencyList = buildCurrencyList(latestRates)
-  fs.writeFileSync(path.join(root, 'currencies.json'), JSON.stringify(currencyList, null, indent))
-  fs.writeFileSync(path.join(root, 'currencies.min.json'), JSON.stringify(currencyList))
-
-  writeCrossRateFiles({
-    outputDir: currenciesDir,
-    fromRates: latestRates,
-    outputShape: (fromCode, ratesByTo) => ({ date: dateToday, [fromCode]: ratesByTo })
-  })
 }
 
 function writeV2Artifacts({
@@ -179,9 +160,7 @@ async function fetchHistoricalSnapshot(date) {
   // Primary: reuse yesterday snapshots from our own dated branch output.
   const candidates = [
     `https://${date}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.min.json`,
-    `https://${date}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json`,
-    `https://${date}.resplit-currency-api.pages.dev/v1/currencies/eur.min.json`,
-    `https://${date}.resplit-currency-api.pages.dev/v1/currencies/eur.json`
+    `https://${date}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json`
   ]
 
   for (const url of candidates) {

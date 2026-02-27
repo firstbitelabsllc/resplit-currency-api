@@ -10,22 +10,22 @@ main().catch((error) => {
 })
 
 async function main() {
-  const v1Latest = await fetchJSONWithRetry(`${cloudflareBase}/v1/currencies/usd.json`)
   const v2Latest = await fetchJSONWithRetry(`${cloudflareBase}/v2/latest/usd.json`)
   const v2History = await fetchJSONWithRetry(`${cloudflareBase}/v2/history/7d/usd.json`)
   const v2Meta = await fetchJSONWithRetry(`${cloudflareBase}/v2/meta.json`)
-  const datedV1 = await fetchJSONWithRetry(`https://${dateToday}.resplit-currency-api.pages.dev/v1/currencies/usd.json`)
-  const ghFallback = await fetchJSONWithRetry(`${fallbackBase}/v1/currencies/usd.json`)
+  const datedSnapshot = await fetchJSONWithRetry(
+    `https://${dateToday}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json`
+  )
+  const ghFallbackLatest = await fetchJSONWithRetry(`${fallbackBase}/v2/latest/usd.json`)
 
-  assertISODate(v1Latest.date, 'cloudflare v1 latest date')
   assertISODate(v2Latest.date, 'cloudflare v2 latest date')
   assertISODate(v2Meta.latestDate, 'cloudflare v2 meta latestDate')
-  assertISODate(datedV1.date, 'dated v1 date')
-  assertISODate(ghFallback.date, 'github fallback v1 date')
+  assertISODate(datedSnapshot.date, 'dated v2 snapshot date')
+  assertISODate(ghFallbackLatest.date, 'github fallback v2 latest date')
 
-  assertPositive(v1Latest?.usd?.usd, 'cloudflare v1 usd->usd')
   assertPositive(v2Latest?.rates?.usd, 'cloudflare v2 latest usd->usd')
-  assertPositive(ghFallback?.usd?.usd, 'github fallback usd->usd')
+  assertPositive(ghFallbackLatest?.rates?.usd, 'github fallback v2 latest usd->usd')
+  assertPositive(datedSnapshot?.rates?.usd, 'dated v2 snapshot usd base rate')
 
   if (!Array.isArray(v2History.points) || v2History.points.length < 1) {
     throw new Error('cloudflare v2 history has no points')
@@ -43,8 +43,8 @@ async function main() {
     throw new Error(`cloudflare v2 latest date (${v2Latest.date}) != v2 meta latestDate (${v2Meta.latestDate})`)
   }
 
-  if (datedV1.date !== dateToday) {
-    throw new Error(`dated deployment date mismatch: expected ${dateToday}, got ${datedV1.date}`)
+  if (datedSnapshot.date !== dateToday) {
+    throw new Error(`dated deployment date mismatch: expected ${dateToday}, got ${datedSnapshot.date}`)
   }
 
   console.log(
