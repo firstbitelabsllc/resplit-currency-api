@@ -5,6 +5,8 @@
 ```bash
 # Is the API serving data?
 curl -s https://resplit-currency-api.pages.dev/v1/currencies/aed.json | head -c 100
+curl -s https://resplit-currency-api.pages.dev/v2/latest/aed.json | head -c 100
+curl -s https://resplit-currency-api.pages.dev/v2/history/7d/aed.json | head -c 100
 
 # Is today's historical snapshot deployed?
 curl -s https://$(date -u +%Y-%m-%d).resplit-currency-api.pages.dev/v1/currencies/aed.json | head -c 100
@@ -77,6 +79,11 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
    curl -sI https://2026-01-15.resplit-currency-api.pages.dev/v1/currencies/aed.json | head -1
    ```
 3. If 404 — that date was before the pipeline started. Historical data only exists from the first run onward.
+4. Validate v2 fast-path artifacts:
+   ```bash
+   curl -s https://resplit-currency-api.pages.dev/v2/latest/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('from'), 'usd' in d.get('rates',{}))"
+   curl -s https://resplit-currency-api.pages.dev/v2/history/7d/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('points', len(d.get('points',[])))"
+   ```
 
 **Common causes**:
 | Cause | Fix |
@@ -125,7 +132,10 @@ Add to `.github/workflows/run.yml` after the deploy steps:
 ```
 
 ### Uptime ping (free)
-Set up UptimeRobot to check `https://resplit-currency-api.pages.dev/v1/currencies/usd.json` every 5 minutes.
+Set up UptimeRobot to check:
+- `https://resplit-currency-api.pages.dev/v1/currencies/usd.json`
+- `https://resplit-currency-api.pages.dev/v2/latest/usd.json`
+- `https://resplit-currency-api.pages.dev/v2/history/7d/usd.json`
 
 ## Architecture Recap
 
@@ -151,6 +161,8 @@ open.er-api.com ──► GitHub Actions (daily 00:00 UTC, ~40s)
 |------|---------|
 | `currscript.js` | Fetch rates, generate JSON files |
 | `.github/workflows/run.yml` | Daily cron, deploy to CDNs |
+| `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
+| `scripts/smoke-check-deploy.js` | Verifies deployed endpoints after publish |
 | `.env.local` | Local Cloudflare credentials (gitignored) |
 | `INFRASTRUCTURE.md` | Account IDs, URLs, secrets inventory |
 | `package.json` | Dependencies (just `fs-extra`) |

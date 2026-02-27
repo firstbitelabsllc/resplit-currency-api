@@ -8,20 +8,36 @@ Forked from [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-a
 
 1. GitHub Actions runs daily at midnight UTC
 2. Fetches latest rates from [open.er-api.com](https://open.er-api.com) (free, no API key)
-3. Generates one JSON file per base currency
+3. Generates v1 compatibility files plus v2 latest/history artifacts
 4. Deploys to Cloudflare Pages (branch-per-day for historical access)
 5. Deploys to GitHub Pages as fallback
 
 ## URL structure
 
-**Latest rates:**
+**v1 latest (compatibility):**
 ```
 https://resplit-currency-api.pages.dev/v1/currencies/{code}.json
 ```
 
-**Historical (by date):**
+**v1 historical (dated branch):**
 ```
 https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/v1/currencies/{code}.json
+```
+
+**v2 latest (one file per base currency):**
+```
+https://resplit-currency-api.pages.dev/v2/latest/{code}.json
+```
+
+**v2 history (7-day window, one file per base currency):**
+```
+https://resplit-currency-api.pages.dev/v2/history/7d/{code}.json
+```
+
+**v2 metadata and snapshot seed:**
+```
+https://resplit-currency-api.pages.dev/v2/meta.json
+https://resplit-currency-api.pages.dev/v2/snapshots/base-rates.json
 ```
 
 **GitHub Pages fallback:**
@@ -37,8 +53,9 @@ GET https://resplit-currency-api.pages.dev/v1/currencies/aed.json
 
 ```json
 {
-  "date": "2026-02-26",
-  "aed": {
+  "date": "2026-02-27",
+  "from": "aed",
+  "rates": {
     "usd": 0.27229408,
     "eur": 0.25165782,
     "myr": 1.17830000,
@@ -60,6 +77,8 @@ GET https://resplit-currency-api.pages.dev/v1/currencies/aed.json
 
 ```bash
 npm ci
-node currscript.js
-# Output in ./package/v1/currencies/
+npm run check
+# Generates package/, validates v1+v2 artifact integrity, and runs unit tests
 ```
+
+If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.

@@ -2,6 +2,13 @@
   "name": "resplit-currency-api",
   "version": "1.0.0",
   "private": true,
+  "scripts": {
+    "generate": "node currscript.js",
+    "validate": "node scripts/validate-package.js",
+    "test": "node --test tests/*.test.js",
+    "smoke:deploy": "node scripts/smoke-check-deploy.js",
+    "check": "npm run generate && npm run validate && npm run test"
+  },
   "dependencies": {
     "fs-extra": "^11.2.0"
   }

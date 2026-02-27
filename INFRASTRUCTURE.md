@@ -28,8 +28,8 @@ GitHub Actions (daily cron @ 00:00 UTC)
 
 | Secret | Status | Notes |
 |--------|--------|-------|
-| `CLOUDFLARE_ACCOUNT_ID` | Set | (see .env.local or GitHub secrets) |
-| `CLOUDFLARE_API_TOKEN` | **PENDING** | Create at dash.cloudflare.com/profile/api-tokens using "Edit Cloudflare Workers" template |
+| `CLOUDFLARE_ACCOUNT_ID` | Required | Verified by workflow before deploy |
+| `CLOUDFLARE_API_TOKEN` | Required | Verified by workflow before deploy |
 | `GITHUB_TOKEN` | Auto | Provided by GitHub Actions |
 
 ## URL Patterns
@@ -39,6 +39,8 @@ GitHub Actions (daily cron @ 00:00 UTC)
 | Purpose | URL Pattern |
 |---------|-------------|
 | Historical (primary) | `https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/v1/currencies/{code}.json` |
+| Latest (v2) | `https://resplit-currency-api.pages.dev/v2/latest/{code}.json` |
+| 7-day history (v2) | `https://resplit-currency-api.pages.dev/v2/history/7d/{code}.json` |
 | Fallback | `https://firstbitelabsllc.github.io/resplit-currency-api/v1/currencies/{code}.json` |
 
 ### Deployments Per Run
@@ -72,3 +74,6 @@ Each daily run deploys to 3 Cloudflare branches:
 - **Upstream sync**: `git fetch upstream && git merge upstream/main` (if fawazahmed0 adds improvements)
 - **Adding currencies**: Add to data source or supplement with additional API
 - **Token rotation**: Regenerate CLOUDFLARE_API_TOKEN periodically at dash.cloudflare.com/profile/api-tokens
+- **Local env template**: `.env.example` documents required local deploy vars
+- **Artifact quality gate**: `scripts/validate-package.js` blocks deploy if v1/v2 structure is invalid
+- **Post-deploy smoke check**: `scripts/smoke-check-deploy.js` verifies Cloudflare, dated branch, and GitHub fallback
