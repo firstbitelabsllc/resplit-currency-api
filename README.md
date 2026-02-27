@@ -8,37 +8,37 @@ Forked from [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-a
 
 1. GitHub Actions runs daily at midnight UTC
 2. Fetches latest rates from [open.er-api.com](https://open.er-api.com) (free, no API key)
-3. Generates v2 latest/history artifacts
+3. Generates latest/history artifacts
 4. Deploys to Cloudflare Pages (branch-per-day for historical access)
 5. Deploys to GitHub Pages as fallback
 
 ## URL structure
 
-**v2 latest (one file per base currency):**
+**latest (one file per base currency):**
 ```
-https://resplit-currency-api.pages.dev/v2/latest/{code}.json
-```
-
-**v2 history (7-day window, one file per base currency):**
-```
-https://resplit-currency-api.pages.dev/v2/history/7d/{code}.json
+https://resplit-currency-api.pages.dev/latest/{code}.json
 ```
 
-**v2 metadata and snapshot seed:**
+**history (7-day window, one file per base currency):**
 ```
-https://resplit-currency-api.pages.dev/v2/meta.json
-https://resplit-currency-api.pages.dev/v2/snapshots/base-rates.json
+https://resplit-currency-api.pages.dev/history/7d/{code}.json
 ```
 
-**GitHub Pages fallback (v2):**
+**metadata and snapshot seed:**
 ```
-https://firstbitelabsllc.github.io/resplit-currency-api/v2/latest/{code}.json
+https://resplit-currency-api.pages.dev/meta.json
+https://resplit-currency-api.pages.dev/snapshots/base-rates.json
+```
+
+**GitHub Pages fallback:**
+```
+https://firstbitelabsllc.github.io/resplit-currency-api/latest/{code}.json
 ```
 
 ## Examples
 
 ```
-GET https://resplit-currency-api.pages.dev/v2/latest/aed.json
+GET https://resplit-currency-api.pages.dev/latest/aed.json
 ```
 
 ```json
@@ -68,7 +68,7 @@ GET https://resplit-currency-api.pages.dev/v2/latest/aed.json
 ```bash
 npm ci
 npm run check
-# Generates package/, validates v1+v2 artifact integrity, and runs unit tests
+# Generates package/, validates unversioned artifact integrity, and runs unit tests
 ```
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.

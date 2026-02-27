@@ -2,11 +2,9 @@ const fs = require('fs-extra')
 const path = require('path')
 
 const indent = '\t'
-const v2Version = 2
 const historyDays = 7
 const snapshotRetentionDays = 14
 const rootDir = path.join(__dirname, 'package')
-const v2RootDir = path.join(rootDir, `v${v2Version}`)
 
 if (require.main === module) {
   main().catch((error) => {
@@ -33,10 +31,9 @@ async function main() {
 
   fs.mkdirpSync(rootDir)
   fs.emptyDirSync(rootDir)
-  fs.emptyDirSync(v2RootDir)
 
-  writeV2Artifacts({
-    root: v2RootDir,
+  writeArtifacts({
+    root: rootDir,
     dateToday,
     latestRates,
     snapshots,
@@ -44,9 +41,9 @@ async function main() {
   })
   writeRootPackageMetadata({ root: rootDir, dateToday })
 
-  fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(v2RootDir, 'country.json'))
+  fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(rootDir, 'country.json'))
 
-  console.log(`Generated v2 files in ${rootDir}`)
+  console.log(`Generated unversioned files in ${rootDir}`)
 }
 
 function writeRootPackageMetadata({ root, dateToday }) {
@@ -57,7 +54,7 @@ function writeRootPackageMetadata({ root, dateToday }) {
   fs.writeFileSync(path.join(root, 'index.js'), '')
 }
 
-function writeV2Artifacts({
+function writeArtifacts({
   root,
   dateToday,
   latestRates,
@@ -159,8 +156,8 @@ async function buildSnapshotWindow({ todayDate, latestRates, retentionDays }) {
 async function fetchHistoricalSnapshot(date) {
   // Primary: reuse yesterday snapshots from our own dated branch output.
   const candidates = [
-    `https://${date}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.min.json`,
-    `https://${date}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json`
+    `https://${date}.resplit-currency-api.pages.dev/snapshots/base-rates.min.json`,
+    `https://${date}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
   ]
 
   for (const url of candidates) {

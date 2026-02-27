@@ -38,10 +38,10 @@ GitHub Actions (daily cron @ 00:00 UTC)
 
 | Purpose | URL Pattern |
 |---------|-------------|
-| Latest (v2) | `https://resplit-currency-api.pages.dev/v2/latest/{code}.json` |
-| 7-day history (v2) | `https://resplit-currency-api.pages.dev/v2/history/7d/{code}.json` |
-| Dated snapshot (v2) | `https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json` |
-| Fallback | `https://firstbitelabsllc.github.io/resplit-currency-api/v2/latest/{code}.json` |
+| Latest | `https://resplit-currency-api.pages.dev/latest/{code}.json` |
+| 7-day history | `https://resplit-currency-api.pages.dev/history/7d/{code}.json` |
+| Dated snapshot | `https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/snapshots/base-rates.json` |
+| Fallback | `https://firstbitelabsllc.github.io/resplit-currency-api/latest/{code}.json` |
 
 ### Deployments Per Run
 
@@ -75,5 +75,5 @@ Each daily run deploys to 3 Cloudflare branches:
 - **Adding currencies**: Add to data source or supplement with additional API
 - **Token rotation**: Regenerate CLOUDFLARE_API_TOKEN periodically at dash.cloudflare.com/profile/api-tokens
 - **Local env template**: `.env.example` documents required local deploy vars
-- **Artifact quality gate**: `scripts/validate-package.js` blocks deploy if v1/v2 structure is invalid
+- **Artifact quality gate**: `scripts/validate-package.js` blocks deploy if unversioned structure is invalid
 - **Post-deploy smoke check**: `scripts/smoke-check-deploy.js` verifies Cloudflare, dated branch, and GitHub fallback

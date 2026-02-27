@@ -10,37 +10,37 @@ main().catch((error) => {
 })
 
 async function main() {
-  const v2Latest = await fetchJSONWithRetry(`${cloudflareBase}/v2/latest/usd.json`)
-  const v2History = await fetchJSONWithRetry(`${cloudflareBase}/v2/history/7d/usd.json`)
-  const v2Meta = await fetchJSONWithRetry(`${cloudflareBase}/v2/meta.json`)
+  const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
+  const history = await fetchJSONWithRetry(`${cloudflareBase}/history/7d/usd.json`)
+  const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
   const datedSnapshot = await fetchJSONWithRetry(
-    `https://${dateToday}.resplit-currency-api.pages.dev/v2/snapshots/base-rates.json`
+    `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
   )
-  const ghFallbackLatest = await fetchJSONWithRetry(`${fallbackBase}/v2/latest/usd.json`)
+  const ghFallbackLatest = await fetchJSONWithRetry(`${fallbackBase}/latest/usd.json`)
 
-  assertISODate(v2Latest.date, 'cloudflare v2 latest date')
-  assertISODate(v2Meta.latestDate, 'cloudflare v2 meta latestDate')
-  assertISODate(datedSnapshot.date, 'dated v2 snapshot date')
-  assertISODate(ghFallbackLatest.date, 'github fallback v2 latest date')
+  assertISODate(latest.date, 'cloudflare latest date')
+  assertISODate(meta.latestDate, 'cloudflare meta latestDate')
+  assertISODate(datedSnapshot.date, 'dated snapshot date')
+  assertISODate(ghFallbackLatest.date, 'github fallback latest date')
 
-  assertPositive(v2Latest?.rates?.usd, 'cloudflare v2 latest usd->usd')
-  assertPositive(ghFallbackLatest?.rates?.usd, 'github fallback v2 latest usd->usd')
-  assertPositive(datedSnapshot?.rates?.usd, 'dated v2 snapshot usd base rate')
+  assertPositive(latest?.rates?.usd, 'cloudflare latest usd->usd')
+  assertPositive(ghFallbackLatest?.rates?.usd, 'github fallback latest usd->usd')
+  assertPositive(datedSnapshot?.rates?.usd, 'dated snapshot usd base rate')
 
-  if (!Array.isArray(v2History.points) || v2History.points.length < 1) {
-    throw new Error('cloudflare v2 history has no points')
+  if (!Array.isArray(history.points) || history.points.length < 1) {
+    throw new Error('cloudflare history has no points')
   }
-  for (const point of v2History.points) {
-    assertISODate(point.date, 'cloudflare v2 history point date')
-    assertPositive(point?.rates?.usd, `cloudflare v2 history usd->usd at ${point.date}`)
-  }
-
-  if (v2Meta.historyDays !== 7) {
-    throw new Error(`cloudflare v2 meta historyDays expected 7, got ${v2Meta.historyDays}`)
+  for (const point of history.points) {
+    assertISODate(point.date, 'cloudflare history point date')
+    assertPositive(point?.rates?.usd, `cloudflare history usd->usd at ${point.date}`)
   }
 
-  if (v2Latest.date !== v2Meta.latestDate) {
-    throw new Error(`cloudflare v2 latest date (${v2Latest.date}) != v2 meta latestDate (${v2Meta.latestDate})`)
+  if (meta.historyDays !== 7) {
+    throw new Error(`cloudflare meta historyDays expected 7, got ${meta.historyDays}`)
+  }
+
+  if (latest.date !== meta.latestDate) {
+    throw new Error(`cloudflare latest date (${latest.date}) != meta latestDate (${meta.latestDate})`)
   }
 
   if (datedSnapshot.date !== dateToday) {
@@ -48,7 +48,7 @@ async function main() {
   }
 
   console.log(
-    `smoke-check-deploy: OK (date=${dateToday}, historyPoints=${v2History.points.length}, cf=${cloudflareBase})`
+    `smoke-check-deploy: OK (date=${dateToday}, historyPoints=${history.points.length}, cf=${cloudflareBase})`
   )
 }
 
