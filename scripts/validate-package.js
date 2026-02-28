@@ -19,7 +19,7 @@ function main() {
   const toCode = pickCode(codes, ['eur', 'usd', 'gbp', 'myr'])
 
   const latestFrom = readJSON(`latest/${fromCode}.json`)
-  const historyFrom = readJSON(`history/7d/${fromCode}.json`)
+  const historyFrom = readJSON(`history/30d/${fromCode}.json`)
 
   ensure(isIsoDate(latestFrom.date), 'latest date is not ISO yyyy-mm-dd')
   ensure(latestFrom.from === fromCode, `latest from mismatch: expected ${fromCode}`)
@@ -32,8 +32,8 @@ function main() {
   ensure(historyFrom.from === fromCode, `history from mismatch: expected ${fromCode}`)
   ensure(Array.isArray(historyFrom.points), 'history points must be an array')
   ensure(
-    historyFrom.points.length > 0 && historyFrom.points.length <= 7,
-    `history points must be 1..7, got ${historyFrom.points.length}`
+    historyFrom.points.length > 0 && historyFrom.points.length <= 30,
+    `history points must be 1..30, got ${historyFrom.points.length}`
   )
 
   let previousDate = null
@@ -56,13 +56,13 @@ function main() {
   ensure(Object.keys(snapshot.rates).length === codes.length, 'snapshot currency count mismatch')
 
   ensure(isIsoDate(meta.latestDate), 'meta latestDate invalid')
-  ensure(meta.historyDays === 7, `meta historyDays must be 7, got ${meta.historyDays}`)
-  ensure(meta.snapshotRetentionDays >= 7, 'meta snapshotRetentionDays should be >= 7')
+  ensure(meta.historyDays === 30, `meta historyDays must be 30, got ${meta.historyDays}`)
+  ensure(meta.snapshotRetentionDays >= 30, 'meta snapshotRetentionDays should be >= 30')
   ensure(
     Array.isArray(meta.availableHistoryDates) &&
       meta.availableHistoryDates.length > 0 &&
-      meta.availableHistoryDates.length <= 7,
-    'meta availableHistoryDates must contain 1..7 entries'
+      meta.availableHistoryDates.length <= 30,
+    'meta availableHistoryDates must contain 1..30 entries'
   )
 
   // Numeric consistency check between snapshot-derived pair and latest pair.
@@ -79,7 +79,7 @@ function main() {
   readJSON('meta.min.json')
   readJSON('snapshots/base-rates.min.json')
   readJSON(`latest/${fromCode}.min.json`)
-  readJSON(`history/7d/${fromCode}.min.json`)
+  readJSON(`history/30d/${fromCode}.min.json`)
 
   console.log(
     `validate-package: OK (${codes.length} currencies, history points=${historyFrom.points.length}, sample=${fromCode}->${toCode})`

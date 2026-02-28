@@ -8,9 +8,10 @@ Forked from [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-a
 
 1. GitHub Actions runs daily at midnight UTC
 2. Fetches latest rates from [open.er-api.com](https://open.er-api.com) (free, no API key)
-3. Generates latest/history artifacts
-4. Deploys to Cloudflare Pages (branch-per-day for historical access)
-5. Deploys to GitHub Pages as fallback
+3. Saves today's snapshot to `snapshot-archive/` (committed to repo for durability)
+4. Reads historical snapshots from local archive first, network fallback only if missing
+5. Generates latest/history artifacts from the snapshot window
+6. Commits the archive back to the repo, then deploys to Cloudflare Pages + GitHub Pages
 
 ## URL structure
 
@@ -19,9 +20,9 @@ Forked from [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-a
 https://resplit-currency-api.pages.dev/latest/{code}.json
 ```
 
-**history (7-day window, one file per base currency):**
+**history (30-day window, one file per base currency):**
 ```
-https://resplit-currency-api.pages.dev/history/7d/{code}.json
+https://resplit-currency-api.pages.dev/history/30d/{code}.json
 ```
 
 **metadata and snapshot seed:**
@@ -61,7 +62,7 @@ GET https://resplit-currency-api.pages.dev/latest/aed.json
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API token with Pages edit permission |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 
-`GITHUB_TOKEN` is provided automatically.
+`GITHUB_TOKEN` is provided automatically. Also used to push snapshot archive commits.
 
 ## Local development
 

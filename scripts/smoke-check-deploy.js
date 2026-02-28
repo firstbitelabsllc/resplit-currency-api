@@ -11,7 +11,7 @@ main().catch((error) => {
 
 async function main() {
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
-  const history = await fetchJSONWithRetry(`${cloudflareBase}/history/7d/usd.json`)
+  const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
   const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
   const datedSnapshot = await fetchJSONWithRetry(
     `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
@@ -35,8 +35,8 @@ async function main() {
     assertPositive(point?.rates?.usd, `cloudflare history usd->usd at ${point.date}`)
   }
 
-  if (meta.historyDays !== 7) {
-    throw new Error(`cloudflare meta historyDays expected 7, got ${meta.historyDays}`)
+  if (meta.historyDays !== 30) {
+    throw new Error(`cloudflare meta historyDays expected 30, got ${meta.historyDays}`)
   }
 
   if (latest.date !== meta.latestDate) {

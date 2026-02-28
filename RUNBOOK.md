@@ -5,7 +5,7 @@
 ```bash
 # Is the API serving data?
 curl -s https://resplit-currency-api.pages.dev/latest/aed.json | head -c 100
-curl -s https://resplit-currency-api.pages.dev/history/7d/aed.json | head -c 100
+curl -s https://resplit-currency-api.pages.dev/history/30d/aed.json | head -c 100
 
 # Is today's historical snapshot deployed?
 curl -s https://$(date -u +%Y-%m-%d).resplit-currency-api.pages.dev/snapshots/base-rates.json | head -c 100
@@ -81,7 +81,7 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 4. Validate fast-path artifacts:
    ```bash
    curl -s https://resplit-currency-api.pages.dev/latest/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('from'), 'usd' in d.get('rates',{}))"
-   curl -s https://resplit-currency-api.pages.dev/history/7d/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('points', len(d.get('points',[])))"
+   curl -s https://resplit-currency-api.pages.dev/history/30d/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('points', len(d.get('points',[])))"
    ```
 
 **Common causes**:
@@ -133,32 +133,39 @@ Add to `.github/workflows/run.yml` after the deploy steps:
 ### Uptime ping (free)
 Set up UptimeRobot to check:
 - `https://resplit-currency-api.pages.dev/latest/usd.json`
-- `https://resplit-currency-api.pages.dev/history/7d/usd.json`
+- `https://resplit-currency-api.pages.dev/history/30d/usd.json`
 
 ## Architecture Recap
 
 ```
 open.er-api.com ──► GitHub Actions (daily 00:00 UTC, ~40s)
                          │
-                    ┌────┴────┐
-                    ▼         ▼
-            Cloudflare    GitHub
-             Pages         Pages
-                    │         │
-                    └────┬────┘
-                         ▼
-                   iOS App (ResplitCurrencyProvider)
-                         │
-                         ▼
-                    FXRateCache (on-device)
+                    ┌────┴─────────────────────────┐
+                    ▼                               ▼
+            snapshot-archive/               ┌───────┴───────┐
+            (committed to repo,             ▼               ▼
+             local-first history)     Cloudflare        GitHub
+                                       Pages            Pages
+                                            │               │
+                                            └───────┬───────┘
+                                                    ▼
+                                          iOS App (ResplitCurrencyProvider)
+                                                    │
+                                                    ▼
+                                              FXRateCache (on-device)
 ```
+
+History is now built from the committed `snapshot-archive/` directory (local-first).
+Dated Cloudflare branch deployments are a network fallback only, used to backfill
+missing days (e.g., first run or recovery from a reset).
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `currscript.js` | Fetch rates, generate JSON files |
-| `.github/workflows/run.yml` | Daily cron, deploy to CDNs |
+| `currscript.js` | Fetch rates, generate JSON files, manage snapshot archive |
+| `snapshot-archive/` | Committed daily snapshots (~5KB each, pruned past 32 days). Local-first history source. |
+| `.github/workflows/run.yml` | Daily cron, deploy to CDNs, commit archive |
 | `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
 | `scripts/smoke-check-deploy.js` | Verifies deployed endpoints after publish |
 | `.env.local` | Local Cloudflare credentials (gitignored) |

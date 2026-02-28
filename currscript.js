@@ -2,9 +2,10 @@ const fs = require('fs-extra')
 const path = require('path')
 
 const indent = '\t'
-const historyDays = 7
-const snapshotRetentionDays = 14
+const historyDays = 30
+const snapshotRetentionDays = 32
 const rootDir = path.join(__dirname, 'package')
+const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 
 if (require.main === module) {
   main().catch((error) => {
@@ -22,12 +23,16 @@ async function main() {
 
   console.log(`Fetched ${Object.keys(latestRates).length} currencies for ${dateToday}`)
 
+  saveSnapshotToArchive(dateToday, latestRates)
+
   const snapshots = await buildSnapshotWindow({
     todayDate: dateToday,
     latestRates,
     retentionDays: snapshotRetentionDays
   })
   const historySnapshots = snapshots.slice(-historyDays)
+
+  pruneSnapshotArchive(snapshotRetentionDays)
 
   fs.mkdirpSync(rootDir)
   fs.emptyDirSync(rootDir)
@@ -62,7 +67,7 @@ function writeArtifacts({
   historySnapshots
 }) {
   const latestDir = path.join(root, 'latest')
-  const historyDir = path.join(root, 'history', '7d')
+  const historyDir = path.join(root, 'history', '30d')
   const snapshotsDir = path.join(root, 'snapshots')
   fs.mkdirpSync(latestDir)
   fs.mkdirpSync(historyDir)
@@ -138,14 +143,28 @@ async function buildSnapshotWindow({ todayDate, latestRates, retentionDays }) {
   const snapshotsByDate = new Map()
   snapshotsByDate.set(todayDate, latestRates)
 
+  let localHits = 0
+  let networkHits = 0
+
   for (let dayOffset = 1; dayOffset < retentionDays; dayOffset += 1) {
     const date = dateDaysAgoUTC(dayOffset)
-    const snapshot = await fetchHistoricalSnapshot(date)
-    if (!snapshot || Object.keys(snapshot).length === 0) {
+
+    const localSnapshot = loadSnapshotFromArchive(date)
+    if (localSnapshot) {
+      snapshotsByDate.set(date, localSnapshot)
+      localHits += 1
       continue
     }
-    snapshotsByDate.set(date, snapshot)
+
+    const remoteSnapshot = await fetchHistoricalSnapshot(date)
+    if (remoteSnapshot && Object.keys(remoteSnapshot).length > 0) {
+      snapshotsByDate.set(date, remoteSnapshot)
+      saveSnapshotToArchive(date, remoteSnapshot)
+      networkHits += 1
+    }
   }
+
+  console.log(`Snapshot window: ${snapshotsByDate.size} days (${localHits} local, ${networkHits} network)`)
 
   return Array
     .from(snapshotsByDate.entries())
@@ -175,6 +194,36 @@ async function fetchHistoricalSnapshot(date) {
   }
 
   return null
+}
+
+function saveSnapshotToArchive(date, rates) {
+  fs.mkdirpSync(snapshotArchiveDir)
+  const filePath = path.join(snapshotArchiveDir, `${date}.json`)
+  fs.writeJsonSync(filePath, { date, base: 'eur', rates })
+}
+
+function loadSnapshotFromArchive(date) {
+  const filePath = path.join(snapshotArchiveDir, `${date}.json`)
+  try {
+    const data = fs.readJsonSync(filePath)
+    if (data?.rates && typeof data.rates === 'object' && Object.keys(data.rates).length > 0) {
+      return data.rates
+    }
+  } catch (_) {}
+  return null
+}
+
+function pruneSnapshotArchive(retentionDays) {
+  if (!fs.existsSync(snapshotArchiveDir)) return
+  const cutoffDate = dateDaysAgoUTC(retentionDays)
+  for (const file of fs.readdirSync(snapshotArchiveDir)) {
+    if (!file.endsWith('.json')) continue
+    const date = file.replace('.json', '')
+    if (date < cutoffDate) {
+      fs.removeSync(path.join(snapshotArchiveDir, file))
+      console.log(`Pruned old snapshot: ${date}`)
+    }
+  }
 }
 
 async function fetchLatestRates() {
@@ -244,7 +293,11 @@ function computeCrossRates(fromRate, rates) {
 module.exports = {
   buildCurrencyList,
   computeCrossRates,
+  loadSnapshotFromArchive,
+  pruneSnapshotArchive,
+  saveSnapshotToArchive,
   significantNum,
+  snapshotArchiveDir,
   toDateStringUTC,
   toLowerSorted
 }

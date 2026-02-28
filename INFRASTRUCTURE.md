@@ -8,13 +8,20 @@ open.er-api.com (free, 160+ currencies)
         ▼
 GitHub Actions (daily cron @ 00:00 UTC)
         │
+        ├──► snapshot-archive/ (committed to repo, local-first history)
+        │
         ├──► Cloudflare Pages (primary CDN)
         │      resplit-currency-api.pages.dev
-        │      {date}.resplit-currency-api.pages.dev
+        │      {date}.resplit-currency-api.pages.dev (fallback only)
         │
         └──► GitHub Pages (fallback)
                firstbitelabsllc.github.io/resplit-currency-api
 ```
+
+The `snapshot-archive/` directory stores one JSON file per day (~5KB each).
+`buildSnapshotWindow` reads these local files first, only falling back to
+dated Cloudflare branch deployments for missing days. Files older than
+`snapshotRetentionDays` (32) are pruned automatically.
 
 ## Cloudflare Setup
 
@@ -39,7 +46,7 @@ GitHub Actions (daily cron @ 00:00 UTC)
 | Purpose | URL Pattern |
 |---------|-------------|
 | Latest | `https://resplit-currency-api.pages.dev/latest/{code}.json` |
-| 7-day history | `https://resplit-currency-api.pages.dev/history/7d/{code}.json` |
+| 30-day history | `https://resplit-currency-api.pages.dev/history/30d/{code}.json` |
 | Dated snapshot | `https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/snapshots/base-rates.json` |
 | Fallback | `https://firstbitelabsllc.github.io/resplit-currency-api/latest/{code}.json` |
 
