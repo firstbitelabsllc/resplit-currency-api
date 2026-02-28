@@ -113,5 +113,6 @@ function pickCode(allCodes, preferred) {
 
 function approximatelyEqual(left, right, epsilon) {
   if (!Number.isFinite(left) || !Number.isFinite(right)) return false
-  return Math.abs(left - right) <= epsilon
+  const denom = Math.max(Math.abs(left), Math.abs(right), 1)
+  return Math.abs(left - right) / denom <= epsilon
 }

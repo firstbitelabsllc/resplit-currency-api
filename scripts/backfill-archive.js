@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs-extra')
-const { saveSnapshotToArchive, loadSnapshotFromArchive, toLowerSorted, toDateStringUTC } = require('../currscript')
+const { saveSnapshotToArchive, loadSnapshotFromArchive, toLowerSorted, dateDaysAgoUTC } = require('../currscript')
 
 const BACKFILL_DAYS = 30
 
@@ -46,10 +46,4 @@ async function fetchFromUpstream(date) {
     }
   } catch (_) {}
   return null
-}
-
-function dateDaysAgoUTC(daysAgo) {
-  const date = new Date()
-  date.setUTCDate(date.getUTCDate() - daysAgo)
-  return toDateStringUTC(date)
 }

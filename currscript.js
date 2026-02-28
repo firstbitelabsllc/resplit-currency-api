@@ -293,6 +293,7 @@ function computeCrossRates(fromRate, rates) {
 module.exports = {
   buildCurrencyList,
   computeCrossRates,
+  dateDaysAgoUTC,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
   saveSnapshotToArchive,
