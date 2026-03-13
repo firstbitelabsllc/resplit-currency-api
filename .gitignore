@@ -3,3 +3,4 @@ links.ini
 node_modules/
 package/
 .env.local
+.agent-ledger/

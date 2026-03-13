@@ -1,0 +1,14 @@
+---
+alwaysApply: true
+---
+
+# Agent Ledger
+
+Shared activity log at `.agent-ledger/activity.jsonl`. Read the last 20 entries before substantial work or when another agent may have touched the same area:
+```bash
+tail -n 20 .agent-ledger/activity.jsonl | jq -r '"  \(.ts[11:16]) \(.agent_id // ((.agent // "unknown") + "/" + ((.sid // "unknown") | .[0:8]))) — \(.summary // "(no summary)") [\((.files // []) | join(", "))]"'
+```
+
+Schema: `ts`, `eid`, `agent_id`, `repo`, `lane`, `skills[]`, `event`, `stop_reason`, `summary`, `files[]`
+
+The Stop hook auto-logs activity. Claude may also auto-inject recent entries through `ledger-inject.sh` when configured.

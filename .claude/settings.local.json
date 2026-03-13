@@ -1,0 +1,6 @@
+{
+  "hooks": {
+    "SessionStart": [{"hooks": [{"type": "command", "command": "~/Development/ai/hooks/ledger-inject.sh"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "~/Development/ai/hooks/ledger-append.sh", "async": true}]}]
+  }
+}
