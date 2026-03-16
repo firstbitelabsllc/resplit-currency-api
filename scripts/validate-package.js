@@ -2,10 +2,17 @@
 
 const fs = require('fs')
 const path = require('path')
+const { runMonitoredScript } = require('./sentry-monitoring')
 
 const packageRoot = path.join(__dirname, '..', 'package')
 
-main()
+runMonitoredScript('validate_package', main, {
+  workflow: 'daily_publish',
+  failureSignal: 'validate_package_failed'
+}).catch((error) => {
+  console.error(`validate-package: FAILED\n${error.stack || error.message}`)
+  process.exitCode = 1
+})
 
 function main() {
   const currencies = readJSON('currencies.json')

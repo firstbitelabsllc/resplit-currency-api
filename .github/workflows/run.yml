@@ -11,6 +11,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      SENTRY_ENVIRONMENT: production
+      SENTRY_RELEASE: ${{ github.sha }}
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -25,6 +29,10 @@ jobs:
 
       - name: Set date
         run: echo "date_today=$(date -uI)" >> "$GITHUB_ENV"
+
+      - name: Start Sentry publish check-in
+        id: sentry_checkin
+        run: node scripts/sentry-checkin.js start >> "$GITHUB_OUTPUT"
 
       - name: Fetch and generate rates
         id: generate
@@ -55,6 +63,7 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" && exit 1)
 
       - name: Deploy to Cloudflare Pages
+        id: deploy_cloudflare
         uses: cloudflare/wrangler-action@9681c2997648301493e78cacbfb790a9f19c833f # v3.9.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -64,13 +73,35 @@ jobs:
             pages deploy --project-name=resplit-currency-api --branch=latest package
             pages deploy --project-name=resplit-currency-api --branch=${{ env.date_today }} package
 
+      - name: Report Cloudflare deploy failure to Sentry
+        if: ${{ failure() && steps.deploy_cloudflare.outcome == 'failure' }}
+        env:
+          STEP_NAME: deploy_cloudflare
+        run: node scripts/sentry-checkin.js issue cloudflare_deploy_failure "Cloudflare Pages deploy failed"
+
       - name: Deploy to GitHub Pages
+        id: deploy_github_pages
         uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./package
 
+      - name: Report GitHub Pages deploy failure to Sentry
+        if: ${{ failure() && steps.deploy_github_pages.outcome == 'failure' }}
+        env:
+          STEP_NAME: deploy_github_pages
+        run: node scripts/sentry-checkin.js issue github_pages_deploy_failure "GitHub Pages deploy failed"
+
       - name: Smoke check deployed endpoints
+        id: smoke_check
         env:
           EXPECTED_DATE: ${{ env.date_today }}
         run: node scripts/smoke-check-deploy.js
+
+      - name: Finish Sentry publish check-in
+        if: ${{ always() }}
+        env:
+          CHECKIN_ID: ${{ steps.sentry_checkin.outputs.checkin_id }}
+          CHECKIN_STARTED_AT: ${{ steps.sentry_checkin.outputs.checkin_started_at }}
+          JOB_STATUS: ${{ job.status }}
+        run: node scripts/sentry-checkin.js finish

@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 
+const { captureIssue, runMonitoredScript } = require('./sentry-monitoring')
+
 const cloudflareBase = process.env.CF_PAGES_BASE || 'https://resplit-currency-api.pages.dev'
 const fallbackBase = process.env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api'
 const dateToday = process.env.EXPECTED_DATE || toDateStringUTC(new Date())
 
-main().catch((error) => {
+runMonitoredScript('smoke_check_deploy', main, {
+  workflow: 'daily_publish',
+  failureSignal: 'smoke_check_mismatch'
+}).catch((error) => {
   console.error(`smoke-check-deploy: FAILED\n${error.stack || error.message}`)
   process.exitCode = 1
 })
@@ -13,9 +18,22 @@ async function main() {
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
   const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
   const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
-  const datedSnapshot = await fetchJSONWithRetry(
-    `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
-  )
+  const datedSnapshotUrl = `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+  let datedSnapshot
+  try {
+    datedSnapshot = await fetchJSONWithRetry(datedSnapshotUrl)
+  } catch (error) {
+    await captureIssue({
+      signal: 'missing_dated_snapshot_deployment',
+      error,
+      context: {
+        workflow: 'daily_publish',
+        expected_date: dateToday,
+        url: datedSnapshotUrl
+      }
+    })
+    throw error
+  }
   const ghFallbackLatest = await fetchJSONWithRetry(`${fallbackBase}/latest/usd.json`)
 
   assertISODate(latest.date, 'cloudflare latest date')

@@ -1,5 +1,9 @@
 const fs = require('fs-extra')
 const path = require('path')
+const {
+  captureIssue,
+  runMonitoredScript
+} = require('./scripts/sentry-monitoring')
 
 const indent = '\t'
 const historyDays = 30
@@ -8,7 +12,10 @@ const rootDir = path.join(__dirname, 'package')
 const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 
 if (require.main === module) {
-  main().catch((error) => {
+  runMonitoredScript('currency_publish', main, {
+    workflow: 'daily_publish',
+    failureSignal: 'currency_publish_failed'
+  }).catch((error) => {
     console.error(error)
     process.exitCode = 1
   })
@@ -31,6 +38,23 @@ async function main() {
     retentionDays: snapshotRetentionDays
   })
   const historySnapshots = snapshots.slice(-historyDays)
+
+  if (historySnapshots.length < historyDays) {
+    const error = new Error(
+      `Expected ${historyDays} history snapshots, got ${historySnapshots.length}`
+    )
+    await captureIssue({
+      signal: 'history_window_shorter_than_30_days',
+      error,
+      context: {
+        workflow: 'daily_publish',
+        latest_date: dateToday,
+        available_history_days: historySnapshots.length,
+        required_history_days: historyDays
+      }
+    })
+    throw error
+  }
 
   pruneSnapshotArchive(snapshotRetentionDays)
 
@@ -228,11 +252,23 @@ function pruneSnapshotArchive(retentionDays) {
 
 async function fetchLatestRates() {
   // Primary: open.er-api.com — free, ~160 fiat currencies, no API key.
-  const data = await fetchJSON('https://open.er-api.com/v6/latest/EUR', 30_000)
-  if (data?.result === 'success' && data.rates) {
-    return toLowerSorted(data.rates)
+  try {
+    const data = await fetchJSON('https://open.er-api.com/v6/latest/EUR', 30_000)
+    if (data?.result === 'success' && data.rates) {
+      return toLowerSorted(data.rates)
+    }
+    return null
+  } catch (error) {
+    await captureIssue({
+      signal: 'upstream_fetch_failure',
+      error,
+      context: {
+        workflow: 'daily_publish',
+        source_url: 'https://open.er-api.com/v6/latest/EUR'
+      }
+    })
+    throw error
   }
-  return null
 }
 
 async function fetchJSON(url, timeoutMs) {

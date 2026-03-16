@@ -119,6 +119,33 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 ### Email alerts (free, already on)
 GitHub sends failure emails to repo admins by default.
 
+### Sentry command center (now wired)
+The publisher now emits grouped issues, structured logs, and cron check-ins to Sentry.
+
+Required GitHub secret:
+```bash
+gh secret set SENTRY_DSN --repo firstbitelabsllc/resplit-currency-api --body "YOUR_PROJECT_DSN"
+```
+
+Current monitor + signal model:
+- Cron monitor slug: `resplit-currency-api-daily-publish`
+- Schedule: `0 0 * * *` UTC
+- Workflow tag: `daily_publish`
+- Grouped issue signals:
+  - `upstream_fetch_failure`
+  - `history_window_shorter_than_30_days`
+  - `missing_dated_snapshot_deployment`
+  - `cloudflare_deploy_failure`
+  - `github_pages_deploy_failure`
+  - `smoke_check_mismatch`
+  - `validate_package_failed`
+
+Quick verification after a manual workflow run:
+```bash
+gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api
+gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3
+```
+
 ### Slack webhook (5 min setup)
 Add to `.github/workflows/run.yml` after the deploy steps:
 ```yaml
@@ -166,11 +193,13 @@ missing days (e.g., first run or recovery from a reset).
 | `currscript.js` | Fetch rates, generate JSON files, manage snapshot archive |
 | `snapshot-archive/` | Committed daily snapshots (~5KB each, pruned past 32 days). Local-first history source. |
 | `.github/workflows/run.yml` | Daily cron, deploy to CDNs, commit archive |
+| `scripts/sentry-monitoring.js` | Shared Sentry issue, log, and cron check-in helper |
+| `scripts/sentry-checkin.js` | Workflow helper for start/finish/error check-ins |
 | `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
 | `scripts/smoke-check-deploy.js` | Verifies deployed endpoints after publish |
 | `.env.local` | Local Cloudflare credentials (gitignored) |
 | `INFRASTRUCTURE.md` | Account IDs, URLs, secrets inventory |
-| `package.json` | Dependencies (just `fs-extra`) |
+| `package.json` | Dependencies and publisher scripts |
 
 ## Credentials
 
@@ -178,4 +207,5 @@ missing days (e.g., first run or recovery from a reset).
 |------------|----------|----------|
 | Cloudflare Account ID | GitHub secret + `.env.local` | Never changes |
 | Cloudflare API Token | GitHub secret + `.env.local` | No expiration, rotate if compromised |
+| Sentry DSN | GitHub secret (`SENTRY_DSN`) | Rotate when project DSN changes |
 | GitHub Token | Auto-provided by Actions | Auto-rotated |
