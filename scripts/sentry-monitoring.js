@@ -8,7 +8,10 @@ const DAILY_PUBLISH_MONITOR_CONFIG = {
     type: 'crontab',
     value: '0 0 * * *'
   },
-  checkinMargin: 60,
+  // GitHub Actions scheduled workflows routinely start 2h+ after the nominal cron time.
+  // Keep the expected schedule at midnight UTC, but allow a wider margin so Sentry
+  // doesn't fire false missed-check-in incidents before GitHub dispatches the job.
+  checkinMargin: 240,
   maxRuntime: 15,
   timezone: 'UTC',
   failureIssueThreshold: 1,
@@ -240,8 +243,12 @@ function startWorkflowCheckIn() {
 }
 
 async function finishWorkflowCheckIn(checkInId, status, startedAt = Date.now()) {
-  if (!checkInId || !isEnabled()) {
+  if (!isEnabled()) {
     return false
+  }
+
+  if (!checkInId) {
+    throw new Error('Missing Sentry check-in id for workflow completion')
   }
 
   initializeSentry()

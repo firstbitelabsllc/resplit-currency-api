@@ -4,9 +4,11 @@ const fs = require('fs-extra')
 const path = require('path')
 
 const {
+  buildArchiveManifest,
+  buildArchiveYearPayloads,
   computeCrossRates,
+  loadAllSnapshotsFromArchive,
   loadSnapshotFromArchive,
-  pruneSnapshotArchive,
   saveSnapshotToArchive,
   significantNum,
   snapshotArchiveDir,
@@ -96,22 +98,47 @@ test('loadSnapshotFromArchive returns null for empty rates', (t) => {
   assert.equal(result, null)
 })
 
-test('pruneSnapshotArchive removes files older than retention', (t) => {
-  const oldDate = '2020-01-01'
-  const recentDate = '2099-01-01'
-  const oldPath = path.join(snapshotArchiveDir, `${oldDate}.json`)
-  const recentPath = path.join(snapshotArchiveDir, `${recentDate}.json`)
-
-  t.after(() => {
-    fs.removeSync(oldPath)
-    fs.removeSync(recentPath)
+test('buildArchiveManifest summarizes immutable archive coverage', () => {
+  const manifest = buildArchiveManifest({
+    availableDates: ['2026-02-20', '2026-02-21', '2026-02-23'],
+    latestRates: { eur: 1, usd: 1.2, aed: 4.1 },
+    generatedAt: '2026-03-16T00:00:00.000Z'
   })
 
-  saveSnapshotToArchive(oldDate, { eur: 1 })
-  saveSnapshotToArchive(recentDate, { eur: 1 })
+  assert.equal(manifest.earliestDate, '2026-02-20')
+  assert.equal(manifest.latestDate, '2026-02-23')
+  assert.equal(manifest.gapCount, 1)
+  assert.deepEqual(manifest.supportedCurrencies, ['aed', 'eur', 'usd'])
+})
 
-  pruneSnapshotArchive(32)
+test('buildArchiveYearPayloads groups snapshots by year', () => {
+  const payloads = buildArchiveYearPayloads([
+    { date: '2025-12-31', rates: { eur: 1, usd: 1.1 } },
+    { date: '2026-01-01', rates: { eur: 1, usd: 1.2 } },
+    { date: '2026-01-02', rates: { eur: 1, usd: 1.3 } }
+  ])
 
-  assert.equal(fs.existsSync(oldPath), false, 'old snapshot should be pruned')
-  assert.equal(fs.existsSync(recentPath), true, 'recent snapshot should be kept')
+  assert.deepEqual(Object.keys(payloads).sort(), ['2025', '2026'])
+  assert.equal(payloads['2025'].snapshots.length, 1)
+  assert.equal(payloads['2026'].snapshots.length, 2)
+  assert.equal(payloads['2026'].snapshots[0].date, '2026-01-01')
+})
+
+test('loadAllSnapshotsFromArchive returns sorted immutable archive snapshots', (t) => {
+  const dates = ['2099-01-03', '2099-01-01', '2099-01-02']
+
+  t.after(() => {
+    for (const date of dates) {
+      fs.removeSync(path.join(snapshotArchiveDir, `${date}.json`))
+    }
+  })
+
+  saveSnapshotToArchive('2099-01-03', { eur: 1, usd: 1.3 })
+  saveSnapshotToArchive('2099-01-01', { eur: 1, usd: 1.1 })
+  saveSnapshotToArchive('2099-01-02', { eur: 1, usd: 1.2 })
+
+  const snapshots = loadAllSnapshotsFromArchive()
+    .filter(snapshot => snapshot.date.startsWith('2099-01-0'))
+
+  assert.deepEqual(snapshots.map(snapshot => snapshot.date), dates.slice().sort())
 })

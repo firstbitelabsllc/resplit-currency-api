@@ -12,7 +12,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      SENTRY_CURRENCY_API_DSN: ${{ secrets.SENTRY_CURRENCY_API_DSN }}
+      SHARED_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_CURRENCY_API_DSN != '' && secrets.SENTRY_CURRENCY_API_DSN || secrets.SENTRY_DSN }}
       SENTRY_ENVIRONMENT: production
       SENTRY_RELEASE: ${{ github.sha }}
 
@@ -26,6 +28,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Warn on shared Sentry DSN fallback
+        if: ${{ env.SENTRY_CURRENCY_API_DSN == '' && env.SHARED_SENTRY_DSN != '' }}
+        run: echo "::warning::Using shared SENTRY_DSN fallback. Set SENTRY_CURRENCY_API_DSN to route cron events into the dedicated resplit-currency-api Sentry project."
 
       - name: Set date
         run: echo "date_today=$(date -uI)" >> "$GITHUB_ENV"

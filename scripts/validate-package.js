@@ -5,6 +5,7 @@ const path = require('path')
 const { runMonitoredScript } = require('./sentry-monitoring')
 
 const packageRoot = path.join(__dirname, '..', 'package')
+const MIN_ARCHIVE_DAYS = 32
 
 runMonitoredScript('validate_package', main, {
   workflow: 'daily_publish',
@@ -18,6 +19,7 @@ function main() {
   const currencies = readJSON('currencies.json')
   const meta = readJSON('meta.json')
   const snapshot = readJSON('snapshots/base-rates.json')
+  const archiveManifest = readJSON('archive-manifest.json')
 
   const codes = Object.keys(currencies).sort()
   ensure(codes.length >= 100, `Expected >= 100 currencies in list, got ${codes.length}`)
@@ -64,7 +66,7 @@ function main() {
 
   ensure(isIsoDate(meta.latestDate), 'meta latestDate invalid')
   ensure(meta.historyDays === 30, `meta historyDays must be 30, got ${meta.historyDays}`)
-  ensure(meta.snapshotRetentionDays >= 30, 'meta snapshotRetentionDays should be >= 30')
+  ensure(meta.archiveMode === 'immutable', `meta archiveMode expected immutable, got ${meta.archiveMode}`)
   ensure(
     Array.isArray(meta.availableHistoryDates) &&
       meta.availableHistoryDates.length > 0 &&
@@ -82,6 +84,43 @@ function main() {
   ensure(approximatelyEqual(derivedLatestRate, latestRate, 1e-8), 'snapshot-derived and latest sample rates diverge')
 
   // Minified files must parse too.
+  ensure(isIsoDate(archiveManifest.earliestDate), 'archive earliestDate invalid')
+  ensure(isIsoDate(archiveManifest.latestDate), 'archive latestDate invalid')
+  ensure(Array.isArray(archiveManifest.availableDates), 'archive availableDates missing')
+  ensure(archiveManifest.availableDates.length >= historyFrom.points.length, 'archive availableDates too short')
+  ensure(
+    archiveManifest.availableDates[0] === archiveManifest.earliestDate,
+    'archive earliestDate does not match first available date'
+  )
+  ensure(
+    archiveManifest.availableDates[archiveManifest.availableDates.length - 1] === archiveManifest.latestDate,
+    'archive latestDate does not match last available date'
+  )
+  ensure(
+    archiveManifest.latestDate === meta.latestDate,
+    `archive latestDate must match meta latestDate, got ${archiveManifest.latestDate} vs ${meta.latestDate}`
+  )
+  ensure(
+    Number.isInteger(archiveManifest.gapCount) && archiveManifest.gapCount >= 0,
+    `archive gapCount must be a non-negative integer, got ${archiveManifest.gapCount}`
+  )
+  ensure(
+    archiveManifest.availableDates.length >= MIN_ARCHIVE_DAYS,
+    `archive availableDates must contain at least ${MIN_ARCHIVE_DAYS} dates, got ${archiveManifest.availableDates.length}`
+  )
+  ensure(
+    daysBetween(archiveManifest.earliestDate, archiveManifest.latestDate) + 1 >= MIN_ARCHIVE_DAYS,
+    `archive date span must cover at least ${MIN_ARCHIVE_DAYS} days, got ${archiveManifest.earliestDate}..${archiveManifest.latestDate}`
+  )
+  ensure(
+    Array.isArray(archiveManifest.supportedCurrencies) &&
+      archiveManifest.supportedCurrencies.includes(fromCode),
+    'archive supportedCurrencies missing sample code'
+  )
+  readJSON(`archive/${meta.latestDate}.json`)
+  readJSON(`archive/${meta.latestDate}.min.json`)
+  readJSON(`archive-years/${meta.latestDate.slice(0, 4)}.json`)
+  readJSON('archive-manifest.min.json')
   readJSON('currencies.min.json')
   readJSON('meta.min.json')
   readJSON('snapshots/base-rates.min.json')
@@ -122,4 +161,10 @@ function approximatelyEqual(left, right, epsilon) {
   if (!Number.isFinite(left) || !Number.isFinite(right)) return false
   const denom = Math.max(Math.abs(left), Math.abs(right), 1)
   return Math.abs(left - right) / denom <= epsilon
+}
+
+function daysBetween(start, end) {
+  const startDate = new Date(`${start}T00:00:00Z`)
+  const endDate = new Date(`${end}T00:00:00Z`)
+  return Math.round((endDate - startDate) / (24 * 60 * 60 * 1000))
 }

@@ -7,7 +7,6 @@ const {
 
 const indent = '\t'
 const historyDays = 30
-const snapshotRetentionDays = 32
 const rootDir = path.join(__dirname, 'package')
 const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 
@@ -32,12 +31,13 @@ async function main() {
 
   saveSnapshotToArchive(dateToday, latestRates)
 
-  const snapshots = await buildSnapshotWindow({
+  const recentSnapshots = await buildSnapshotWindow({
     todayDate: dateToday,
     latestRates,
-    retentionDays: snapshotRetentionDays
+    retentionDays: historyDays + 2
   })
-  const historySnapshots = snapshots.slice(-historyDays)
+  const archiveSnapshots = loadAllSnapshotsFromArchive()
+  const historySnapshots = recentSnapshots.slice(-historyDays)
 
   if (historySnapshots.length < historyDays) {
     const error = new Error(
@@ -56,8 +56,6 @@ async function main() {
     throw error
   }
 
-  pruneSnapshotArchive(snapshotRetentionDays)
-
   fs.mkdirpSync(rootDir)
   fs.emptyDirSync(rootDir)
 
@@ -65,7 +63,7 @@ async function main() {
     root: rootDir,
     dateToday,
     latestRates,
-    snapshots,
+    archiveSnapshots,
     historySnapshots
   })
   writeRootPackageMetadata({ root: rootDir, dateToday })
@@ -87,15 +85,19 @@ function writeArtifacts({
   root,
   dateToday,
   latestRates,
-  snapshots,
+  archiveSnapshots,
   historySnapshots
 }) {
   const latestDir = path.join(root, 'latest')
   const historyDir = path.join(root, 'history', '30d')
   const snapshotsDir = path.join(root, 'snapshots')
+  const archiveDir = path.join(root, 'archive')
+  const archiveYearsDir = path.join(root, 'archive-years')
   fs.mkdirpSync(latestDir)
   fs.mkdirpSync(historyDir)
   fs.mkdirpSync(snapshotsDir)
+  fs.mkdirpSync(archiveDir)
+  fs.mkdirpSync(archiveYearsDir)
 
   const currencyList = buildCurrencyList(latestRates)
   fs.writeFileSync(path.join(root, 'currencies.json'), JSON.stringify(currencyList, null, indent))
@@ -109,17 +111,45 @@ function writeArtifacts({
   fs.writeFileSync(path.join(snapshotsDir, 'base-rates.json'), JSON.stringify(snapshotPayload, null, indent))
   fs.writeFileSync(path.join(snapshotsDir, 'base-rates.min.json'), JSON.stringify(snapshotPayload))
 
+  const availableArchiveDates = archiveSnapshots.map((snapshot) => snapshot.date)
+  const archiveYears = buildArchiveYearPayloads(archiveSnapshots)
+  const archiveManifest = buildArchiveManifest({
+    availableDates: availableArchiveDates,
+    latestRates,
+    generatedAt: new Date().toISOString()
+  })
+
   const metaPayload = {
     generatedAt: new Date().toISOString(),
     latestDate: dateToday,
     currencyCount: Object.keys(latestRates).length,
     historyDays,
-    snapshotRetentionDays,
-    availableSnapshotDates: snapshots.map((snapshot) => snapshot.date),
-    availableHistoryDates: historySnapshots.map((snapshot) => snapshot.date)
+    availableSnapshotDates: archiveSnapshots.map((snapshot) => snapshot.date),
+    availableHistoryDates: historySnapshots.map((snapshot) => snapshot.date),
+    archiveMode: 'immutable',
+    archiveEarliestDate: archiveManifest.earliestDate,
+    archiveLatestDate: archiveManifest.latestDate,
+    archiveGapCount: archiveManifest.gapCount
   }
   fs.writeFileSync(path.join(root, 'meta.json'), JSON.stringify(metaPayload, null, indent))
   fs.writeFileSync(path.join(root, 'meta.min.json'), JSON.stringify(metaPayload))
+  fs.writeFileSync(path.join(root, 'archive-manifest.json'), JSON.stringify(archiveManifest, null, indent))
+  fs.writeFileSync(path.join(root, 'archive-manifest.min.json'), JSON.stringify(archiveManifest))
+
+  for (const snapshot of archiveSnapshots) {
+    const payload = {
+      date: snapshot.date,
+      base: 'eur',
+      rates: snapshot.rates
+    }
+    fs.writeFileSync(path.join(archiveDir, `${snapshot.date}.json`), JSON.stringify(payload, null, indent))
+    fs.writeFileSync(path.join(archiveDir, `${snapshot.date}.min.json`), JSON.stringify(payload))
+  }
+
+  for (const [year, yearPayload] of Object.entries(archiveYears)) {
+    fs.writeFileSync(path.join(archiveYearsDir, `${year}.json`), JSON.stringify(yearPayload, null, indent))
+    fs.writeFileSync(path.join(archiveYearsDir, `${year}.min.json`), JSON.stringify(yearPayload))
+  }
 
   writeCrossRateFiles({
     outputDir: latestDir,
@@ -237,17 +267,21 @@ function loadSnapshotFromArchive(date) {
   return null
 }
 
-function pruneSnapshotArchive(retentionDays) {
-  if (!fs.existsSync(snapshotArchiveDir)) return
-  const cutoffDate = dateDaysAgoUTC(retentionDays)
-  for (const file of fs.readdirSync(snapshotArchiveDir)) {
-    if (!file.endsWith('.json')) continue
-    const date = file.replace('.json', '')
-    if (date < cutoffDate) {
-      fs.removeSync(path.join(snapshotArchiveDir, file))
-      console.log(`Pruned old snapshot: ${date}`)
-    }
+function loadAllSnapshotsFromArchive() {
+  if (!fs.existsSync(snapshotArchiveDir)) {
+    return []
   }
+
+  return fs.readdirSync(snapshotArchiveDir)
+    .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+    .map((name) => {
+      const date = name.replace(/\.json$/, '')
+      const rates = loadSnapshotFromArchive(date)
+      if (!rates) return null
+      return { date, rates }
+    })
+    .filter(Boolean)
+    .sort((lhs, rhs) => lhs.date.localeCompare(rhs.date))
 }
 
 async function fetchLatestRates() {
@@ -326,12 +360,64 @@ function computeCrossRates(fromRate, rates) {
   return output
 }
 
+function buildArchiveYearPayloads(snapshots) {
+  const byYear = {}
+
+  for (const snapshot of snapshots) {
+    const year = snapshot.date.slice(0, 4)
+    byYear[year] ??= {
+      year,
+      base: 'eur',
+      snapshots: []
+    }
+    byYear[year].snapshots.push({
+      date: snapshot.date,
+      rates: snapshot.rates
+    })
+  }
+
+  for (const payload of Object.values(byYear)) {
+    payload.snapshots.sort((lhs, rhs) => lhs.date.localeCompare(rhs.date))
+  }
+
+  return byYear
+}
+
+function buildArchiveManifest({ availableDates, latestRates, generatedAt }) {
+  const sortedDates = [...availableDates].sort((lhs, rhs) => lhs.localeCompare(rhs))
+  let gapCount = 0
+
+  for (let index = 1; index < sortedDates.length; index += 1) {
+    const previous = sortedDates[index - 1]
+    const current = sortedDates[index]
+    if (!previous || !current) continue
+    const previousDate = new Date(`${previous}T00:00:00Z`)
+    const currentDate = new Date(`${current}T00:00:00Z`)
+    const diffDays = Math.round((currentDate - previousDate) / (24 * 60 * 60 * 1000))
+    if (diffDays > 1) {
+      gapCount += diffDays - 1
+    }
+  }
+
+  return {
+    generatedAt,
+    base: 'eur',
+    earliestDate: sortedDates[0] ?? null,
+    latestDate: sortedDates[sortedDates.length - 1] ?? null,
+    availableDates: sortedDates,
+    gapCount,
+    supportedCurrencies: Object.keys(latestRates).sort()
+  }
+}
+
 module.exports = {
+  buildArchiveManifest,
+  buildArchiveYearPayloads,
   buildCurrencyList,
   computeCrossRates,
   dateDaysAgoUTC,
+  loadAllSnapshotsFromArchive,
   loadSnapshotFromArchive,
-  pruneSnapshotArchive,
   saveSnapshotToArchive,
   significantNum,
   snapshotArchiveDir,
