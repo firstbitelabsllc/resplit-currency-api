@@ -122,9 +122,14 @@ GitHub sends failure emails to repo admins by default.
 ### Sentry command center (now wired)
 The publisher now emits grouped issues, structured logs, and cron check-ins to Sentry.
 
-Required GitHub secret:
+Preferred GitHub secret:
 ```bash
-gh secret set SENTRY_DSN --repo firstbitelabsllc/resplit-currency-api --body "YOUR_PROJECT_DSN"
+gh secret set SENTRY_CURRENCY_API_DSN --repo firstbitelabsllc/resplit-currency-api --body "YOUR_PROJECT_DSN"
+```
+
+Shared fallback secret still supported:
+```bash
+gh secret set SENTRY_DSN --repo firstbitelabsllc/resplit-currency-api --body "SHARED_PROJECT_DSN"
 ```
 
 Current monitor + signal model:
@@ -145,6 +150,12 @@ Quick verification after a manual workflow run:
 gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api
 gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3
 ```
+
+Expected workflow env wiring:
+- `SENTRY_CURRENCY_API_DSN`: preferred DSN
+- `SENTRY_DSN`: shared fallback only
+- `SENTRY_ENVIRONMENT=production`
+- `SENTRY_RELEASE=${GITHUB_SHA}`
 
 ### Slack webhook (5 min setup)
 Add to `.github/workflows/run.yml` after the deploy steps:

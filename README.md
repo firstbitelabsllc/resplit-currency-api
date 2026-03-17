@@ -61,8 +61,28 @@ GET https://resplit-currency-api.pages.dev/latest/aed.json
 |--------|-------------|
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API token with Pages edit permission |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
+| `SENTRY_CURRENCY_API_DSN` | Preferred DSN for the dedicated currency-api Sentry project |
+| `SENTRY_DSN` | Optional shared fallback DSN if a dedicated project is not configured |
 
 `GITHUB_TOKEN` is provided automatically. Also used to push snapshot archive commits.
+
+## Observability
+
+This repo already includes Sentry-based workflow observability.
+
+- `scripts/sentry-monitoring.js` initializes `@sentry/node` with surface, environment, and release metadata.
+- `scripts/sentry-checkin.js` emits cron monitor check-ins for the daily publish workflow.
+- `currscript.js`, `scripts/validate-package.js`, and `scripts/smoke-check-deploy.js` all run through the monitored wrapper and report grouped failures.
+- The GitHub Actions workflow prefers `SENTRY_CURRENCY_API_DSN` and falls back to shared `SENTRY_DSN` only if the dedicated secret is absent.
+
+Current coverage:
+
+- grouped issue capture for publish, validation, deploy, and smoke-check failures
+- structured Sentry logs for monitoring signals
+- release and environment tagging
+- cron monitor check-ins for the daily publish job
+
+This is not identical to `resplit-web` in implementation because this repo is a Node cron publisher, not a browser/server app. It is equivalent in intent: release/environment tagging, error capture, structured logs, and runtime health monitoring.
 
 ## Local development
 
@@ -73,3 +93,4 @@ npm run check
 ```
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.
+If you want local Sentry events while running scripts manually, set `SENTRY_CURRENCY_API_DSN` or `SENTRY_DSN`.

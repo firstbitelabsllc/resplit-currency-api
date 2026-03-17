@@ -37,6 +37,8 @@ dated Cloudflare branch deployments for missing days. Files older than
 |--------|--------|-------|
 | `CLOUDFLARE_ACCOUNT_ID` | Required | Verified by workflow before deploy |
 | `CLOUDFLARE_API_TOKEN` | Required | Verified by workflow before deploy |
+| `SENTRY_CURRENCY_API_DSN` | Recommended | Preferred DSN for the dedicated currency-api Sentry project |
+| `SENTRY_DSN` | Optional fallback | Shared fallback DSN if the dedicated project secret is not configured |
 | `GITHUB_TOKEN` | Auto | Provided by GitHub Actions |
 
 ## URL Patterns
@@ -63,6 +65,7 @@ Each daily run deploys to 3 Cloudflare branches:
 - **GitHub Actions**: Workflow run history, failure notifications (email by default)
 - **Cloudflare Analytics**: Request counts, bandwidth, error rates per Pages project (Cloudflare dashboard → Pages → resplit-currency-api → Analytics)
 - **GitHub Actions alerts**: Configure in repo Settings → Actions → Notifications
+- **Sentry**: grouped publisher issues, structured logs, and cron monitor check-ins via `scripts/sentry-monitoring.js` and `scripts/sentry-checkin.js`
 
 ### Optional Upgrades
 - **Cloudflare Web Analytics**: Add JS snippet to track real usage (free, no cookies)
