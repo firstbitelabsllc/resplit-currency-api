@@ -10,9 +10,13 @@ GitHub Actions (daily cron @ 00:00 UTC)
         │
         ├──► snapshot-archive/ (committed to repo, local-first history)
         │
-        ├──► Cloudflare Pages (primary CDN)
+        ├──► Cloudflare Pages (artifact CDN)
         │      resplit-currency-api.pages.dev
         │      {date}.resplit-currency-api.pages.dev (fallback only)
+        │
+        ├──► Cloudflare Worker (canonical FX API)
+        │      workers.dev during rollout
+        │      fx.resplit.app later
         │
         └──► GitHub Pages (fallback)
                firstbitelabsllc.github.io/resplit-currency-api
@@ -21,7 +25,8 @@ GitHub Actions (daily cron @ 00:00 UTC)
 The `snapshot-archive/` directory stores one JSON file per day (~5KB each).
 `buildSnapshotWindow` reads these local files first, only falling back to
 dated Cloudflare branch deployments for missing days. Files older than
-`snapshotRetentionDays` (32) are pruned automatically.
+`snapshotRetentionDays` (365) are pruned automatically. Small archive gaps are
+allowed and surfaced via `archive-manifest.json` and the canonical coverage route.
 
 ## Cloudflare Setup
 
@@ -29,6 +34,7 @@ dated Cloudflare branch deployments for missing days. Files older than
 - **Account ID**: (see .env.local or GitHub secrets)
 - **Pages Project**: `resplit-currency-api`
 - **Production URL**: https://resplit-currency-api.pages.dev
+- **Worker Name**: `resplit-fx`
 - **Wrangler CLI**: authenticated via `npx wrangler login` (OAuth stored at `~/.wrangler/config/default.toml`)
 
 ## GitHub Secrets (firstbitelabsllc/resplit-currency-api)
@@ -39,11 +45,12 @@ dated Cloudflare branch deployments for missing days. Files older than
 | `CLOUDFLARE_API_TOKEN` | Required | Verified by workflow before deploy |
 | `SENTRY_CURRENCY_API_DSN` | Recommended | Preferred DSN for the dedicated currency-api Sentry project |
 | `SENTRY_DSN` | Optional fallback | Shared fallback DSN if the dedicated project secret is not configured |
+| `CRON_SECRET` | Optional but recommended | Protects `/cron/fx-canary` |
 | `GITHUB_TOKEN` | Auto | Provided by GitHub Actions |
 
 ## URL Patterns
 
-### iOS App (ResplitCurrencyProvider)
+### Artifacts
 
 | Purpose | URL Pattern |
 |---------|-------------|
@@ -51,6 +58,14 @@ dated Cloudflare branch deployments for missing days. Files older than
 | 30-day history | `https://resplit-currency-api.pages.dev/history/30d/{code}.json` |
 | Dated snapshot | `https://{YYYY-MM-DD}.resplit-currency-api.pages.dev/snapshots/base-rates.json` |
 | Fallback | `https://firstbitelabsllc.github.io/resplit-currency-api/latest/{code}.json` |
+
+### Canonical API
+
+| Purpose | URL Pattern |
+|---------|-------------|
+| Quote | `https://<workers-dev-host>/quote?from={code}&to={code}&date={YYYY-MM-DD}` |
+| History | `https://<workers-dev-host>/history?from={code}&to={code}&start={YYYY-MM-DD}&end={YYYY-MM-DD}` |
+| Coverage | `https://<workers-dev-host>/coverage?from={code}&to={code}&anchorDate={YYYY-MM-DD}&days=30` |
 
 ### Deployments Per Run
 
@@ -64,8 +79,9 @@ Each daily run deploys to 3 Cloudflare branches:
 ### Built-in (free)
 - **GitHub Actions**: Workflow run history, failure notifications (email by default)
 - **Cloudflare Analytics**: Request counts, bandwidth, error rates per Pages project (Cloudflare dashboard → Pages → resplit-currency-api → Analytics)
+- **Cloudflare Workers Analytics**: Request counts, errors, p95 latency per Worker
 - **GitHub Actions alerts**: Configure in repo Settings → Actions → Notifications
-- **Sentry**: grouped publisher issues, structured logs, and cron monitor check-ins via `scripts/sentry-monitoring.js` and `scripts/sentry-checkin.js`
+- **Sentry**: grouped publisher and Worker issues, structured logs, and cron monitor check-ins via `scripts/sentry-monitoring.js`, `scripts/sentry-checkin.js`, and `worker/src/monitoring.mjs`
 
 ### Optional Upgrades
 - **Cloudflare Web Analytics**: Add JS snippet to track real usage (free, no cookies)

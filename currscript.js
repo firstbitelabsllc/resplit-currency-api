@@ -7,6 +7,7 @@ const {
 
 const indent = '\t'
 const historyDays = 30
+const snapshotRetentionDays = 365
 const rootDir = path.join(__dirname, 'package')
 const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 
@@ -34,7 +35,7 @@ async function main() {
   const recentSnapshots = await buildSnapshotWindow({
     todayDate: dateToday,
     latestRates,
-    retentionDays: historyDays + 2
+    retentionDays: snapshotRetentionDays
   })
   const archiveSnapshots = loadAllSnapshotsFromArchive()
   const historySnapshots = recentSnapshots.slice(-historyDays)
@@ -420,6 +421,7 @@ module.exports = {
   loadSnapshotFromArchive,
   saveSnapshotToArchive,
   significantNum,
+  snapshotRetentionDays,
   snapshotArchiveDir,
   toDateStringUTC,
   toLowerSorted

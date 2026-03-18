@@ -6,6 +6,7 @@
 # Is the API serving data?
 curl -s https://resplit-currency-api.pages.dev/latest/aed.json | head -c 100
 curl -s https://resplit-currency-api.pages.dev/history/30d/aed.json | head -c 100
+curl -s https://resplit-currency-api.pages.dev/archive-manifest.json | head -c 120
 
 # Is today's historical snapshot deployed?
 curl -s https://$(date -u +%Y-%m-%d).resplit-currency-api.pages.dev/snapshots/base-rates.json | head -c 100
@@ -15,6 +16,12 @@ curl -s https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json 
 
 # Last workflow run status
 gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5
+```
+
+If `FX_WORKER_BASE_URL` is configured for the repo, also verify:
+```bash
+curl -s "$FX_WORKER_BASE_URL/quote?from=AED&to=USD&date=$(date -u +%Y-%m-%d)" | head -c 160
+curl -s "$FX_WORKER_BASE_URL/coverage?from=AED&to=USD&anchorDate=$(date -u +%Y-%m-%d)&days=30" | head -c 160
 ```
 
 ## Failure Scenarios
@@ -77,7 +84,7 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
    ```bash
    curl -sI https://2026-01-15.resplit-currency-api.pages.dev/snapshots/base-rates.json | head -1
    ```
-3. If 404 — that date was before the pipeline started. Historical data only exists from the first run onward.
+3. If 404 — that date is outside retained history or there is an archive gap. The app can still use a saved per-receipt conversion snapshot if one exists.
 4. Validate fast-path artifacts:
    ```bash
    curl -s https://resplit-currency-api.pages.dev/latest/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('from'), 'usd' in d.get('rates',{}))"
@@ -132,6 +139,11 @@ Shared fallback secret still supported:
 gh secret set SENTRY_DSN --repo firstbitelabsllc/resplit-currency-api --body "SHARED_PROJECT_DSN"
 ```
 
+Optional Worker canary secret:
+```bash
+gh secret set CRON_SECRET --repo firstbitelabsllc/resplit-currency-api --body "LONG_RANDOM_SECRET"
+```
+
 Current monitor + signal model:
 - Cron monitor slug: `resplit-currency-api-daily-publish`
 - Schedule: `0 0 * * *` UTC
@@ -142,6 +154,7 @@ Current monitor + signal model:
   - `missing_dated_snapshot_deployment`
   - `cloudflare_deploy_failure`
   - `github_pages_deploy_failure`
+  - `fx_worker_deploy_failure`
   - `smoke_check_mismatch`
   - `validate_package_failed`
 
@@ -178,22 +191,25 @@ Set up UptimeRobot to check:
 ```
 open.er-api.com ──► GitHub Actions (daily 00:00 UTC, ~40s)
                          │
-                    ┌────┴─────────────────────────┐
+                    ┌────┴──────────────────────────────────────┐
                     ▼                               ▼
             snapshot-archive/               ┌───────┴───────┐
             (committed to repo,             ▼               ▼
-             local-first history)     Cloudflare        GitHub
-                                       Pages            Pages
-                                            │               │
-                                            └───────┬───────┘
-                                                    ▼
-                                          iOS App (ResplitCurrencyProvider)
-                                                    │
-                                                    ▼
-                                              FXRateCache (on-device)
+             local-first history,     Cloudflare        GitHub
+             365-day retention)        Pages            Pages
+                    │                       │               │
+                    └──────────────┬────────┴───────────────┘
+                                   ▼
+                           FX Worker (canonical API)
+                                   │
+                                   ▼
+                           iOS App / resplit-web
+                                   │
+                                   ▼
+                             FXRateCache (short-lived)
 ```
 
-History is now built from the committed `snapshot-archive/` directory (local-first).
+History is built from the committed `snapshot-archive/` directory (local-first, 365-day retention).
 Dated Cloudflare branch deployments are a network fallback only, used to backfill
 missing days (e.g., first run or recovery from a reset).
 
@@ -202,7 +218,9 @@ missing days (e.g., first run or recovery from a reset).
 | File | Purpose |
 |------|---------|
 | `currscript.js` | Fetch rates, generate JSON files, manage snapshot archive |
-| `snapshot-archive/` | Committed daily snapshots (~5KB each, pruned past 32 days). Local-first history source. |
+| `snapshot-archive/` | Committed daily snapshots (~5KB each, retained for 365 days with small gaps tolerated). Local-first history source. |
+| `worker/` | Cloudflare Worker runtime for canonical `quote`, `history`, `coverage`, and `cron/fx-canary` routes |
+| `wrangler.jsonc` | Worker deployment config |
 | `.github/workflows/run.yml` | Daily cron, deploy to CDNs, commit archive |
 | `scripts/sentry-monitoring.js` | Shared Sentry issue, log, and cron check-in helper |
 | `scripts/sentry-checkin.js` | Workflow helper for start/finish/error check-ins |
@@ -219,4 +237,5 @@ missing days (e.g., first run or recovery from a reset).
 | Cloudflare Account ID | GitHub secret + `.env.local` | Never changes |
 | Cloudflare API Token | GitHub secret + `.env.local` | No expiration, rotate if compromised |
 | Sentry DSN | GitHub secret (`SENTRY_DSN`) | Rotate when project DSN changes |
+| Cron Secret | GitHub secret (`CRON_SECRET`) + Worker secret | Rotate on suspected exposure |
 | GitHub Token | Auto-provided by Actions | Auto-rotated |
