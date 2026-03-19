@@ -10,8 +10,8 @@
     "check": "npm run generate && npm run validate && npm run test"
   },
   "dependencies": {
-    "@sentry/cloudflare": "^10.43.0",
-    "@sentry/node": "^10.43.0",
+    "@sentry/cloudflare": "^10.44.0",
+    "@sentry/node": "^10.44.0",
     "fs-extra": "^11.2.0"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@
   "compatibility_date": "2026-03-17",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "upload_source_maps": true,
   "vars": {
     "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
     "SENTRY_ENVIRONMENT": "production"
