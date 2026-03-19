@@ -11,9 +11,14 @@ const {
   loadSnapshotFromArchive,
   saveSnapshotToArchive,
   significantNum,
+  snapshotRetentionDays,
   snapshotArchiveDir,
   toLowerSorted
 } = require('../currscript')
+
+test('snapshot retention is pinned to one year', () => {
+  assert.equal(snapshotRetentionDays, 365)
+})
 
 test('toLowerSorted normalizes keys, filters invalid values, and sorts', () => {
   const input = {

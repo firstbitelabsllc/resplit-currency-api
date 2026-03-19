@@ -4,6 +4,7 @@ const { captureIssue, runMonitoredScript } = require('./sentry-monitoring')
 
 const cloudflareBase = process.env.CF_PAGES_BASE || 'https://resplit-currency-api.pages.dev'
 const fallbackBase = process.env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api'
+const workerBase = process.env.FX_WORKER_BASE_URL || null
 const dateToday = process.env.EXPECTED_DATE || toDateStringUTC(new Date())
 
 runMonitoredScript('smoke_check_deploy', main, {
@@ -65,9 +66,47 @@ async function main() {
     throw new Error(`dated deployment date mismatch: expected ${dateToday}, got ${datedSnapshot.date}`)
   }
 
+  if (workerBase) {
+    await smokeCheckWorker(workerBase)
+  } else {
+    console.log('smoke-check-deploy: skipping worker smoke check (FX_WORKER_BASE_URL not set)')
+  }
+
   console.log(
     `smoke-check-deploy: OK (date=${dateToday}, historyPoints=${history.points.length}, cf=${cloudflareBase})`
   )
+}
+
+async function smokeCheckWorker(baseUrl) {
+  const normalizedBase = baseUrl.replace(/\/+$/, '')
+  const historyStart = dateDaysAgoUTC(2)
+  const quote = await fetchJSONWithRetry(
+    `${normalizedBase}/quote?from=AED&to=USD&date=${dateToday}`
+  )
+  const history = await fetchJSONWithRetry(
+    `${normalizedBase}/history?from=AED&to=USD&start=${historyStart}&end=${dateToday}`
+  )
+  const coverage = await fetchJSONWithRetry(
+    `${normalizedBase}/coverage?from=AED&to=USD&anchorDate=${dateToday}&days=30`
+  )
+
+  if (quote.from !== 'AED' || quote.to !== 'USD' || quote.requestedDate !== dateToday) {
+    throw new Error(`worker quote shape mismatch for ${normalizedBase}`)
+  }
+  assertISODate(quote.resolvedDate, 'worker quote resolvedDate')
+  assertPositive(quote.rate, 'worker quote rate')
+
+  if (!Array.isArray(history.points) || history.points.length < 1) {
+    throw new Error(`worker history has no points for ${normalizedBase}`)
+  }
+  for (const point of history.points) {
+    assertISODate(point.date, 'worker history point date')
+    assertPositive(point.rate, `worker history rate at ${point.date}`)
+  }
+
+  if (!coverage?.quote || !coverage?.historyCoverage) {
+    throw new Error(`worker coverage shape mismatch for ${normalizedBase}`)
+  }
 }
 
 async function fetchJSONWithRetry(url, attempts = 8, delayMs = 3_000) {
@@ -109,4 +148,10 @@ function assertPositive(value, fieldName) {
 
 function toDateStringUTC(date) {
   return date.toISOString().slice(0, 10)
+}
+
+function dateDaysAgoUTC(daysAgo) {
+  const date = new Date()
+  date.setUTCDate(date.getUTCDate() - daysAgo)
+  return toDateStringUTC(date)
 }
