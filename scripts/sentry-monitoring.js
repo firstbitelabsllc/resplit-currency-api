@@ -275,15 +275,8 @@ function asError(error) {
 }
 
 module.exports = {
-  DAILY_PUBLISH_MONITOR_SLUG,
   captureIssue,
   finishWorkflowCheckIn,
-  flush,
-  getRuntimeMetadata,
-  hasReportedError,
-  initializeSentry,
-  isEnabled,
-  logEvent,
   runMonitoredScript,
   startWorkflowCheckIn
 }

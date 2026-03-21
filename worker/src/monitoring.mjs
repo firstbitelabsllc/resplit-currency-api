@@ -18,7 +18,7 @@ const FX_CANARY_MONITOR_CONFIG = {
  * @param {{ SENTRY_DSN?: string }} env
  * @returns {boolean}
  */
-export function isFxMonitoringEnabled(env) {
+function isFxMonitoringEnabled(env) {
   return Boolean(env.SENTRY_DSN)
 }
 

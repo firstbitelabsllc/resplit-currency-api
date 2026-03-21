@@ -16,7 +16,7 @@ export function defaultFxCanaryAnchorDates(today = new Date()) {
   )]
 }
 
-export const DEFAULT_FX_CANARY_PAIRS = [
+const DEFAULT_FX_CANARY_PAIRS = [
   { from: 'AED', to: 'USD' },
   { from: 'MYR', to: 'USD' },
   { from: 'EUR', to: 'USD' },
