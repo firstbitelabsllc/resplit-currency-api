@@ -13,10 +13,12 @@ test('defaultFxCanaryAnchorDates stays inside the retention window', async () =>
 test('runFxCanary checks the retention-safe default anchors', async () => {
   const { defaultFxCanaryAnchorDates, runFxCanary } = await import('../worker/src/fx-canary.mjs')
   const seenAnchorDates = []
-  const expectedAnchorDates = defaultFxCanaryAnchorDates(new Date('2026-03-21T12:00:00.000Z'))
+  const fixedToday = new Date('2026-03-21T12:00:00.000Z')
+  const expectedAnchorDates = defaultFxCanaryAnchorDates(fixedToday)
 
   const report = await runFxCanary({
     pairs: [{ from: 'AED', to: 'USD' }],
+    anchorDates: expectedAnchorDates,
     buildReport: async ({ anchorDate }) => {
       seenAnchorDates.push(anchorDate)
       return {
