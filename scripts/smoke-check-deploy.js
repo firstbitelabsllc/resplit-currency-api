@@ -2,20 +2,23 @@
 
 const { captureIssue, runMonitoredScript } = require('./sentry-monitoring')
 
-const cloudflareBase = process.env.CF_PAGES_BASE || 'https://resplit-currency-api.pages.dev'
-const fallbackBase = process.env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api'
-const workerBase = process.env.FX_WORKER_BASE_URL || null
-const dateToday = process.env.EXPECTED_DATE || toDateStringUTC(new Date())
+const defaultWorkerBase = 'https://fx.resplit.app'
 
-runMonitoredScript('smoke_check_deploy', main, {
-  workflow: 'daily_publish',
-  failureSignal: 'smoke_check_mismatch'
-}).catch((error) => {
-  console.error(`smoke-check-deploy: FAILED\n${error.stack || error.message}`)
-  process.exitCode = 1
-})
+if (require.main === module) {
+  runMonitoredScript('smoke_check_deploy', main, {
+    workflow: 'daily_publish',
+    failureSignal: 'smoke_check_mismatch'
+  }).catch((error) => {
+    console.error(`smoke-check-deploy: FAILED\n${error.stack || error.message}`)
+    process.exitCode = 1
+  })
+}
 
 async function main() {
+  const cloudflareBase = process.env.CF_PAGES_BASE || 'https://resplit-currency-api.pages.dev'
+  const fallbackBase = process.env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api'
+  const workerBase = resolveWorkerBase()
+  const dateToday = process.env.EXPECTED_DATE || toDateStringUTC(new Date())
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
   const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
   const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
@@ -67,9 +70,9 @@ async function main() {
   }
 
   if (workerBase) {
-    await smokeCheckWorker(workerBase)
+    await smokeCheckWorker(workerBase, dateToday)
   } else {
-    console.log('smoke-check-deploy: skipping worker smoke check (FX_WORKER_BASE_URL not set)')
+    console.log('smoke-check-deploy: skipping worker smoke check (SKIP_WORKER_SMOKE_CHECK=1)')
   }
 
   console.log(
@@ -77,7 +80,14 @@ async function main() {
   )
 }
 
-async function smokeCheckWorker(baseUrl) {
+function resolveWorkerBase(env = process.env) {
+  if (env.SKIP_WORKER_SMOKE_CHECK === '1') {
+    return null
+  }
+  return (env.FX_WORKER_BASE_URL || defaultWorkerBase).replace(/\/+$/, '')
+}
+
+async function smokeCheckWorker(baseUrl, dateToday) {
   const normalizedBase = baseUrl.replace(/\/+$/, '')
   const historyStart = dateDaysAgoUTC(2)
   const quote = await fetchJSONWithRetry(
@@ -154,4 +164,12 @@ function dateDaysAgoUTC(daysAgo) {
   const date = new Date()
   date.setUTCDate(date.getUTCDate() - daysAgo)
   return toDateStringUTC(date)
+}
+
+module.exports = {
+  defaultWorkerBase,
+  fetchJSONWithRetry,
+  main,
+  resolveWorkerBase,
+  smokeCheckWorker,
 }

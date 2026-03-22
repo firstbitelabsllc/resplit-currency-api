@@ -15,8 +15,7 @@ GitHub Actions (daily cron @ 00:00 UTC)
         │      {date}.resplit-currency-api.pages.dev (fallback only)
         │
         ├──► Cloudflare Worker (canonical FX API)
-        │      workers.dev during rollout
-        │      fx.resplit.app later
+        │      fx.resplit.app
         │
         └──► GitHub Pages (fallback)
                firstbitelabsllc.github.io/resplit-currency-api
@@ -63,9 +62,9 @@ allowed and surfaced via `archive-manifest.json` and the canonical coverage rout
 
 | Purpose | URL Pattern |
 |---------|-------------|
-| Quote | `https://<workers-dev-host>/quote?from={code}&to={code}&date={YYYY-MM-DD}` |
-| History | `https://<workers-dev-host>/history?from={code}&to={code}&start={YYYY-MM-DD}&end={YYYY-MM-DD}` |
-| Coverage | `https://<workers-dev-host>/coverage?from={code}&to={code}&anchorDate={YYYY-MM-DD}&days=30` |
+| Quote | `https://fx.resplit.app/quote?from={code}&to={code}&date={YYYY-MM-DD}` |
+| History | `https://fx.resplit.app/history?from={code}&to={code}&start={YYYY-MM-DD}&end={YYYY-MM-DD}` |
+| Coverage | `https://fx.resplit.app/coverage?from={code}&to={code}&anchorDate={YYYY-MM-DD}&days=30` |
 
 ### Deployments Per Run
 
@@ -102,4 +101,4 @@ Each daily run deploys to 3 Cloudflare branches:
 - **Token rotation**: Regenerate CLOUDFLARE_API_TOKEN periodically at dash.cloudflare.com/profile/api-tokens
 - **Local env template**: `.env.example` documents required local deploy vars
 - **Artifact quality gate**: `scripts/validate-package.js` blocks deploy if unversioned structure is invalid
-- **Post-deploy smoke check**: `scripts/smoke-check-deploy.js` verifies Cloudflare, dated branch, and GitHub fallback
+- **Post-deploy smoke check**: `scripts/smoke-check-deploy.js` verifies Cloudflare, dated branch, GitHub fallback, and the canonical Worker (`https://fx.resplit.app`) by default

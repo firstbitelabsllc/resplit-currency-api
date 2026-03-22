@@ -18,8 +18,9 @@ curl -s https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json 
 gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5
 ```
 
-If `FX_WORKER_BASE_URL` is configured for the repo, also verify:
+Also verify the canonical Worker host (`https://fx.resplit.app`) unless you explicitly override it:
 ```bash
+FX_WORKER_BASE_URL="${FX_WORKER_BASE_URL:-https://fx.resplit.app}"
 curl -s "$FX_WORKER_BASE_URL/quote?from=AED&to=USD&date=$(date -u +%Y-%m-%d)" | head -c 160
 curl -s "$FX_WORKER_BASE_URL/coverage?from=AED&to=USD&anchorDate=$(date -u +%Y-%m-%d)&days=30" | head -c 160
 ```
@@ -225,7 +226,7 @@ missing days (e.g., first run or recovery from a reset).
 | `scripts/sentry-monitoring.js` | Shared Sentry issue, log, and cron check-in helper |
 | `scripts/sentry-checkin.js` | Workflow helper for start/finish/error check-ins |
 | `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
-| `scripts/smoke-check-deploy.js` | Verifies deployed endpoints after publish |
+| `scripts/smoke-check-deploy.js` | Verifies Pages, dated snapshot, GitHub fallback, and canonical Worker after publish (`SKIP_WORKER_SMOKE_CHECK=1` only when you intentionally need to bypass the Worker check) |
 | `.env.local` | Local Cloudflare credentials (gitignored) |
 | `INFRASTRUCTURE.md` | Account IDs, URLs, secrets inventory |
 | `package.json` | Dependencies and publisher scripts |

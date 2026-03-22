@@ -34,11 +34,11 @@ https://resplit-currency-api.pages.dev/archive-manifest.json
 https://resplit-currency-api.pages.dev/archive-years/2026.json
 ```
 
-**canonical FX Worker (rollout host):**
+**canonical FX Worker:**
 ```
-https://<workers-dev-host>/quote?from=AED&to=USD&date=2026-02-27
-https://<workers-dev-host>/history?from=AED&to=USD&start=2026-02-18&end=2026-02-27
-https://<workers-dev-host>/coverage?from=AED&to=USD&anchorDate=2026-02-27&days=30
+https://fx.resplit.app/quote?from=AED&to=USD&date=2026-02-27
+https://fx.resplit.app/history?from=AED&to=USD&start=2026-02-18&end=2026-02-27
+https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-02-27&days=30
 ```
 
 **GitHub Pages fallback:**
@@ -107,5 +107,8 @@ npm run check
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.
 If you want local Sentry events while running scripts manually, set `SENTRY_CURRENCY_API_DSN` or `SENTRY_DSN`.
+`npm run smoke:deploy` now defaults its Worker probe to `https://fx.resplit.app`; set
+`FX_WORKER_BASE_URL` to point at an alternate host or `SKIP_WORKER_SMOKE_CHECK=1` only when you
+intentionally need to bypass the canonical Worker check.
 
 The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over.
