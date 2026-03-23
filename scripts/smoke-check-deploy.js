@@ -18,10 +18,15 @@ async function main() {
   const cloudflareBase = process.env.CF_PAGES_BASE || 'https://resplit-currency-api.pages.dev'
   const fallbackBase = process.env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api'
   const workerBase = resolveWorkerBase()
-  const dateToday = process.env.EXPECTED_DATE || toDateStringUTC(new Date())
+  const requestedDate = process.env.EXPECTED_DATE || null
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
   const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
   const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
+  const dateToday = resolveExpectedDate({
+    requestedDate,
+    latestDate: latest?.date,
+    metaLatestDate: meta?.latestDate,
+  })
   const datedSnapshotUrl = `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
   let datedSnapshot
   try {
@@ -32,6 +37,7 @@ async function main() {
       error,
       context: {
         workflow: 'daily_publish',
+        requested_date: requestedDate,
         expected_date: dateToday,
         url: datedSnapshotUrl
       }
@@ -85,6 +91,22 @@ function resolveWorkerBase(env = process.env) {
     return null
   }
   return (env.FX_WORKER_BASE_URL || defaultWorkerBase).replace(/\/+$/, '')
+}
+
+function resolveExpectedDate({ requestedDate, latestDate, metaLatestDate }) {
+  if (requestedDate) {
+    return requestedDate
+  }
+
+  if (metaLatestDate) {
+    return metaLatestDate
+  }
+
+  if (latestDate) {
+    return latestDate
+  }
+
+  return toDateStringUTC(new Date())
 }
 
 async function smokeCheckWorker(baseUrl, dateToday) {
@@ -170,6 +192,7 @@ module.exports = {
   defaultWorkerBase,
   fetchJSONWithRetry,
   main,
+  resolveExpectedDate,
   resolveWorkerBase,
   smokeCheckWorker,
 }
