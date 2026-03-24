@@ -124,3 +124,38 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red, dated snapshot coverage regresses, or the Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted from observability debt into a launch requirement.
+
+## 2026-03-24 10:38 EDT
+
+- Rehydrated from `RALPH.md`, the repo-local `hooks` + `release-train` skills, the nurse log, the repo ledger, the latest Actions runs, and clean trunk state on `main`; no competing hot lane or repo-local red surfaced in `resplit-currency-api`.
+- Fresh proof this run:
+  - `npm ci`
+  - `npm run check`
+  - `git status --short --branch`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+- Live proof details:
+  - `npm run check` regenerated artifacts for `2026-03-24`, passed validation, and passed all `24` Node tests.
+  - `git status --short --branch` stayed clean after `check` and again after the live probes (`## main...origin/main`).
+  - `npm run smoke:deploy` passed with `date=2026-03-24` and `historyPoints=30`.
+  - Cloudflare Pages latest `aed` payload date: `2026-03-24`; GitHub Pages fallback latest `aed` payload date: `2026-03-24`.
+  - Cloudflare Pages 30-day history window: `30` points spanning `2026-02-23` through `2026-03-24`.
+  - Archive manifest remains healthy on trunk: earliest `2025-03-18`, latest `2026-03-24`, `370` available dates, `0` acknowledged gaps.
+  - Canonical Worker quote `AED -> USD` for `2026-03-24`: `0.27228722`.
+  - Canonical Worker coverage for the same pair/date returned HTTP `200` with the requested `30`-day window and no missing days.
+  - Dated Cloudflare snapshot branch for `2026-03-24` serves `base=eur` with `166` rates.
+- Latest upstream publish proof remains green:
+  - scheduled `Update Currency Rates` run `23469629324` succeeded on `main`
+  - downstream `pages build and deployment` run `23469664623` succeeded on `gh-pages`
+- No repo-local fix, deploy, or workflow edit was required this pass. Trunk stayed clean at `0542b7ed`.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red, live FX payload dates drift off `UTC` day, dated snapshot coverage regresses, or the Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted from observability debt into a launch requirement.
