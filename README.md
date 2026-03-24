@@ -93,7 +93,7 @@ Current coverage:
 - grouped issue capture for Worker route and coverage failures
 - structured Sentry logs for monitoring signals
 - release and environment tagging
-- cron monitor check-ins for the daily publish job and Worker canary
+- cron monitor check-ins for the daily publish job, plus Worker canary check-ins when `/cron/fx-canary` is invoked by an external scheduler or manual probe
 
 This is not identical to `resplit-web` in implementation because this repo is a Node cron publisher, not a browser/server app. It is equivalent in intent: release/environment tagging, error capture, structured logs, and runtime health monitoring.
 

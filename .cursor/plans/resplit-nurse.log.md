@@ -258,6 +258,71 @@
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: either add a small `knip` config so production dead-code runs understand the repo’s script entrypoints, or continue fast-exiting until publish/deploy/coverage proof breaks or Sentry project ownership becomes a launch requirement.
 
+## 2026-03-24 18:29 EDT
+
+- Rehydrated from `RALPH.md`, repo-local `release-train` + `hooks`, the nurse log, the repo ledger, clean trunk state, and the latest workflow/runtime docs before running another 10-role sweep.
+- Shipped one repo-local truthfulness slice on top of green trunk: corrected the Worker canary monitoring wording so repo docs no longer imply `/cron/fx-canary` is scheduled automatically in this repo.
+  - [`README.md`](/Users/leokwan/Development/resplit-currency-api/README.md)
+  - [`INFRASTRUCTURE.md`](/Users/leokwan/Development/resplit-currency-api/INFRASTRUCTURE.md)
+  - [`RUNBOOK.md`](/Users/leokwan/Development/resplit-currency-api/RUNBOOK.md)
+- Fresh proof this run:
+  - `npm run check`
+  - `git status --short --branch`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+  - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~5..HEAD`
+  - Sentry MCP checks against org `firstbite-labs`
+- Live proof details:
+  - `npm run check` passed with `363` snapshot days (`362 local`, `0 network`) and `27/27` Node tests passing.
+  - `git status --short --branch` was clean before the doc patch (`## main...origin/main`).
+  - `npm run smoke:deploy` passed with `date=2026-03-24` and `historyPoints=30`.
+  - Latest upstream publish proof is still green on trunk:
+    - scheduled `Update Currency Rates` run `23469629324` succeeded on `main`
+    - downstream `pages build and deployment` run `23469664623` succeeded on `gh-pages`
+  - Live surfaces returned the expected current payloads:
+    - Cloudflare Pages latest `aed` date `2026-03-24`
+    - Cloudflare Pages 30-day history spans `2026-02-23` through `2026-03-24`
+    - archive manifest reports `earliestDate=2025-03-18`, `latestDate=2026-03-24`, `370` available dates
+    - GitHub Pages fallback latest `aed` date `2026-03-24`
+    - canonical Worker quote `AED -> USD` resolved exactly at `0.27228722`
+    - canonical Worker coverage returned `availableDays=30`, `requestedDays=30`, `missingDayCount=0`
+    - dated snapshot branch `2026-03-24` served `base=eur` with `166` rates
+  - Dead-code sweep outcome:
+    - `resplit-currency-api.knip` clean
+    - `resplit-currency-api.knip.production` clean
+    - only `resplit-web` still emitted production dead-code findings; no duplicate cleanup slice is needed in this repo
+  - Sentry/observability state:
+    - org `firstbite-labs` still exposes `resplit-ios`, `resplit-ios-clip`, and `resplit-web`, but no dedicated `resplit-currency-api` project
+    - unresolved Sentry issue searches for `smoke_check_mismatch`, `currency_publish_failed`, and `validate_package_failed` in the last `30` days returned no matches
+    - aggregate error-event count for those same release-signal terms in the last `30` days returned `0`
+- Sidecar review pressure from this run:
+  - no code-review regression surfaced in `HEAD~5..HEAD`; the only functional delta there remains the route-proof expansion in [`tests/fx-worker-routes.test.js`](/Users/leokwan/Development/resplit-currency-api/tests/fx-worker-routes.test.js)
+  - architecture/test lane found no ship blocker, only a possible future hardening for UTC-boundary stability in the authorized canary test
+  - workflow/runtime drift lane confirmed the docs were the only overstated surface left in this repo
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; no locale catalog or non-English runtime surface lives in this repo.
+  - `2 App Store Connect Feedback Triage`: no-op; no repo-local ASC/TestFlight plan or bug ownership lives here.
+  - `3 Sentry + Seer Error Hunter`: blocked on ownership gap, not active incidents; no dedicated `resplit-currency-api` Sentry project exists, but current issue/error searches are clean.
+  - `4 UX Feedback Triage Lead`: no-op; this repo owns FX payload/runtime surfaces, not product UX feedback queues.
+  - `5 Code Review + Clipdiff Auditor`: no-op; `clipdiff` and sidecar review found the current trunk slice low-risk with focused route proof in place.
+  - `6 UX Uniformity + Canonical Surface Mayor`: shipped doc/runtime parity fix for the Worker canary monitoring claim.
+  - `7 Dead Code + Drift Analyzer`: no-op; repo-local dead-code sweeps are clean.
+  - `8 Architecture + Test Discipline Guardian`: blocked on non-release debt; route proof is materially better now, but there is still optional future hardening for time-dependent canary test stability.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and smoke probes, not App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata and screenshot ordering live outside this repo.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future publish/deploy run goes red, live FX payload dates drift, dated snapshot coverage regresses, or observability ownership is raised from debt to launch requirement. If another small repo-local slice is needed, harden the authorized canary test against UTC-boundary timing.
+
 ## 2026-03-24 16:30 EDT
 
 - Rehydrated from `RALPH.md`, repo-local `hooks` + `release-train`, the nurse log, the local ledger, and clean trunk state, then ran the full 10-role sweep again instead of a proof-only fast-exit.

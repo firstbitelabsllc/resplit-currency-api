@@ -145,6 +145,8 @@ Optional Worker canary secret:
 gh secret set CRON_SECRET --repo firstbitelabsllc/resplit-currency-api --body "LONG_RANDOM_SECRET"
 ```
 
+Note: this repo exposes `/cron/fx-canary` and reports Sentry canary check-ins when that route is called, but it does not schedule the route on its own. Wire an external scheduler before treating the Worker canary as live recurring coverage.
+
 Current monitor + signal model:
 - Cron monitor slug: `resplit-currency-api-daily-publish`
 - Schedule: `0 0 * * *` UTC

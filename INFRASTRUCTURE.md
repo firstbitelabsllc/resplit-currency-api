@@ -80,7 +80,7 @@ Each daily run deploys to 3 Cloudflare branches:
 - **Cloudflare Analytics**: Request counts, bandwidth, error rates per Pages project (Cloudflare dashboard → Pages → resplit-currency-api → Analytics)
 - **Cloudflare Workers Analytics**: Request counts, errors, p95 latency per Worker
 - **GitHub Actions alerts**: Configure in repo Settings → Actions → Notifications
-- **Sentry**: grouped publisher and Worker issues, structured logs, and cron monitor check-ins via `scripts/sentry-monitoring.js`, `scripts/sentry-checkin.js`, and `worker/src/monitoring.mjs`
+- **Sentry**: grouped publisher and Worker issues, structured logs, cron monitor check-ins for the daily publish workflow, and Worker canary check-ins when `/cron/fx-canary` is invoked by an external scheduler or manual probe
 
 ### Optional Upgrades
 - **Cloudflare Web Analytics**: Add JS snippet to track real usage (free, no cookies)
