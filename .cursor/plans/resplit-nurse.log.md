@@ -29,3 +29,20 @@
   - exact `Node.js 20 actions are deprecated` warning is gone from the run log
 - Current repo status: `GO`. No actionable blocker remains in `resplit-currency-api`; launch blockers are still outside this repo in `resplit-ios`.
 - Non-blocking follow-up signal: the workflow still warns that `SENTRY_DSN` and `CRON_SECRET` are not configured for the FX Worker runtime.
+
+## 2026-03-23 22:39 EDT
+
+- Rehydrated repo state again and found the nurse contract gap was still real on trunk: no `RALPH.md`, no repo-local `ai/skills/hooks/SKILL.md`, and no repo-local `ai/skills/release-train/SKILL.md`.
+- Added those repo-owned coordination files so future nurse/release-train runs can rehydrate from this repo instead of falling back to host-only context:
+  - `RALPH.md`
+  - `ai/skills/hooks/SKILL.md`
+  - `ai/skills/release-train/SKILL.md`
+- Fresh proof this run:
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3`
+  - live endpoint checks against Cloudflare Pages, GitHub Pages fallback, and `https://fx.resplit.app`
+- While running local proof, the daily scheduled publish had already landed upstream as `a34db6af` (`chore: archive daily snapshot 2026-03-24`). I removed the redundant local generated snapshot, fast-forwarded `main`, and kept trunk aligned with repo truth.
+- Current repo status remains `GO`.
+- Remaining blocker for overall launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: only revisit if a future publish run goes red or if the non-blocking Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted into a launch requirement.
