@@ -560,3 +560,65 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future publish/deploy proof breaks, the missing dedicated Sentry project or Worker secret ownership becomes a launch requirement, or the cross-repo nurse loop explicitly assigns `resplit-web` follow-up here.
+
+## 2026-03-24 19:31 EDT
+
+- Rehydrated repo-owned state again, reviewed the current trunk delta, and found one real release-train mismatch instead of another clean fast-exit: the scheduled/manual publish workflow was still overriding the smoke-check Worker host from repo variable `FX_WORKER_BASE_URL=https://resplit-fx.superfit.workers.dev`, which diverged from the canonical `https://fx.resplit.app` host used by the script default and runbook.
+- Shipped `6916c131` (`ci: smoke canonical worker host`) on `main`.
+- Fixed [`.github/workflows/run.yml`](/Users/leokwan/Development/resplit-currency-api/.github/workflows/run.yml) so the publish workflow no longer injects `FX_WORKER_BASE_URL`; the release smoke gate now always falls back to the canonical Worker host unless someone intentionally overrides it outside the workflow.
+- Fresh proof this run:
+  - `git status --short --branch`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~3..HEAD`
+  - `node --test tests/fx-worker-routes.test.js`
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production`
+  - `gh secret list --repo firstbitelabsllc/resplit-currency-api`
+  - `gh variable list --repo firstbitelabsllc/resplit-currency-api`
+  - `gh run view 23469629324 --repo firstbitelabsllc/resplit-currency-api --log`
+  - `gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api`
+  - `gh run view 23517239290 --repo firstbitelabsllc/resplit-currency-api --json jobs,conclusion,status,headSha,createdAt,updatedAt`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+- Live proof details:
+  - `git status --short --branch` stayed clean before the workflow fix (`## main...origin/main`).
+  - `clipdiff HEAD~3..HEAD` and the workflow log showed the stale smoke override path clearly: run `23469629324` exported `FX_WORKER_BASE_URL=https://resplit-fx.superfit.workers.dev` even though the repo code now defaults to `https://fx.resplit.app`.
+  - `gh secret list` confirms `SENTRY_CURRENCY_API_DSN`, `SENTRY_DSN`, and `CRON_SECRET` are present for this repo.
+  - the latest pre-fix publish run `23469629324` successfully uploaded Worker secrets `SENTRY_DSN`, `SENTRY_RELEASE`, and `CRON_SECRET`; the old nurse note about missing Worker secrets is no longer current.
+  - focused `tests/fx-worker-routes.test.js` passed `6/6`.
+  - `npm run check` passed with a `363`-day snapshot window (`362 local`, `0 network`) and `27/27` Node tests passing.
+  - `npm run smoke:deploy` passed against the canonical Worker host with `date=2026-03-24` and `historyPoints=30`.
+  - dead-code sweep remained clean for this repo (`resplit-currency-api.knip` and `resplit-currency-api.knip.production` both clean); only `resplit-web` still reports findings in the cross-repo wrapper.
+  - manual dispatch run `23517239290` on commit `6916c131` completed green end-to-end:
+    - `Update Currency Rates` succeeded on `main`
+    - `Sync FX Worker runtime secrets`, `Deploy to Cloudflare Pages`, `Deploy FX Worker`, `Deploy to GitHub Pages`, and `Smoke check deployed endpoints` all completed successfully
+    - downstream `pages build and deployment` run `23517273716` also completed green on `gh-pages`
+  - live surfaces all returned HTTP `200`:
+    - Cloudflare Pages latest `aed` date `2026-03-24`
+    - Cloudflare Pages 30-day history spans `2026-02-23` through `2026-03-24` with `30` points
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-24`, `370` available dates, `2` acknowledged gaps
+    - GitHub Pages fallback latest `aed` date `2026-03-24`
+    - canonical Worker quote `AED -> USD` resolved at `0.27228722`
+    - canonical Worker coverage returned `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`, `archiveGapCount=0`
+    - dated snapshot branch `2026-03-24` served `base=eur` with `166` rates
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; repo has no locale catalogs or non-English runtime surface beyond operator docs already checked.
+  - `2 App Store Connect Feedback Triage`: no-op; no repo-local ASC tracker exists here and ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: shipped observability/release-train slice; repo secrets are present, Worker secret sync is green in the workflow, and the stale secret-warning narrative is closed, but live Sentry issue triage still needs MCP or auth-bearing shell access if it becomes release-critical.
+  - `4 UX Feedback Triage Lead`: no-op; this repo owns FX payload/runtime surfaces, not app feedback queues.
+  - `5 Code Review + Clipdiff Auditor`: shipped; review of the active trunk/workflow diff found the stale Worker-host override and removed it.
+  - `6 UX Uniformity + Canonical Surface Mayor`: shipped; scheduled/manual smoke proof now hits the same canonical `fx.resplit.app` surface as the repo docs and local release checks.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; repo-local dead-code passes are clean on current trunk.
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; targeted Worker route tests and full `npm run check` remained green after the workflow fix.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and smoke probes, not App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata and screenshot ordering live outside this repo.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future publish/deploy proof breaks or live Sentry issue triage becomes a launch requirement; optional cleanup only is deleting the now-unused repo variable `FX_WORKER_BASE_URL` to remove operator confusion.
