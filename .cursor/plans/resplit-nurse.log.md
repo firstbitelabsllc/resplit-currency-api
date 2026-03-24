@@ -69,3 +69,26 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red or the Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted from observability debt into a launch requirement.
+
+## 2026-03-24 04:37 EDT
+
+- Rehydrated from `RALPH.md`, the repo nurse log, the repo ledger, and current trunk state; no competing hot lane or repo-local failure surfaced in `resplit-currency-api`.
+- Fresh proof this run:
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - live endpoint checks for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+- Latest upstream publish proof is still green:
+  - scheduled `Update Currency Rates` run `23469629324` succeeded on `main`
+  - downstream `pages build and deployment` run `23469664623` succeeded on `gh-pages`
+- No code, workflow, deploy, or snapshot repair was needed this run; working tree remained clean on `main` at `8e33bf84` (`docs: checkpoint nurse proof 2026-03-24`).
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red or the Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted from observability debt into a launch requirement.
