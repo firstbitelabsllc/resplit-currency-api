@@ -91,8 +91,8 @@ Each daily run deploys to 3 Cloudflare branches:
 ## Data Source
 
 - **Primary**: open.er-api.com (free, no API key, ~160 fiat currencies, updated daily)
-- **Fallback**: api.frankfurter.dev (ECB data, ~30 currencies)
-- **License**: Data from ECB and other central banks, no commercial restrictions
+- **Live fallback**: none configured today. If `open.er-api.com` is unavailable, follow the source-swap runbook in `RUNBOOK.md` instead of assuming a secondary upstream is already wired.
+- **License**: Data is sourced through open.er-api.com from ECB and other central-bank feeds; verify any replacement provider's terms before switching.
 
 ## Maintenance
 

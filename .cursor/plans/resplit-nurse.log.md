@@ -202,3 +202,58 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red, live payload dates drift off `UTC` day, dated snapshot coverage regresses, or the warning-level observability gaps (`SENTRY_DSN`, `CRON_SECRET`, dedicated Sentry project ownership) are promoted into a launch requirement.
+
+## 2026-03-24 13:34 EDT
+
+- Rehydrated the repo-owned release state again and ran the full 10-role sweep instead of another narrow heartbeat.
+- Shipped one repo-owned slice on trunk state: corrected [`INFRASTRUCTURE.md`](/Users/leokwan/Development/resplit-currency-api/INFRASTRUCTURE.md) so operator docs no longer claim a live `api.frankfurter.dev` fallback that is not actually wired. The doc now points incident response at the real source-swap path in `RUNBOOK.md`.
+- Fresh proof this run:
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~1..HEAD`
+  - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production`
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+  - Sentry MCP checks against org `firstbite-labs`
+- Live proof details:
+  - `npm run check` passed and kept trunk clean before the doc patch; generation reported a `363`-day snapshot window (`362 local`, `0 network`) and `24/24` Node tests passed.
+  - `npm run smoke:deploy` passed with `date=2026-03-24` and `historyPoints=30`.
+  - Latest upstream publish proof remains green on trunk:
+    - scheduled `Update Currency Rates` run `23469629324` succeeded on `main`
+    - downstream `pages build and deployment` run `23469664623` succeeded on `gh-pages`
+  - Live surfaces all returned HTTP `200`:
+    - Cloudflare Pages latest `aed` date `2026-03-24`
+    - Cloudflare Pages 30-day history `30` points spanning `2026-02-23` through `2026-03-24`
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-24`, `370` available dates, `0` gaps
+    - GitHub Pages fallback latest `aed` date `2026-03-24`
+    - canonical Worker quote `AED -> USD` resolved exactly at `0.27228722`
+    - canonical Worker coverage returned `availableDays=30`, `requestedDays=30`, `missingDayCount=0`
+    - dated snapshot branch `2026-03-24` served `base=eur` with `166` rates
+  - Dead-code sweep result for this repo:
+    - `resplit-currency-api.knip.txt` clean
+    - `resplit-currency-api.knip.production.txt` still reports script entrypoints and one test-only export as unused; this is tooling/config debt, not a release blocker
+  - Sentry state this run:
+    - org `firstbite-labs` still exposes `resplit-ios`, `resplit-ios-clip`, and `resplit-web`, but no dedicated `resplit-currency-api` project
+    - unresolved issue searches for `smoke_check_mismatch`, `currency_publish_failed`, and `validate_package_failed` in the last `30` days returned no matches
+    - aggregate error-event count for `smoke_check_mismatch` in the last `30` days returned `0`
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; repo has no locale catalogs or locale-owned runtime surfaces beyond operator docs.
+  - `2 App Store Connect Feedback Triage`: no-op; no repo-local ASC plan exists here and all App Store feedback ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: blocked by ownership gap, not active incidents; there is still no dedicated `resplit-currency-api` Sentry project.
+  - `4 UX Feedback Triage Lead`: no-op; this repo owns FX payload/runtime surfaces, not app UX feedback queues.
+  - `5 Code Review + Clipdiff Auditor`: no-op; recent trunk diff is docs-only plus this nurse slice, and `clipdiff HEAD~1..HEAD` confirmed the prior commit touched only `.cursor`.
+  - `6 UX Uniformity + Canonical Surface Mayor`: shipped doc/runtime parity fix in `INFRASTRUCTURE.md`.
+  - `7 Dead Code + Drift Analyzer`: no-op; default `knip` stayed clean and the production-only findings are tooling config debt, not dead runtime code.
+  - `8 Architecture + Test Discipline Guardian`: blocked on non-release debt; route coverage is still lighter on `/history`, `/coverage`, and authorized `/cron/fx-canary` than ideal, but live smoke covers the current ship path.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and smoke probes, not App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata and screenshot ordering live outside this repo.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: either add a small `knip` config so production dead-code runs understand the repo’s script entrypoints, or continue fast-exiting until publish/deploy/coverage proof breaks or Sentry project ownership becomes a launch requirement.
