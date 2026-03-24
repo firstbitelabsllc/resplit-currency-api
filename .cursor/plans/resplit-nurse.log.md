@@ -46,3 +46,26 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: only revisit if a future publish run goes red or if the non-blocking Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted into a launch requirement.
+
+## 2026-03-24 01:37 EDT
+
+- Rehydrated from repo-owned state in the nurse order and confirmed there is still no competing hot lane or repo-local red in `resplit-currency-api`.
+- Fresh proof this run:
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...`
+  - live endpoint checks for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json` via Node `fetch` (HTTP 200, date `2026-03-24`)
+- Latest upstream publish proof remains green on trunk:
+  - scheduled `Update Currency Rates` run `23469629324` succeeded on `main`
+  - downstream `pages build and deployment` run `23469664623` succeeded on `gh-pages`
+- Working tree stayed clean throughout this pass; `main` remains aligned with `origin/main` at `d5144a3d` (`docs: add repo nurse contract`).
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red or the Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted from observability debt into a launch requirement.
