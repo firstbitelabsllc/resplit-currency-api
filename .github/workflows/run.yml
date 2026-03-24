@@ -18,7 +18,6 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_CURRENCY_API_DSN != '' && secrets.SENTRY_CURRENCY_API_DSN || secrets.SENTRY_DSN }}
       SENTRY_ENVIRONMENT: production
       SENTRY_RELEASE: ${{ github.sha }}
-      FX_WORKER_BASE_URL: ${{ vars.FX_WORKER_BASE_URL }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -152,7 +151,6 @@ jobs:
         id: smoke_check
         env:
           EXPECTED_DATE: ${{ env.date_today }}
-          FX_WORKER_BASE_URL: ${{ env.FX_WORKER_BASE_URL }}
         run: node scripts/smoke-check-deploy.js
 
       - name: Finish Sentry publish check-in
