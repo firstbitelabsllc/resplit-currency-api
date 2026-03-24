@@ -92,3 +92,35 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red or the Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted from observability debt into a launch requirement.
+
+## 2026-03-24 07:38 EDT
+
+- Rehydrated from the repo-owned nurse surfaces again and found no new red lane, drift, or competing owner in `resplit-currency-api`.
+- Fresh proof this run:
+  - `npm run check`
+  - `git status --short --branch`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - live endpoint checks for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+- Live proof details:
+  - Cloudflare Pages latest `aed` payload date: `2026-03-24`
+  - Cloudflare Pages 30-day history window: `30` points spanning `2026-02-23` through `2026-03-24`
+  - Archive manifest shape is still healthy on trunk: earliest `2025-03-18`, latest `2026-03-24`, `370` available dates, `2` acknowledged gaps
+  - GitHub Pages fallback latest `aed` payload date: `2026-03-24`
+  - Canonical Worker quote `AED -> USD` for `2026-03-24`: `0.27228722`
+  - Canonical Worker coverage for the same pair/date reports `30/30` days available with `0` missing days
+  - Dated Cloudflare snapshot branch for `2026-03-24` serves `base=eur` with `166` rates
+- Latest upstream publish proof is still green:
+  - scheduled `Update Currency Rates` run `23469629324` succeeded on `main`
+  - downstream `pages build and deployment` run `23469664623` succeeded on `gh-pages`
+- No repo-local fix was required this pass. Trunk stayed clean before this breadcrumb update at `fee5091b` (`docs: checkpoint nurse proof 2026-03-24-0437`).
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future scheduled/manual publish run goes red, dated snapshot coverage regresses, or the Worker secret warnings (`SENTRY_DSN`, `CRON_SECRET`) are promoted from observability debt into a launch requirement.
