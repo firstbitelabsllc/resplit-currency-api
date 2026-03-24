@@ -237,6 +237,6 @@ missing days (e.g., first run or recovery from a reset).
 |------------|----------|----------|
 | Cloudflare Account ID | GitHub secret + `.env.local` | Never changes |
 | Cloudflare API Token | GitHub secret + `.env.local` | No expiration, rotate if compromised |
-| Sentry DSN | GitHub secret (`SENTRY_DSN`) | Rotate when project DSN changes |
+| Sentry DSN | GitHub secret (`SENTRY_CURRENCY_API_DSN`, fallback `SENTRY_DSN`) | Rotate when project DSN changes |
 | Cron Secret | GitHub secret (`CRON_SECRET`) + Worker secret | Rotate on suspected exposure |
 | GitHub Token | Auto-provided by Actions | Auto-rotated |

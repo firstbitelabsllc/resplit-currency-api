@@ -1,6 +1,75 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
+function makeJsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  })
+}
+
+function withStubbedFetch(fetchImpl, run) {
+  const originalFetch = global.fetch
+  global.fetch = fetchImpl
+  return Promise.resolve()
+    .then(run)
+    .finally(() => {
+      global.fetch = originalFetch
+    })
+}
+
+function enumerateDates(start, end) {
+  const dates = []
+  const cursor = new Date(`${start}T00:00:00Z`)
+  const endDate = new Date(`${end}T00:00:00Z`)
+  while (cursor <= endDate) {
+    dates.push(cursor.toISOString().slice(0, 10))
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dates
+}
+
+function createArchiveFetchStub(availableDates, rates = { eur: 1, usd: 1.2, aed: 4, myr: 5 }) {
+  const snapshotsByYear = new Map()
+  for (const date of availableDates) {
+    const year = date.slice(0, 4)
+    if (!snapshotsByYear.has(year)) {
+      snapshotsByYear.set(year, [])
+    }
+    snapshotsByYear.get(year).push({
+      date,
+      base: 'eur',
+      rates,
+    })
+  }
+
+  return async input => {
+    const url = String(input)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return makeJsonResponse({
+        earliestDate: availableDates[0] ?? null,
+        latestDate: availableDates.at(-1) ?? null,
+        availableDates,
+        gapCount: 0,
+        supportedCurrencies: Object.keys(rates).sort(),
+      })
+    }
+
+    const match = url.match(/\/archive-years\/(\d{4})\.min\.json$/)
+    if (match) {
+      return makeJsonResponse({
+        year: match[1],
+        base: 'eur',
+        snapshots: snapshotsByYear.get(match[1]) ?? [],
+      })
+    }
+
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+}
+
 test('worker quote route returns request id on invalid query', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 
@@ -21,26 +90,20 @@ test('worker quote route returns request id on invalid query', async () => {
 
 test('worker quote route returns cache headers and stable request id', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
-  const originalFetch = global.fetch
-  global.fetch = async input => {
+  await withStubbedFetch(async input => {
     const url = String(input)
     if (url.endsWith('/latest/aed.json')) {
-      return new Response(JSON.stringify({
+      return makeJsonResponse({
         date: '2026-02-23',
         from: 'aed',
         rates: { usd: 0.272295 },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
       })
     }
     if (url.endsWith('/archive-manifest.min.json')) {
       return new Response('missing', { status: 500 })
     }
     throw new Error(`Unexpected URL: ${url}`)
-  }
-
-  try {
+  }, async () => {
     const response = await handleRequest(
       new Request('https://example.workers.dev/quote?from=AED&to=USD&date=2026-02-23', {
         headers: { 'x-request-id': 'req-quote' },
@@ -65,9 +128,70 @@ test('worker quote route returns cache headers and stable request id', async () 
       resolutionKind: 'exact',
       warning: null,
     })
-  } finally {
-    global.fetch = originalFetch
-  }
+  })
+})
+
+test('worker history route returns cache headers and history coverage payload', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const availableDates = ['2025-12-31', '2026-01-01', '2026-01-02']
+
+  await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/history?from=AED&to=USD&start=2025-12-31&end=2026-01-02', {
+        headers: { 'x-request-id': 'req-history' },
+      }),
+      {
+        ASSET_BASE_URL: 'https://example-assets.dev',
+      }
+    )
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-request-id'), 'req-history')
+    assert.equal(
+      response.headers.get('cache-control'),
+      'public, s-maxage=3600, stale-while-revalidate=86400'
+    )
+
+    const body = await response.json()
+    assert.deepEqual(body.points.map(point => point.date), availableDates)
+    assert.equal(body.coverage.availableDays, 3)
+    assert.equal(body.coverage.missingDayCount, 0)
+    assert.deepEqual(body.coverage.returnedRange, {
+      start: '2025-12-31',
+      end: '2026-01-02',
+    })
+  })
+})
+
+test('worker coverage route returns request id and no-store diagnostics payload', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const availableDates = enumerateDates('2026-02-23', '2026-03-24')
+
+  await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30', {
+        headers: { 'x-request-id': 'req-coverage' },
+      }),
+      {
+        ASSET_BASE_URL: 'https://example-assets.dev',
+      }
+    )
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-request-id'), 'req-coverage')
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+
+    const body = await response.json()
+    assert.equal(body.from, 'AED')
+    assert.equal(body.to, 'USD')
+    assert.equal(body.anchorDate, '2026-03-24')
+    assert.equal(body.requestedDays, 30)
+    assert.equal(body.mismatchCount, 0)
+    assert.deepEqual(body.signals, [])
+    assert.equal(body.quote.resolutionKind, 'exact')
+    assert.equal(body.historyCoverage.availableDays, 30)
+    assert.equal(body.historyCoverage.missingDayCount, 0)
+  })
 })
 
 test('worker cron route rejects unauthorized requests', async () => {
@@ -83,5 +207,51 @@ test('worker cron route rejects unauthorized requests', async () => {
   assert.deepEqual(await response.json(), {
     error: 'UNAUTHORIZED',
     message: 'Missing or invalid cron authorization',
+  })
+})
+
+test('worker cron route returns canary report for authorized requests', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const now = new Date()
+  const today = now.toISOString().slice(0, 10)
+  const anchorDates = [0, 7, 30, 180].map(days => {
+    const date = new Date(`${today}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() - days)
+    return date.toISOString().slice(0, 10)
+  })
+  const earliestStart = new Date(`${anchorDates.at(-1)}T00:00:00Z`)
+  earliestStart.setUTCDate(earliestStart.getUTCDate() - 29)
+  const availableDates = enumerateDates(
+    earliestStart.toISOString().slice(0, 10),
+    anchorDates[0]
+  )
+
+  await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/cron/fx-canary', {
+        headers: {
+          authorization: 'Bearer top-secret',
+          'x-request-id': 'req-canary',
+        },
+      }),
+      {
+        ASSET_BASE_URL: 'https://example-assets.dev',
+        CRON_SECRET: 'top-secret',
+      }
+    )
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-request-id'), 'req-canary')
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+
+    const body = await response.json()
+    assert.equal(body.ok, true)
+    assert.equal(body.mismatchCount, 0)
+    assert.equal(body.failureCount, 0)
+    assert.equal(body.results.length, 12)
+    assert.deepEqual(
+      [...new Set(body.results.map(result => result.anchorDate))],
+      anchorDates
+    )
   })
 })

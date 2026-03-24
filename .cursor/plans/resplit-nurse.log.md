@@ -258,6 +258,62 @@
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: either add a small `knip` config so production dead-code runs understand the repo’s script entrypoints, or continue fast-exiting until publish/deploy/coverage proof breaks or Sentry project ownership becomes a launch requirement.
 
+## 2026-03-24 16:30 EDT
+
+- Rehydrated from `RALPH.md`, repo-local `hooks` + `release-train`, the nurse log, the local ledger, and clean trunk state, then ran the full 10-role sweep again instead of a proof-only fast-exit.
+- Shipped one repo-local slice:
+  - expanded [`tests/fx-worker-routes.test.js`](/Users/leokwan/Development/resplit-currency-api/tests/fx-worker-routes.test.js) to cover the live route wrappers for `/history`, `/coverage`, and the authorized `/cron/fx-canary` path
+  - corrected [`RUNBOOK.md`](/Users/leokwan/Development/resplit-currency-api/RUNBOOK.md) so the credentials table now matches the preferred `SENTRY_CURRENCY_API_DSN` + fallback `SENTRY_DSN` workflow contract
+- Fresh proof this run:
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~1..HEAD`
+  - `npm run check`
+  - `node --test tests/fx-worker-routes.test.js`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-24`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30`
+    - `https://2026-03-24.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+  - Sentry MCP checks against org `firstbite-labs`
+- Proof details:
+  - `clipdiff` confirmed the prior trunk delta before this slice was nurse-log-only under `.cursor`, not runtime code.
+  - `npm run check` passed with a `363`-day snapshot window (`362 local`, `0 network`) and the Node suite increased to `27/27` passing tests after the route-wrapper additions.
+  - the focused route test file now passes `6/6`, including authorized canary coverage without touching runtime code.
+  - `npm run smoke:deploy` passed with `date=2026-03-24` and `historyPoints=30`.
+  - latest upstream publish proof remains green:
+    - scheduled `Update Currency Rates` run `23469629324` succeeded on `main`
+    - downstream `pages build and deployment` run `23469664623` succeeded on `gh-pages`
+  - live probes stayed healthy on current trunk:
+    - Cloudflare Pages latest `aed` date `2026-03-24`
+    - Cloudflare Pages 30-day history `30` points spanning `2026-02-23` through `2026-03-24`
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-24`, `370` available dates, `2` gaps
+    - GitHub Pages fallback latest `aed` date `2026-03-24`
+    - canonical Worker quote `AED -> USD` resolved exactly at `0.27228722`
+    - canonical Worker coverage returned `availableDays=30`, `missingDayCount=0`, `archiveGapCount=0`
+    - dated snapshot branch `2026-03-24` served `base=eur` with `166` rates
+  - Sentry state this run:
+    - org `firstbite-labs` resolved successfully at `https://us.sentry.io`
+    - aggregate error-event count for `smoke_check_mismatch`, `currency_publish_failed`, and `validate_package_failed` in the last `30` days returned `0`
+    - role 3 is still externally blocked on secrets/project ownership: repo workflow wiring is present, but the dedicated DSN / canary secret posture is still optional debt rather than a ship blocker
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; this repo still has no locale catalogs or locale-owned UI copy surfaces.
+  - `2 App Store Connect Feedback Triage`: no-op; no ASC tracker lives here and App Store feedback ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: blocked; current searches are clean, but dedicated Worker secret/project ownership is still optional observability debt.
+  - `4 UX Feedback Triage Lead`: no-op; this checkout owns FX payload/runtime surfaces, not app UX queues.
+  - `5 Code Review + Clipdiff Auditor`: no-op; recent trunk risk stayed low and the prior diff was nurse-log-only.
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op; canonical `fx.resplit.app` + Pages/Worker docs remain aligned on trunk.
+  - `7 Dead Code + Drift Analyzer`: shipped on current trunk already; the repo-local `knip` contract remains clean and did not regress this run.
+  - `8 Architecture + Test Discipline Guardian`: shipped; route-wrapper proof now covers `/history`, `/coverage`, and authorized canary behavior.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and smoke probes, not screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata and screenshot ordering still live outside this checkout.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless publish/deploy proof breaks, dated snapshot coverage regresses, or the dedicated Sentry secret/project gap is promoted into a launch requirement.
+
 ## 2026-03-24 14:31 EDT
 
 - Rehydrated repo truth from `RALPH.md`, the nurse log, the ledger, clean `main`, and the current automation memory path; no competing hot file owner surfaced in this checkout.
