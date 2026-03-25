@@ -122,6 +122,33 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 2. **Add a paid source** — sign up for a paid API, add the key as a GitHub secret, update the fetch function.
 3. **Fall back to fawazahmed0 CDN** — the original upstream still publishes daily. Change iOS URLs back temporarily.
 
+### 6. Cloudflare Pages warns about `pages_build_output_dir`
+
+**Symptoms**: the workflow stays green, but each `wrangler pages deploy` step warns that
+`wrangler.jsonc` is missing `pages_build_output_dir`.
+
+**Current intentional state**:
+- `wrangler.jsonc` is the canonical Worker config for `resplit-fx`, not the production
+  source of truth for the Cloudflare Pages project.
+- The publish job intentionally keeps Pages configuration dashboard-owned and uses direct
+  uploads via `npx wrangler pages deploy package ...`.
+- Leaving `pages_build_output_dir` unset keeps Wrangler in the documented local-dev-only
+  path for that file and avoids accidentally promoting the Worker config into Pages
+  production config.
+
+**Do not “fix” this warning by blindly adding `pages_build_output_dir` to `wrangler.jsonc`.**
+Cloudflare documents that once `pages_build_output_dir` is present, the Wrangler file
+becomes the source of truth for the Pages project, so every existing key in the file must
+be production-correct for Pages too.
+
+**Only act if you are intentionally migrating Pages config into source control**:
+```bash
+npx wrangler pages download config resplit-currency-api
+```
+
+Then review the generated Pages config against dashboard reality before replacing or
+splitting the current Worker-focused config.
+
 ## Monitoring Setup (Optional)
 
 ### Email alerts (free, already on)

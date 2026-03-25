@@ -44,10 +44,14 @@ jobs:
       - name: Fetch and generate rates
         id: generate
         continue-on-error: true
+        env:
+          PUBLISH_DATE: ${{ env.date_today }}
         run: node currscript.js
 
       - name: Retry if failed
         if: ${{ steps.generate.outcome == 'failure' }}
+        env:
+          PUBLISH_DATE: ${{ env.date_today }}
         run: rm -rf package && node currscript.js
 
       - name: Validate generated artifacts

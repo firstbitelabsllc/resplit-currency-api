@@ -6,9 +6,12 @@ const path = require('path')
 const {
   buildArchiveManifest,
   buildArchiveYearPayloads,
+  buildSnapshotWindow,
   computeCrossRates,
+  dateDaysBeforeUTC,
   loadAllSnapshotsFromArchive,
   loadSnapshotFromArchive,
+  resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
   snapshotRetentionDays,
@@ -127,6 +130,54 @@ test('buildArchiveYearPayloads groups snapshots by year', () => {
   assert.equal(payloads['2025'].snapshots.length, 1)
   assert.equal(payloads['2026'].snapshots.length, 2)
   assert.equal(payloads['2026'].snapshots[0].date, '2026-01-01')
+})
+
+test('resolvePublishDate prefers an explicit workflow publish date', () => {
+  const resolved = resolvePublishDate({
+    env: { PUBLISH_DATE: '2026-03-25' },
+    now: new Date('2026-03-26T01:00:00.000Z')
+  })
+
+  assert.equal(resolved, '2026-03-25')
+})
+
+test('resolvePublishDate rejects impossible calendar dates', () => {
+  assert.throws(
+    () => resolvePublishDate({ env: { PUBLISH_DATE: '2026-02-31' } }),
+    /Invalid PUBLISH_DATE/
+  )
+})
+
+test('dateDaysBeforeUTC subtracts days from the provided anchor date', () => {
+  assert.equal(dateDaysBeforeUTC('2026-03-25', 1), '2026-03-24')
+  assert.equal(dateDaysBeforeUTC('2026-03-25', 30), '2026-02-23')
+})
+
+test('buildSnapshotWindow anchors history fetches to the provided publish date', async () => {
+  const requestedDates = []
+  const savedDates = []
+
+  const snapshots = await buildSnapshotWindow({
+    todayDate: '2026-03-25',
+    latestRates: { eur: 1, usd: 1.1 },
+    retentionDays: 3,
+    loadSnapshot: () => null,
+    fetchSnapshot: async (date) => {
+      requestedDates.push(date)
+      return { eur: 1, usd: 1.1 }
+    },
+    saveSnapshot: (date) => {
+      savedDates.push(date)
+    },
+    log: () => {}
+  })
+
+  assert.deepEqual(requestedDates, ['2026-03-24', '2026-03-23'])
+  assert.deepEqual(savedDates, ['2026-03-24', '2026-03-23'])
+  assert.deepEqual(
+    snapshots.map((snapshot) => snapshot.date),
+    ['2026-03-23', '2026-03-24', '2026-03-25']
+  )
 })
 
 test('loadAllSnapshotsFromArchive returns sorted immutable archive snapshots', (t) => {

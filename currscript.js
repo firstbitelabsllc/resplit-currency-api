@@ -22,7 +22,7 @@ if (require.main === module) {
 }
 
 async function main() {
-  const dateToday = toDateStringUTC(new Date())
+  const dateToday = resolvePublishDate()
   const latestRates = await fetchLatestRates()
   if (!latestRates || Object.keys(latestRates).length === 0) {
     throw new Error('Failed to fetch currency rates from source')
@@ -194,7 +194,15 @@ function writeCrossRateFiles({ outputDir, fromRates, outputShape }) {
   }
 }
 
-async function buildSnapshotWindow({ todayDate, latestRates, retentionDays }) {
+async function buildSnapshotWindow({
+  todayDate,
+  latestRates,
+  retentionDays,
+  loadSnapshot = loadSnapshotFromArchive,
+  fetchSnapshot = fetchHistoricalSnapshot,
+  saveSnapshot = saveSnapshotToArchive,
+  log = console.log
+}) {
   const snapshotsByDate = new Map()
   snapshotsByDate.set(todayDate, latestRates)
 
@@ -202,24 +210,24 @@ async function buildSnapshotWindow({ todayDate, latestRates, retentionDays }) {
   let networkHits = 0
 
   for (let dayOffset = 1; dayOffset < retentionDays; dayOffset += 1) {
-    const date = dateDaysAgoUTC(dayOffset)
+    const date = dateDaysBeforeUTC(todayDate, dayOffset)
 
-    const localSnapshot = loadSnapshotFromArchive(date)
+    const localSnapshot = loadSnapshot(date)
     if (localSnapshot) {
       snapshotsByDate.set(date, localSnapshot)
       localHits += 1
       continue
     }
 
-    const remoteSnapshot = await fetchHistoricalSnapshot(date)
+    const remoteSnapshot = await fetchSnapshot(date)
     if (remoteSnapshot && Object.keys(remoteSnapshot).length > 0) {
       snapshotsByDate.set(date, remoteSnapshot)
-      saveSnapshotToArchive(date, remoteSnapshot)
+      saveSnapshot(date, remoteSnapshot)
       networkHits += 1
     }
   }
 
-  console.log(`Snapshot window: ${snapshotsByDate.size} days (${localHits} local, ${networkHits} network)`)
+  log(`Snapshot window: ${snapshotsByDate.size} days (${localHits} local, ${networkHits} network)`)
 
   return Array
     .from(snapshotsByDate.entries())
@@ -326,10 +334,32 @@ function toDateStringUTC(date) {
   return date.toISOString().substring(0, 10)
 }
 
-function dateDaysAgoUTC(daysAgo) {
-  const date = new Date()
-  date.setUTCDate(date.getUTCDate() - daysAgo)
+function resolvePublishDate({ env = process.env, now = new Date() } = {}) {
+  const explicitDate = env.PUBLISH_DATE || env.date_today || null
+  if (!explicitDate) {
+    return toDateStringUTC(now)
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) {
+    throw new Error(`Invalid PUBLISH_DATE: ${explicitDate}`)
+  }
+
+  const parsedDate = new Date(`${explicitDate}T00:00:00Z`)
+  if (Number.isNaN(parsedDate.getTime()) || toDateStringUTC(parsedDate) !== explicitDate) {
+    throw new Error(`Invalid PUBLISH_DATE: ${explicitDate}`)
+  }
+
+  return explicitDate
+}
+
+function dateDaysBeforeUTC(anchorDate, daysBefore) {
+  const date = new Date(`${anchorDate}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() - daysBefore)
   return toDateStringUTC(date)
+}
+
+function dateDaysAgoUTC(daysAgo, { now = new Date() } = {}) {
+  return dateDaysBeforeUTC(toDateStringUTC(now), daysAgo)
 }
 
 function toLowerSorted(obj) {
@@ -414,11 +444,14 @@ function buildArchiveManifest({ availableDates, latestRates, generatedAt }) {
 module.exports = {
   buildArchiveManifest,
   buildArchiveYearPayloads,
+  buildSnapshotWindow,
   buildCurrencyList,
   computeCrossRates,
+  dateDaysBeforeUTC,
   dateDaysAgoUTC,
   loadAllSnapshotsFromArchive,
   loadSnapshotFromArchive,
+  resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
   snapshotRetentionDays,

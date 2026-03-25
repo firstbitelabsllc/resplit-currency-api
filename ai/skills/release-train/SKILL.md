@@ -42,6 +42,7 @@ gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api
 - Use `.cursor/plans/resplit-nurse.log.md` as the durable checkpoint log.
 - If the repo is already green, do not fabricate a new board here; record the clean proof and point at the external launch blocker.
 - If the workflow emits warnings about missing Worker secrets (`SENTRY_DSN`, `CRON_SECRET`), treat them as observability debt unless they break publish or smoke proof.
+- Treat the recurring Cloudflare Pages `pages_build_output_dir` warning as expected until you intentionally migrate the Pages project into Wrangler-managed config. Do not add that key to `wrangler.jsonc` blindly; first run `npx wrangler pages download config resplit-currency-api`, review the generated Pages config, and only then decide whether to replace or split the current Worker config.
 
 ## Expected Non-Repo Blocker
 
