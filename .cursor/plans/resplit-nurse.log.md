@@ -1203,3 +1203,28 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work, plus the separately-owned `resplit-web` FX canary lane if that surface is still treated as launch-critical.
 - Exact next slice in this repo: fast-exit unless a future publish/deploy run goes red, the `pages_build_output_dir` warning is promoted into a release requirement, or an external repro proves the `resplit-web` canary mismatch is caused by `resplit-currency-api` payload drift.
+
+## 2026-03-25 18:49 EDT
+
+- Rehydrated the repo-owned state and found one real repo-local ship slice via the code-review lane: the publisher still recomputed its own UTC date inside `currscript.js`, so a workflow run that crossed midnight could generate/archive `N+1` while the workflow commit, dated Pages branch, and smoke check still targeted day `N`.
+- Shipped `4babf12e` (`fix: freeze publish date across workflow and generator`) on `main`.
+  - `.github/workflows/run.yml` now injects `PUBLISH_DATE=${{ env.date_today }}` into the generate + retry steps.
+  - `currscript.js` now resolves a single publish date at process start, validates it, and anchors historical backfill off that explicit date instead of the wall clock.
+  - `tests/currscript.test.js` now covers explicit publish-date preference, invalid explicit dates, anchored date math, and anchored snapshot-window fetches.
+  - `RUNBOOK.md` and `ai/skills/release-train/SKILL.md` now document that the recurring Cloudflare Pages `pages_build_output_dir` warning is expected until the Pages project is intentionally migrated into Wrangler-managed config via `wrangler pages download config`.
+- Fresh proof this run:
+  - `npm test` (`40/40` passed)
+  - `npm run smoke:deploy`
+  - `npm run check`
+  - pushed `4babf12e` to `origin/main`
+  - dispatched and watched `Update Currency Rates` run `23568114544` on `headSha=4babf12e`; it completed green
+  - downstream `pages build and deployment` run `23568155051` completed green on `gh-pages`
+  - hosted log proof from run `23568114544`:
+    - `PUBLISH_DATE: 2026-03-25`
+    - `Fetched 166 currencies for 2026-03-25`
+    - `smoke-check-deploy: OK (date=2026-03-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+    - `finished_status=ok`
+    - the `pages_build_output_dir` warning still appears, but it is now documented as expected under the current Worker-vs-Pages config split
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: `resplit-ios` remains `NO-GO` with `9` open ASC/TestFlight complaints led by `AEiNEIUTdneNvuxN4AtQPes`, `ADVaFYMkUCPI4niGhcF78Ro`, and `AILgPoYq0feGqc4wPKfb8MI`, plus the remaining native/release-evidence work captured in the iOS boards.
+- Exact next slice in this repo: fast-exit unless a future hosted publish run regresses on the frozen publish date, or the team intentionally decides to migrate the Cloudflare Pages project into Wrangler-managed config.
