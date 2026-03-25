@@ -1145,3 +1145,61 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work, plus the separately-owned `resplit-web` `canary_error` mismatch stream if that surface is still treated as launch-critical.
 - Exact next slice in this repo: fast-exit unless a future publish/deploy run goes red, the `pages_build_output_dir` warning is promoted into a release requirement, or `resplit-web` proves its recurring FX canary mismatch is caused by `resplit-currency-api` payload drift rather than consumer-side logic.
+
+## 2026-03-25 17:44 EDT
+
+- Rehydrated the repo-owned state again in the required order and reran the explicit 10-role release sweep. No new repo-local fix slice surfaced after the March 25 runtime hardening already on `main`.
+- No new repo-local slice shipped this pass. This run stayed inside the Ralph fast-exit contract because fresh proof still passes on trunk and the launch hold remains outside `resplit-currency-api`.
+- Fresh proof this run:
+  - `npm run check`
+  - `git status --short --branch`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~1..HEAD`
+  - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production`
+  - Sentry MCP: `find_projects`, `search_issues` for `smoke_check_mismatch`, `canary_error`, `currency_publish_failed`, and aggregate `search_events` counts for repo-local failure signals
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-25`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-25&days=30`
+    - `https://2026-03-25.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+- Live proof details:
+  - `npm run check` passed on current trunk with `36/36` tests and a `363`-day snapshot window (`362 local`, `0 network`).
+  - `git status --short --branch` stayed clean after proof: `## main...origin/main`.
+  - `npm run smoke:deploy` passed with `date=2026-03-25` and `historyPoints=30`.
+  - latest runtime-bearing train proof is still green:
+    - `Update Currency Rates` run `23560840811` succeeded on `headSha=8c95c8b6`
+    - downstream `pages build and deployment` run `23560897003` succeeded on `gh-pages`
+  - live surfaces still align on the March 25 payload:
+    - Cloudflare Pages latest `aed` date `2026-03-25`
+    - Cloudflare Pages history `30` points spanning `2026-02-24` through `2026-03-25`
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-25`, `371` available dates, `gapCount=2`
+    - GitHub Pages fallback latest `aed` date `2026-03-25`
+    - canonical Worker quote `AED -> USD` resolved at `0.27229483`
+    - canonical Worker coverage returned `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`, `signals=[]`
+    - dated snapshot branch `2026-03-25` served `base=eur` with `166` rates
+  - review / drift state:
+    - `clipdiff HEAD~1..HEAD` shows only the prior nurse-log checkpoint on trunk; no new runtime diff landed since the last pass
+    - hooks dead-code sweep stayed clean for `resplit-currency-api`; only `resplit-web` still reports findings in the shared sweep summary
+    - direct review of the last meaningful runtime commits (`6a866a2b`, `8c95c8b6`) did not surface a new regression or missing focused test on the touched surfaces
+  - Sentry state this run:
+    - org `firstbite-labs` still exposes only `resplit-ios`, `resplit-ios-clip`, and `resplit-web`; there is still no dedicated `resplit-currency-api` project
+    - unresolved searches for `smoke_check_mismatch`, `canary_error`, and `currency_publish_failed` returned no open issues in the last `30` days
+    - aggregate error-event count for `currency_publish_failed`, `smoke_check_mismatch`, `validate_package_failed`, `canary_error`, and `worker_route_exception` returned `0`
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; repo still has no localization/runtime locale surface.
+  - `2 App Store Connect Feedback Triage`: no-op; ASC/TestFlight ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: blocked externally; repo-local signals remain clean and there is still no dedicated Sentry project here.
+  - `4 UX Feedback Triage Lead`: no-op; product feedback queue remains outside this repo.
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof; recent runtime hardening still holds and no new diff surfaced.
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op with proof; Worker + Pages + fallback + dated snapshot are still aligned.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; repo-local dead-code sweep remains clean.
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; focused route/smoke tests stay green after the March 25 fixes.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo still owns data snapshots, not App Store screenshot/UI harness work.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata remains outside this checkout.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work, plus the separately-owned `resplit-web` FX canary lane if that surface is still treated as launch-critical.
+- Exact next slice in this repo: fast-exit unless a future publish/deploy run goes red, the `pages_build_output_dir` warning is promoted into a release requirement, or an external repro proves the `resplit-web` canary mismatch is caused by `resplit-currency-api` payload drift.
