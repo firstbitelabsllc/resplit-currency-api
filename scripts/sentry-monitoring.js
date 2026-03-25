@@ -248,7 +248,11 @@ async function finishWorkflowCheckIn(checkInId, status, startedAt = Date.now()) 
   }
 
   if (!checkInId) {
-    throw new Error('Missing Sentry check-in id for workflow completion')
+    logEvent('warn', 'workflow_checkin_finish_skipped', {
+      reason: 'missing_checkin_id',
+      status
+    })
+    return false
   }
 
   initializeSentry()

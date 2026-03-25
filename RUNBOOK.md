@@ -152,6 +152,7 @@ Current monitor + signal model:
 - Schedule: `0 0 * * *` UTC
 - Workflow tag: `daily_publish`
 - Grouped issue signals:
+  - `currency_publish_failed`
   - `upstream_fetch_failure`
   - `history_window_shorter_than_30_days`
   - `missing_dated_snapshot_deployment`
@@ -160,6 +161,10 @@ Current monitor + signal model:
   - `fx_worker_deploy_failure`
   - `smoke_check_mismatch`
   - `validate_package_failed`
+  - `worker_route_exception`
+  - `coverage_failure`
+  - `fx_integrity_warning`
+  - `canary_error`
 
 Quick verification after a manual workflow run:
 ```bash

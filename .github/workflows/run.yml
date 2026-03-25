@@ -159,4 +159,9 @@ jobs:
           CHECKIN_ID: ${{ steps.sentry_checkin.outputs.checkin_id }}
           CHECKIN_STARTED_AT: ${{ steps.sentry_checkin.outputs.checkin_started_at }}
           JOB_STATUS: ${{ job.status }}
-        run: node scripts/sentry-checkin.js finish
+        run: |
+          if [ -n "$CHECKIN_ID" ]; then
+            node scripts/sentry-checkin.js finish
+          else
+            echo "::notice::Skipping Sentry publish check-in finish because the start step did not produce a check-in id."
+          fi
