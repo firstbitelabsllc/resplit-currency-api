@@ -1228,3 +1228,43 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: `resplit-ios` remains `NO-GO` with `9` open ASC/TestFlight complaints led by `AEiNEIUTdneNvuxN4AtQPes`, `ADVaFYMkUCPI4niGhcF78Ro`, and `AILgPoYq0feGqc4wPKfb8MI`, plus the remaining native/release-evidence work captured in the iOS boards.
 - Exact next slice in this repo: fast-exit unless a future hosted publish run regresses on the frozen publish date, or the team intentionally decides to migrate the Cloudflare Pages project into Wrangler-managed config.
+
+## 2026-03-25 19:42 EDT
+
+- Rehydrated the repo-owned state again after the publish-date fix landed and reran the release-train + nurse proof on current `main`. No new repo-local fix slice surfaced.
+- No code shipped this pass. This run stayed inside the Ralph fast-exit contract because the repo remains green after `4babf12e`.
+- Fresh proof this run:
+  - `npm run check`
+  - `git status --short --branch`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - `npx --yes knip@latest --no-progress --reporter compact`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~2..HEAD`
+  - Sentry MCP: `find_projects`, `search_issues`, `search_events`
+  - structured live probes for Cloudflare Pages latest/history/archive manifest, GitHub Pages fallback, canonical Worker `quote` + `coverage`, and the dated `2026-03-25` snapshot branch
+- Live proof details:
+  - `npm run check` passed with `40/40` tests and `Snapshot window: 363 days (362 local, 0 network)`.
+  - `git status --short --branch` stayed clean after proof: `## main...origin/main`.
+  - `npm run smoke:deploy` passed with `date=2026-03-25` and `historyPoints=30`.
+  - latest publish train on trunk remains green:
+    - `Update Currency Rates` run `23568114544` succeeded on `headSha=4babf12e`
+    - downstream `pages build and deployment` run `23568155051` succeeded on `gh-pages`
+  - live surfaces still align on the March 25 payload:
+    - Cloudflare Pages latest `aed` date `2026-03-25`
+    - Cloudflare Pages history `30` points spanning `2026-02-24` through `2026-03-25`
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-25`, `availableDateCount=371`, `gapCount=2`
+    - GitHub Pages fallback latest `aed` date `2026-03-25`
+    - canonical Worker quote `AED -> USD` resolved at `0.27229483`
+    - canonical Worker coverage returned `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`
+    - dated snapshot branch `2026-03-25` served `base=eur` with `166` rates
+  - review / drift state:
+    - `clipdiff HEAD~2..HEAD` covers only the publish-date fix plus the prior checkpoint commit; no new unreviewed runtime diff landed after `4babf12e`
+    - `knip` returned cleanly in this repo
+    - `rg` found no repo-local localization, screenshot, TestFlight, or App Store metadata surfaces beyond the repo guidance itself
+  - Sentry / warning state:
+    - org `firstbite-labs` still exposes only `resplit-ios`, `resplit-ios-clip`, and `resplit-web`; there is still no dedicated `resplit-currency-api` project
+    - Sentry aggregate error-event count for `smoke_check_mismatch`, `currency_publish_failed`, `validate_package_failed`, `fx_worker_deploy_failure`, and `coverage_failure` returned `0` over the last `30` days
+    - hosted run `23568114544` still warns about missing Worker secrets (`SENTRY_DSN`, `CRON_SECRET`) and the expected Cloudflare Pages `pages_build_output_dir` message
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future publish/deploy run goes red, Worker secret ownership becomes a release requirement, or the team intentionally schedules a Wrangler-managed Pages config migration.
