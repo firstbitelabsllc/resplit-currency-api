@@ -2,6 +2,11 @@ import {
   buildFxHistoryResponse,
   buildFxQuoteResponse,
 } from './fx-contract.mjs'
+import {
+  dateDaysBefore,
+  normalizeISODate,
+  todayDateString,
+} from './date-utils.mjs'
 
 const MAX_WINDOW_DAYS = 366
 
@@ -124,12 +129,9 @@ function normalizeCurrencyCode(value) {
 
 function normalizeAnchorDate(value) {
   if (!value) {
-    return new Date().toISOString().slice(0, 10)
+    return todayDateString()
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(`Invalid anchorDate: ${value}`)
-  }
-  return value
+  return normalizeISODate(value, 'anchorDate')
 }
 
 function clampDays(value) {
@@ -137,10 +139,4 @@ function clampDays(value) {
     throw new Error(`Invalid days: ${value}`)
   }
   return Math.min(MAX_WINDOW_DAYS, Math.max(1, value))
-}
-
-function dateDaysBefore(dateString, days) {
-  const date = new Date(`${dateString}T00:00:00Z`)
-  date.setUTCDate(date.getUTCDate() - days)
-  return date.toISOString().slice(0, 10)
 }

@@ -88,6 +88,24 @@ test('worker quote route returns request id on invalid query', async () => {
   })
 })
 
+test('worker quote route rejects impossible calendar dates', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/quote?from=AED&to=USD&date=2026-02-31', {
+      headers: { 'x-request-id': 'req-invalid-date' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 400)
+  assert.equal(response.headers.get('x-request-id'), 'req-invalid-date')
+  assert.deepEqual(await response.json(), {
+    error: 'INVALID_QUERY',
+    message: 'Invalid date: 2026-02-31',
+  })
+})
+
 test('worker quote route returns cache headers and stable request id', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   await withStubbedFetch(async input => {
@@ -163,6 +181,24 @@ test('worker history route returns cache headers and history coverage payload', 
   })
 })
 
+test('worker history route rejects impossible calendar dates', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/history?from=AED&to=USD&start=2026-02-31&end=2026-03-02', {
+      headers: { 'x-request-id': 'req-history-invalid' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 400)
+  assert.equal(response.headers.get('x-request-id'), 'req-history-invalid')
+  assert.deepEqual(await response.json(), {
+    error: 'INVALID_QUERY',
+    message: 'Invalid date: 2026-02-31',
+  })
+})
+
 test('worker coverage route returns request id and no-store diagnostics payload', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   const availableDates = enumerateDates('2026-02-23', '2026-03-24')
@@ -191,6 +227,24 @@ test('worker coverage route returns request id and no-store diagnostics payload'
     assert.equal(body.quote.resolutionKind, 'exact')
     assert.equal(body.historyCoverage.availableDays, 30)
     assert.equal(body.historyCoverage.missingDayCount, 0)
+  })
+})
+
+test('worker coverage route rejects impossible calendar anchor dates', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-02-31&days=30', {
+      headers: { 'x-request-id': 'req-coverage-invalid' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 400)
+  assert.equal(response.headers.get('x-request-id'), 'req-coverage-invalid')
+  assert.deepEqual(await response.json(), {
+    error: 'INVALID_QUERY',
+    message: 'Invalid anchorDate: 2026-02-31',
   })
 })
 

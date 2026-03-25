@@ -109,16 +109,16 @@ function resolveExpectedDate({ requestedDate, latestDate, metaLatestDate }) {
   return toDateStringUTC(new Date())
 }
 
-async function smokeCheckWorker(baseUrl, dateToday) {
+async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithRetry } = {}) {
   const normalizedBase = baseUrl.replace(/\/+$/, '')
   const historyStart = dateDaysAgoUTC(2)
-  const quote = await fetchJSONWithRetry(
+  const quote = await fetchJson(
     `${normalizedBase}/quote?from=AED&to=USD&date=${dateToday}`
   )
-  const history = await fetchJSONWithRetry(
+  const history = await fetchJson(
     `${normalizedBase}/history?from=AED&to=USD&start=${historyStart}&end=${dateToday}`
   )
-  const coverage = await fetchJSONWithRetry(
+  const coverage = await fetchJson(
     `${normalizedBase}/coverage?from=AED&to=USD&anchorDate=${dateToday}&days=30`
   )
 
@@ -138,6 +138,21 @@ async function smokeCheckWorker(baseUrl, dateToday) {
 
   if (!coverage?.quote || !coverage?.historyCoverage) {
     throw new Error(`worker coverage shape mismatch for ${normalizedBase}`)
+  }
+  if (coverage.quote.resolutionKind !== 'exact') {
+    throw new Error(`worker coverage quote degraded for ${normalizedBase}`)
+  }
+  if (!Array.isArray(coverage.signals) || coverage.signals.length > 0) {
+    throw new Error(`worker coverage signals present for ${normalizedBase}`)
+  }
+  if (!Number.isFinite(coverage.mismatchCount) || coverage.mismatchCount !== 0) {
+    throw new Error(`worker coverage mismatchCount expected 0 for ${normalizedBase}, got ${coverage.mismatchCount}`)
+  }
+  if (coverage.historyCoverage.requestedDays !== coverage.historyCoverage.availableDays) {
+    throw new Error(`worker coverage availableDays mismatch for ${normalizedBase}`)
+  }
+  if (coverage.historyCoverage.missingDayCount !== 0) {
+    throw new Error(`worker coverage missingDayCount expected 0 for ${normalizedBase}, got ${coverage.historyCoverage.missingDayCount}`)
   }
 }
 

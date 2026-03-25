@@ -2,6 +2,10 @@ import {
   buildFxCoverageReport,
   summarizeFxCoverageReport,
 } from './fx-diagnostics.mjs'
+import {
+  dateDaysBefore,
+  todayDateString,
+} from './date-utils.mjs'
 
 const DEFAULT_FX_CANARY_ANCHOR_OFFSETS = [0, 7, 30, 180]
 
@@ -10,7 +14,7 @@ const DEFAULT_FX_CANARY_ANCHOR_OFFSETS = [0, 7, 30, 180]
  * @returns {string[]}
  */
 export function defaultFxCanaryAnchorDates(today = new Date()) {
-  const todayDate = today.toISOString().slice(0, 10)
+  const todayDate = todayDateString(today)
   return [...new Set(
     DEFAULT_FX_CANARY_ANCHOR_OFFSETS.map((days) => dateDaysBefore(todayDate, days))
   )]
@@ -99,10 +103,4 @@ export function isAuthorizedCronRequest(request, env) {
 
   const authorization = request.headers.get('authorization')
   return authorization === `Bearer ${secret}`
-}
-
-function dateDaysBefore(dateString, days) {
-  const date = new Date(`${dateString}T00:00:00Z`)
-  date.setUTCDate(date.getUTCDate() - days)
-  return date.toISOString().slice(0, 10)
 }

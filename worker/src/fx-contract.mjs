@@ -1,3 +1,8 @@
+import {
+  normalizeISODate,
+  todayDateString,
+} from './date-utils.mjs'
+
 const DEFAULT_ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
 
 /**
@@ -458,17 +463,7 @@ function normalizeCurrencyCode(value) {
  * @returns {string}
  */
 function normalizeDate(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(`Invalid date: ${value}`)
-  }
-  return value
-}
-
-/**
- * @returns {string}
- */
-function todayDateString() {
-  return new Date().toISOString().slice(0, 10)
+  return normalizeISODate(value)
 }
 
 /**
