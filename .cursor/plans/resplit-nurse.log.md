@@ -1030,3 +1030,52 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fix the missing `checkin_id` propagation for `scripts/sentry-checkin.js start` / the workflow finish step, or intentionally introduce a separate Cloudflare Pages config source of truth if we decide to retire the `pages_build_output_dir` warning instead of treating it as acceptable debt.
+
+## 2026-03-25 15:51 EDT
+
+- Rehydrated repo-owned state again and reran the explicit 10-role sweep. This pass closed one real release-proof gap and corrected one stale nurse assumption from the prior checkpoint.
+- Shipped repo-local slice:
+  - updated [`scripts/smoke-check-deploy.js`](/Users/leokwan/Development/resplit-currency-api/scripts/smoke-check-deploy.js) so the Worker history smoke probe anchors to the target publish date instead of wall clock time
+  - expanded [`tests/smoke-check-deploy.test.js`](/Users/leokwan/Development/resplit-currency-api/tests/smoke-check-deploy.test.js) with a regression that proves backfill/recovery runs request `start=targetDate-2d`
+- Fresh proof this run:
+  - direct repro before fix: `smokeCheckWorker('https://fx.resplit.app', '2026-03-01', ...)` requested `/history?start=2026-03-23&end=2026-03-01`
+  - direct repro after fix: the same probe now requests `/history?start=2026-02-27&end=2026-03-01`
+  - `node --check scripts/smoke-check-deploy.js`
+  - `node --test tests/smoke-check-deploy.test.js`
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - pushed `fix: anchor worker smoke history to target date` to `main` as `8c95c8b6`
+  - dispatched and watched `Update Currency Rates` run `23560840811` on `headSha=8c95c8b6`; it completed green
+  - downstream `pages build and deployment` run `23560897003` completed green on `gh-pages`
+  - live post-run probes:
+    - Cloudflare Pages latest `aed` date `2026-03-25`
+    - Cloudflare Pages history spans `2026-02-24` through `2026-03-25` with `30` points
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-25`, `371` available dates, `2` gaps
+    - GitHub Pages fallback latest `aed` date `2026-03-25`
+    - dated snapshot branch `2026-03-25` serves `base=eur` with `166` rates
+    - canonical Worker quote `AED -> USD` resolved at `0.27229483`
+    - canonical Worker coverage returned `mismatchCount=0`, `signals=[]`, `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `quoteResolution=exact`
+    - live invalid-date probe `/quote?from=AED&to=USD&date=2026-02-31` still fails correctly with `400 INVALID_QUERY`
+- Observability readout:
+  - the prior `checkin_id` concern was stale nurse interpretation, not current repo truth; run `23560840811` logged `finished_status=ok` for `Finish Sentry publish check-in`
+  - the only recurring workflow warning still visible on this repo-owned train is the non-blocking Cloudflare Pages `pages_build_output_dir` notice from `wrangler.jsonc`
+  - Sentry org `firstbite-labs` still has no dedicated `resplit-currency-api` project; project inventory remains `resplit-ios`, `resplit-ios-clip`, and `resplit-web`
+  - targeted Sentry error-log counts over the last `30` days:
+    - `worker_route_exception`: `0`
+    - `smoke_check_mismatch`: `0`
+    - `currency_publish_failed`: `0`
+    - `canary_error`: active, but the logs land in `resplit-web` / external ownership, not in this repo
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; no locale catalog, Apple strings surface, or non-English runtime path exists in this repo.
+  - `2 App Store Connect Feedback Triage`: no-op; ASC/TestFlight ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: shipped; corrected the stale check-in read, re-proved the workflow check-in finish, and confirmed repo-local error signals remain clean while the remaining `canary_error` traffic is external in `resplit-web`.
+  - `4 UX Feedback Triage Lead`: no-op; this repo owns FX payload/runtime correctness, not the app feedback queue.
+  - `5 Code Review + Clipdiff Auditor`: shipped; review surfaced the backfill smoke-window bug and this pass closed it.
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op with proof; Worker, Cloudflare Pages, GitHub Pages fallback, and dated snapshot branch remain aligned on the same March 25 payload.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; the production dead-code sweep stayed clean for `resplit-currency-api`.
+  - `8 Architecture + Test Discipline Guardian`: shipped; tightened the release-gate logic and added focused regression coverage for historical publish dates.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and deploy smoke probes, not App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata still lives outside this checkout.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work, plus the separately-owned `resplit-web` FX canary mismatch stream if that surface is still treated as launch-critical.
+- Exact next slice in this repo: fast-exit unless the `pages_build_output_dir` warning is promoted into a release requirement, a future publish/backfill run regresses on the new smoke gate, or `resplit-web` proves its recurring FX canary mismatch is caused by this repo’s payloads rather than consumer-side logic.
