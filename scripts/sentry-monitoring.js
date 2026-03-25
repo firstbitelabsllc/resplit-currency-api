@@ -21,8 +21,12 @@ const DAILY_PUBLISH_MONITOR_CONFIG = {
 let hasInitializedSentry = false
 const reportedErrors = new WeakSet()
 
+function resolveDsn() {
+  return process.env.SENTRY_CURRENCY_API_DSN || process.env.SENTRY_DSN || null
+}
+
 function isEnabled() {
-  return Boolean(process.env.SENTRY_DSN)
+  return Boolean(resolveDsn())
 }
 
 function resolveEnvironment() {
@@ -49,7 +53,7 @@ function initializeSentry() {
 
   const runtime = getRuntimeMetadata()
   Sentry.init({
-    dsn: process.env.SENTRY_DSN,
+    dsn: resolveDsn(),
     enabled: true,
     environment: runtime.environment,
     release: runtime.release || undefined,

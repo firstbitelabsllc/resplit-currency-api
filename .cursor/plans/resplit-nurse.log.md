@@ -926,3 +926,56 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future publish/deploy proof breaks, the daily archive commit stops landing on `main`, or the dedicated Sentry project / Worker canary ownership gap becomes launch-critical.
+
+## 2026-03-25 13:46 EDT
+
+- Rehydrated repo-owned release state on trunk `7e9d01f6` and reran the 10-role sweep. This pass found and closed one real repo-local defect instead of another pure heartbeat.
+- Shipped repo-local slice:
+  - fixed [`scripts/sentry-monitoring.js`](/Users/leokwan/Development/resplit-currency-api/scripts/sentry-monitoring.js) so local/manual publisher monitoring now honors the documented preferred env `SENTRY_CURRENCY_API_DSN` before falling back to `SENTRY_DSN`
+  - expanded [`tests/sentry-monitoring.test.js`](/Users/leokwan/Development/resplit-currency-api/tests/sentry-monitoring.test.js) with dedicated-DSN coverage for start + finish check-ins
+- Fresh proof this run:
+  - `node --test tests/sentry-monitoring.test.js`
+  - dedicated-DSN repro: `SENTRY_CURRENCY_API_DSN=... node ...startWorkflowCheckIn()` now returns enabled (`checkin-enabled`) without needing `SENTRY_DSN`
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `git status --short --branch`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - `gh run view 23521578168 --repo firstbitelabsllc/resplit-currency-api --log | rg -n "SENTRY|CRON_SECRET|pages_build_output_dir|wrangler.jsonc support"`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~2..HEAD`
+  - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production`
+  - Sentry MCP: `find_projects` + aggregate `search_events` for publish/deploy failure signals
+- Live proof details:
+  - `npm run check` stayed green and now passes `30/30` tests on current trunk.
+  - `npm run smoke:deploy` stayed green with `date=2026-03-25` and `historyPoints=30`.
+  - latest upstream publish proof remains green:
+    - scheduled `Update Currency Rates` run `23521578168` succeeded on `headSha=c2898236`
+    - downstream `pages build and deployment` run `23521603998` succeeded on `gh-pages`
+  - the latest workflow log proves the prior missing-secret story is no longer current repo truth:
+    - `SENTRY_DSN` secret sync succeeded for the Worker
+    - `CRON_SECRET` sync succeeded for the Worker canary route
+    - the remaining workflow warning is the non-blocking Wrangler Pages `pages_build_output_dir` notice
+  - live surfaces still align on the March 25 payload:
+    - Cloudflare Pages latest `aed` date `2026-03-25`
+    - Cloudflare Pages history spans `2026-02-24` through `2026-03-25` with `30` points
+    - GitHub Pages fallback latest `aed` date `2026-03-25`
+    - dated snapshot branch `2026-03-25` serves `base=eur` with `166` rates
+    - canonical Worker quote `AED -> USD` resolved at `0.27229483`
+    - canonical Worker coverage returned `requestedDays=30`, `availableDays=30`, `missingDayCount=0`
+  - repo-local dead-code proof stayed clean: `resplit-currency-api.knip` and `resplit-currency-api.knip.production` both clean; only `resplit-web` still reports issues in the cross-repo sweep.
+  - Sentry ownership gap remains non-blocking:
+    - org `firstbite-labs` still exposes only `resplit-ios`, `resplit-ios-clip`, and `resplit-web`; there is still no dedicated `resplit-currency-api` project
+    - aggregate production error-event search for `currency_publish_failed`, `smoke_check_mismatch`, `worker_route_exception`, and `canary_error` returned `0` in the last `30` days
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; no locale catalog or Apple localization surface exists here beyond English API/runtime copy already covered by tests.
+  - `2 App Store Connect Feedback Triage`: no-op; ASC/TestFlight ownership is outside this repo in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: shipped; fixed the dedicated-DSN local monitoring path and proved current production error search is clean.
+  - `4 UX Feedback Triage Lead`: no-op; this repo owns FX payload/runtime surfaces, not product feedback queues.
+  - `5 Code Review + Clipdiff Auditor`: shipped; review lane found the Sentry env drift and this pass closed it.
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op with proof; Cloudflare Pages, GitHub Pages fallback, dated snapshot branch, and canonical Worker remain aligned.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; repo-local dead-code scans remain clean.
+  - `8 Architecture + Test Discipline Guardian`: shipped; added focused monitoring tests and kept the full repo gate green after the patch.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and smoke probes, not App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata still lives outside this repo.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future publish/deploy proof breaks, the non-blocking Wrangler Pages warning (`pages_build_output_dir`) is promoted into a release requirement, or dedicated Sentry project ownership becomes launch-critical.
