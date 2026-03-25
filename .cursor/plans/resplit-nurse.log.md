@@ -979,3 +979,54 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future publish/deploy proof breaks, the non-blocking Wrangler Pages warning (`pages_build_output_dir`) is promoted into a release requirement, or dedicated Sentry project ownership becomes launch-critical.
+
+## 2026-03-25 14:54 EDT
+
+- Rehydrated repo-owned release state on trunk `6a866a2b` and absorbed a same-surface follow-on defect instead of stopping at the earlier Sentry-helper fix.
+- Shipped repo-local slice:
+  - added [`worker/src/date-utils.mjs`](/Users/leokwan/Development/resplit-currency-api/worker/src/date-utils.mjs) and routed [`worker/src/fx-contract.mjs`](/Users/leokwan/Development/resplit-currency-api/worker/src/fx-contract.mjs), [`worker/src/fx-diagnostics.mjs`](/Users/leokwan/Development/resplit-currency-api/worker/src/fx-diagnostics.mjs), and [`worker/src/fx-canary.mjs`](/Users/leokwan/Development/resplit-currency-api/worker/src/fx-canary.mjs) through semantic ISO-date validation so impossible calendar dates now fail with `400` instead of returning fallback data
+  - tightened [`scripts/smoke-check-deploy.js`](/Users/leokwan/Development/resplit-currency-api/scripts/smoke-check-deploy.js) so the release gate now fails if Worker coverage is degraded (`mismatchCount > 0`, non-empty `signals`, or incomplete history coverage)
+  - expanded [`tests/fx-worker-routes.test.js`](/Users/leokwan/Development/resplit-currency-api/tests/fx-worker-routes.test.js) and [`tests/smoke-check-deploy.test.js`](/Users/leokwan/Development/resplit-currency-api/tests/smoke-check-deploy.test.js) to cover impossible dates and the tightened smoke gate
+- Fresh proof this run:
+  - `node --test tests/fx-worker-routes.test.js tests/smoke-check-deploy.test.js tests/fx-worker-canary.test.js`
+  - `node --check scripts/smoke-check-deploy.js`
+  - `for f in worker/src/*.mjs; do node --check "$f"; done`
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - local repro before fix: `/quote`, `/history`, and `/coverage` accepted `2026-02-31` with `200`; stubbed `smokeCheckWorker` accepted degraded coverage
+  - local repro after fix: the same three invalid-date routes now return `400`, and the stubbed smoke gate now throws `worker coverage signals present for https://fx.resplit.app`
+  - pushed `fix: reject invalid FX dates and coverage drift` to `main` as `6a866a2b`
+  - dispatched and watched `Update Currency Rates` run `23558376724` on `headSha=6a866a2b`; it completed green and deployed the updated Worker + Pages surfaces
+  - downstream `pages build and deployment` run `23558431688` completed green on `gh-pages`
+  - live post-deploy probes:
+    - Cloudflare Pages latest `aed` date `2026-03-25`
+    - Cloudflare Pages history spans `2026-02-24` through `2026-03-25` with `30` points
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-25`, `371` available dates, `0` gaps
+    - GitHub Pages fallback latest `aed` date `2026-03-25`
+    - dated snapshot branch `2026-03-25` serves `base=eur` with `166` rates
+    - canonical Worker quote `AED -> USD` resolved at `0.27229483`
+    - canonical Worker coverage for `anchorDate=2026-03-25&days=30` returned `mismatchCount=0`, `signals=[]`, `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `quoteResolution=exact`
+    - live invalid-date probes now fail correctly:
+      - `/quote?from=AED&to=USD&date=2026-02-31` -> `400 INVALID_QUERY`
+      - `/history?from=AED&to=USD&start=2026-02-31&end=2026-03-02` -> `400 INVALID_QUERY`
+      - `/coverage?from=AED&to=USD&anchorDate=2026-02-31&days=30` -> `400 INVALID_QUERY`
+  - Sentry state after deploy remains clean for publish/deploy/runtime failure signals:
+    - aggregate `search_events` for `currency_publish_failed`, `cloudflare_deploy_failure`, `github_pages_deploy_failure`, `fx_worker_deploy_failure`, `smoke_check_mismatch`, `canary_error`, `validate_package_failed`, and `worker_route_exception` returned `0` over the last `30` days
+    - org `firstbite-labs` still has no dedicated `resplit-currency-api` project; ownership remains shared / external
+- Non-blocking repo-local residue:
+  - the Cloudflare Pages `pages_build_output_dir` warning still appears in run `23558376724`; Cloudflare’s docs confirm that blindly adding `pages_build_output_dir` to an existing local-dev Wrangler file can accidentally promote that file into Pages production config, so this remains warning-only until we intentionally introduce a separate Pages source of truth
+  - the workflow still logs `Skipping Sentry publish check-in finish because the start step did not produce a check-in id`; publish/deploy proof is green, but the cron monitor finish output path is still observability debt
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; no locale catalog or Apple localization surface exists in this repo.
+  - `2 App Store Connect Feedback Triage`: no-op; ASC/TestFlight ownership remains outside this repo in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: shipped; rechecked error signal, kept Sentry searches clean, and deployed the public route + smoke-gate hardening on current trunk.
+  - `4 UX Feedback Triage Lead`: no-op; this repo owns FX payload/runtime correctness, not user feedback queues.
+  - `5 Code Review + Clipdiff Auditor`: shipped; review lane found the invalid-date acceptance and smoke-gate blind spot, and this pass closed both.
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op with proof; Worker, Cloudflare Pages, GitHub Pages fallback, and dated snapshot branch remain aligned on the same March 25 payload.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; repo-local `knip` stayed clean and the cross-repo hooks sweep still reports no `resplit-currency-api` dead-code findings.
+  - `8 Architecture + Test Discipline Guardian`: shipped; added shared date validation plus direct route/smoke tests and re-proved the full repo gates.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and smoke probes, not App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata still lives outside this checkout.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fix the missing `checkin_id` propagation for `scripts/sentry-checkin.js start` / the workflow finish step, or intentionally introduce a separate Cloudflare Pages config source of truth if we decide to retire the `pages_build_output_dir` warning instead of treating it as acceptable debt.
