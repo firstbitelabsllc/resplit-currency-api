@@ -111,7 +111,7 @@ function resolveExpectedDate({ requestedDate, latestDate, metaLatestDate }) {
 
 async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithRetry } = {}) {
   const normalizedBase = baseUrl.replace(/\/+$/, '')
-  const historyStart = dateDaysAgoUTC(2)
+  const historyStart = dateDaysBeforeUTC(dateToday, 2)
   const quote = await fetchJson(
     `${normalizedBase}/quote?from=AED&to=USD&date=${dateToday}`
   )
@@ -197,8 +197,8 @@ function toDateStringUTC(date) {
   return date.toISOString().slice(0, 10)
 }
 
-function dateDaysAgoUTC(daysAgo) {
-  const date = new Date()
+function dateDaysBeforeUTC(anchorDate, daysAgo) {
+  const date = new Date(`${anchorDate}T00:00:00Z`)
   date.setUTCDate(date.getUTCDate() - daysAgo)
   return toDateStringUTC(date)
 }

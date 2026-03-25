@@ -126,3 +126,51 @@ test('smokeCheckWorker accepts exact coverage payloads', async () => {
     })
   )
 })
+
+test('smokeCheckWorker anchors history start to the requested publish date', async () => {
+  const seenUrls = []
+
+  await assert.doesNotReject(
+    smokeCheckWorker('https://fx.resplit.app', '2026-03-01', {
+      fetchJson: async (url) => {
+        seenUrls.push(String(url))
+        if (String(url).includes('/quote?')) {
+          return {
+            from: 'AED',
+            to: 'USD',
+            requestedDate: '2026-03-01',
+            resolvedDate: '2026-03-01',
+            resolutionKind: 'exact',
+            rate: 0.27,
+          }
+        }
+        if (String(url).includes('/history?')) {
+          return {
+            points: [
+              { date: '2026-02-27', rate: 0.27 },
+              { date: '2026-02-28', rate: 0.27 },
+              { date: '2026-03-01', rate: 0.27 },
+            ],
+          }
+        }
+        return {
+          quote: {
+            resolvedDate: '2026-03-01',
+            resolutionKind: 'exact',
+          },
+          historyCoverage: {
+            requestedDays: 30,
+            availableDays: 30,
+            missingDayCount: 0,
+          },
+          mismatchCount: 0,
+          signals: [],
+        }
+      },
+    })
+  )
+
+  assert.ok(
+    seenUrls.includes('https://fx.resplit.app/history?from=AED&to=USD&start=2026-02-27&end=2026-03-01')
+  )
+})
