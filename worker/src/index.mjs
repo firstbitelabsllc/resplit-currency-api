@@ -326,7 +326,9 @@ async function handleFxCanary(request, env) {
     })
   } catch (error) {
     console.error('[FX_CANARY] status=500 FX canary failed', error)
-    await captureFxCoverageFailure(error, {
+    await captureFxRouteFailure(error, {
+      route: 'cron_fx_canary',
+      signal: 'canary_error',
       source: 'fx-canary-cron',
       from: 'MULTI',
       to: 'MULTI',

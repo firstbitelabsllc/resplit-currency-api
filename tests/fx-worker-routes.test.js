@@ -309,3 +309,62 @@ test('worker cron route returns canary report for authorized requests', async ()
     )
   })
 })
+
+test('worker cron route reports canary_error on unexpected failures', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const originalConsoleError = console.error
+  const errorLines = []
+
+  console.error = (...args) => {
+    const line = args.map(arg => String(arg)).join(' ')
+    errorLines.push(line)
+    if (line.startsWith('[FX_CANARY] status=500 ok=false')) {
+      throw new Error('console exploded')
+    }
+  }
+
+  try {
+    await withStubbedFetch(async () => {
+      throw new Error('archive fetch exploded')
+    }, async () => {
+      const response = await handleRequest(
+        new Request('https://example.workers.dev/cron/fx-canary', {
+          headers: {
+            authorization: 'Bearer top-secret',
+            'x-request-id': 'req-canary-fail',
+          },
+        }),
+        {
+          ASSET_BASE_URL: 'https://example-assets.dev',
+          CRON_SECRET: 'top-secret',
+        }
+      )
+
+      assert.equal(response.status, 500)
+      assert.equal(response.headers.get('x-request-id'), 'req-canary-fail')
+      assert.equal(response.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(await response.json(), {
+        error: 'FX_CANARY_FAILED',
+        message: 'FX canary failed',
+      })
+    })
+  } finally {
+    console.error = originalConsoleError
+  }
+
+  const monitoringLine = errorLines.find(line => {
+    if (!line.startsWith('[FX_MONITORING] ')) {
+      return false
+    }
+    const payload = JSON.parse(line.replace('[FX_MONITORING] ', ''))
+    return payload.signal === 'canary_error' && payload.error === 'console exploded'
+  })
+  assert.ok(monitoringLine, 'expected FX monitoring error log')
+
+  const payload = JSON.parse(monitoringLine.replace('[FX_MONITORING] ', ''))
+  assert.equal(payload.signal, 'canary_error')
+  assert.equal(payload.route, 'cron_fx_canary')
+  assert.equal(payload.requestId, 'req-canary-fail')
+  assert.equal(payload.error, 'console exploded')
+  assert.equal(payload.requestedDays, 30)
+})
