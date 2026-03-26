@@ -42,7 +42,7 @@ allowed and surfaced via `archive-manifest.json` and the canonical coverage rout
 |--------|--------|-------|
 | `CLOUDFLARE_ACCOUNT_ID` | Required | Verified by workflow before deploy |
 | `CLOUDFLARE_API_TOKEN` | Required | Verified by workflow before deploy |
-| `SENTRY_CURRENCY_API_DSN` | Recommended | Preferred DSN for the dedicated currency-api Sentry project |
+| `SENTRY_CURRENCY_API_DSN` | Recommended | Preferred DSN once a dedicated currency-api Sentry project exists; otherwise the workflow can still fall back to `SENTRY_DSN` |
 | `SENTRY_DSN` | Optional fallback | Shared fallback DSN if the dedicated project secret is not configured |
 | `CRON_SECRET` | Optional but recommended | Protects `/cron/fx-canary` |
 | `GITHUB_TOKEN` | Auto | Provided by GitHub Actions |

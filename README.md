@@ -71,7 +71,7 @@ GET https://resplit-currency-api.pages.dev/latest/aed.json
 |--------|-------------|
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API token with Pages edit permission |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
-| `SENTRY_CURRENCY_API_DSN` | Preferred DSN for the dedicated currency-api Sentry project |
+| `SENTRY_CURRENCY_API_DSN` | Preferred DSN when you provision a dedicated currency-api Sentry project; otherwise the workflow can fall back to `SENTRY_DSN` |
 | `SENTRY_DSN` | Optional shared fallback DSN if a dedicated project is not configured |
 | `CRON_SECRET` | Optional secret for the Worker canary route |
 
