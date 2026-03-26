@@ -1400,6 +1400,7 @@
   - latest hosted publish proof on trunk is green:
     - `Update Currency Rates` run `23574416630` succeeded on `headSha=be45dd37875e59b72329c813a9f663e52e230107`
     - downstream `pages build and deployment` run `23574445408` succeeded on `gh-pages`
+    - while this nurse pass was running, `origin/main` advanced to `f30178a7` (`chore: archive daily snapshot 2026-03-26`); the local checkpoint commit was then rebased onto that new trunk head so the checkout matches repo truth again
   - live public surfaces still align on the published March 26 payload:
     - Cloudflare Pages latest `aed` date `2026-03-26`
     - Cloudflare Pages history `30` points spanning `2026-02-25` through `2026-03-26`
