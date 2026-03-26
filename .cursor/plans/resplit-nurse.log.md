@@ -1,5 +1,86 @@
 # Resplit Nurse Log
 
+## 2026-03-26 18:42 EDT
+
+- Rehydrated from `RALPH.md`, this nurse log, `.github/workflows/run.yml`, `RUNBOOK.md`, the repo ledger, clean trunk state, and the required release skills. No repo-local hot-files board existed, and this pass kept the canonical checkout clean while isolated proof ran in a detached worktree.
+- No repo-owned runtime slice shipped this pass. `resplit-currency-api` remains `GO`, but overall Resplit 2.0 remains `NO-GO` because the current web production source is still external to the provided website checkout and iOS remains release-dirty with open App Store blockers.
+- Fresh proof this run:
+  - isolated full repo proof in detached worktree `/tmp/resplit-currency-api-proof.GSqtgs`:
+    - `npm ci`
+    - `npm run check`
+    - `npm run smoke:deploy`
+  - release-train / diff / drift checks:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 8 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+    - `gh run view 23600073031 --repo firstbitelabsllc/resplit-currency-api --log | rg 'warning::|Uploaded secret|pages_build_output_dir|Missing SENTRY_DSN|Missing CRON_SECRET|Using shared SENTRY_DSN fallback'`
+    - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~5..HEAD`
+    - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production --report-dir /tmp/resplit-dead-code.1774564665`
+    - `git diff --name-only c55b4484136ba9ee73074172cf63d736afa12f7c..HEAD`
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-26`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-26&days=30`
+    - `https://2026-03-26.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+  - Sentry MCP:
+    - `find_organizations`
+    - `find_projects`
+    - `search_events`
+    - `get_sentry_resource` for `RESPLIT-IOS-DT`
+    - `search_issue_events` for `RESPLIT-IOS-DT` over the last `6` hours
+    - `search_issues` for `resplit-web` unresolved issues over the last `7` days
+  - read-only external overlay audits in:
+    - `/Users/leokwan/Development/resplit-ios`
+    - `/Users/leokwan/Development/resplit-website`
+- Live proof details:
+  - isolated `npm run check` passed with `52/52` tests and `Snapshot window: 363 days (362 local, 0 network)`.
+  - isolated `npm run smoke:deploy` passed with `date=2026-03-26` and `historyPoints=30`.
+  - latest hosted FX publish remains green:
+    - `Update Currency Rates` run `23600073031` succeeded on `headSha=c55b4484136ba9ee73074172cf63d736afa12f7c`
+    - downstream `pages build and deployment` run `23600141248` succeeded on `gh-pages`
+    - `git diff --name-only c55b4484136ba9ee73074172cf63d736afa12f7c..HEAD` is only `.cursor/plans/resplit-nurse.log.md` plus `tests/fx-worker-monitoring.test.js`, so there is still no missing runtime deploy from this checkout
+  - live public FX surfaces remain aligned on the March 26 payload:
+    - Cloudflare Pages latest `aed` date `2026-03-26` with `166` rates
+    - Cloudflare Pages history returns `30` points from `2026-02-25` through `2026-03-26`
+    - archive manifest now reports `earliestDate=2025-03-18`, `latestDate=2026-03-26`, and `gapCount=0`
+    - GitHub Pages fallback latest `aed` date `2026-03-26` with `166` rates
+    - canonical Worker quote resolves `AED -> USD` on `requestedDate=2026-03-26`, `resolvedDate=2026-03-26`, `rate=0.27227896`, `resolutionKind=exact`
+    - canonical Worker coverage reports `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`, `archiveGapCount=0`
+    - dated snapshot branch `2026-03-26` serves `base=eur` with `166` rates
+  - workflow warnings remain repo-documented noise:
+    - the job log still prints the `Missing SENTRY_DSN` / `Missing CRON_SECRET` warning lines before the secrets are uploaded
+    - the same green run uploads `SENTRY_DSN`, `SENTRY_RELEASE`, and `CRON_SECRET`
+    - the recurring Cloudflare Pages `pages_build_output_dir` warning remains the expected non-action until Pages config is intentionally migrated into source control
+  - code review / dead-code / observability state:
+    - `clipdiff HEAD~5..HEAD` still shows only the shipped monitoring-contract runtime narrowing at `c55b4484`, the follow-up test alignment at `c3979466`, and nurse checkpoints
+    - `resplit-currency-api` stayed clean on both `knip` passes; only `resplit-web` still reports separate dead-code / dependency drift
+    - Sentry org `firstbite-labs` still has no dedicated `resplit-currency-api` project
+    - org-wide FX error-event count for `coverage_failure`, `currency_publish_failed`, `canary_error`, `worker_route_exception`, `fx_worker_deploy_failure`, and `smoke_check_mismatch` remained `0` over the last `30` days
+    - issue `RESPLIT-IOS-DT` (`FX integrity warning for AED->USD on 2026-03-26`) is still unresolved, but its last event remains `2026-03-26T00:41:06Z`, before the current green FX publish, and Sentry found no events for that issue in the last `6` hours
+    - `resplit-web` Sentry unresolved issues over the last `7` days returned no matches
+  - sibling release-execution overlay:
+    - `resplit-currency-api`: `already current` — latest green publish/deploy still matches live runtime, and `HEAD` only adds a test-only monitoring alignment plus nurse-log docs
+    - `resplit-web`: `blocked` — Vercel production for `https://www.resplit.app` is `Ready` on deployment `dpl_J5SH6cgGHck166vXqxRKmueN7iDv` created `2026-03-26 12:43:45 EDT`, but it is building from `github.com/firstbitelabsllc/resplit-ios@38084fffc4cfc29b199640ff0b37b6e8e5f75df3`, not from `/Users/leokwan/Development/resplit-website`
+    - `resplit-ios`: `blocked` — `/Users/leokwan/Development/resplit-ios` is not release-clean (`114` dirty entries: `92` modified, `3` deleted, `19` untracked), `Localizable.xcstrings` still leaves each non-English locale at `483 translated / 70 missing`, App Store feedback still has `9` open rows, and `fastlane testflight_upload` can distribute from a dirty tree because it does not enforce `ensure_git_status_clean`
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked external; iOS improved to a shared `70`-key missing batch across each non-English locale, but the batch is still open.
+  - `2 App Store Connect Feedback Triage`: blocked external; the authoritative iOS tracker still shows `9` open ASC rows and the build `549` screenshot complaints remain unresolved.
+  - `3 Sentry + Seer Error Hunter`: no-op with proof; FX-side org searches are still clean after the latest green publish, and `RESPLIT-IOS-DT` has no events in the last `6` hours.
+  - `4 UX Feedback Triage Lead`: blocked external; the highest-value active user-facing complaints are still the iOS build `549` receipt-detail and screenshot issues.
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof; the current trunk diff still reduces to the already-reviewed monitoring contract, the test alignment, and nurse docs.
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked external; the current `www.resplit.app` production artifact is coming from `resplit-ios`, not the provided website checkout, so canonical surface ownership is still unresolved.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; `resplit-currency-api` stayed clean on the production dead-code sweep.
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; the current FX runtime contract remains covered by `52/52` passing checks and the live Worker/Pages/dated-branch surface still agrees.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked external; the iOS 9-locale screenshot matrix is complete on disk, but the proof host is still dirty and App Store screenshot complaints remain open.
+  - `10 App Store SEO + Metadata God`: blocked external; iOS still lacks the replacement English app-name decision for staged uploads, and the live web SEO surface is not sourced from the provided website repo.
+- Current repo status remains `GO`, but overall Resplit 2.0 remains `NO-GO`.
+- Exact next slice:
+  - fast-exit this repo unless a future FX publish/deploy turns red or the live Worker/Pages payload drifts away from trunk
+  - move the next mayor pass onto:
+    - deciding the canonical repo/deploy source for `www.resplit.app`, then fixing the live SEO surface there
+    - or burning down the iOS build `549` ASC queue on a clean tree before any new TestFlight upload
+
 ## 2026-03-26 16:44 EDT
 
 - Rehydrated from `RALPH.md`, this nurse log, `.github/workflows/run.yml`, `RUNBOOK.md`, the repo ledger, clean trunk state, and automation memory. No repo-local hot-files board existed, and no competing writer owned this checkout during the run.
