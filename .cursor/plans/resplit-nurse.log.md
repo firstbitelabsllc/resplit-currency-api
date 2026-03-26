@@ -1707,3 +1707,62 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future hosted publish/deploy run goes red, live Pages/Worker payloads drift away from `HEAD`, the team intentionally migrates Cloudflare Pages config into source control, or a dedicated currency-api Sentry project becomes a release requirement.
+
+## 2026-03-26 03:44 EDT
+
+- Rehydrated the repo-owned release state again and reran the full 10-role sweep on clean trunk. This pass did not surface a new repo-owned code, workflow, docs, or release-train slice to ship; it is a fresh repo-truth checkpoint only.
+- No product/runtime/workflow files changed by this pass before this breadcrumb. Current pre-checkpoint trunk head was `db62235e` (`docs: checkpoint nurse proof 2026-03-26-0243`).
+- Fresh proof this run:
+  - `npm run check`
+  - `git status --short --branch`
+  - `npm run smoke:deploy`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - `gh run view 23579584287 --repo firstbitelabsllc/resplit-currency-api --log | sed -n '286,306p'`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~3..HEAD`
+  - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production`
+  - Sentry MCP: `find_organizations`, `find_projects`, `search_events`, `search_issues`
+  - structured live probes for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-26`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-26&days=30`
+    - `https://2026-03-26.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+- Live proof details:
+  - `npm run check` passed with `42/42` tests and `Snapshot window: 363 days (362 local, 0 network)`.
+  - `git status --short --branch` stayed clean before and after proof (`## main...origin/main`).
+  - `npm run smoke:deploy` passed with `date=2026-03-26` and `historyPoints=30`.
+  - latest hosted publish proof still matches the runtime on current trunk:
+    - `Update Currency Rates` run `23579584287` succeeded on `headSha=feddf54fac0368b3e4d9fbafdcd4d59655800b28`
+    - downstream `pages build and deployment` run `23579612023` succeeded on `gh-pages`
+    - the only commits after that publish on `main` are nurse checkpoints, so the runtime proof still covers the current code surface
+  - live public surfaces still align on the March 26 payload:
+    - Cloudflare Pages latest `aed` date `2026-03-26`
+    - Cloudflare Pages history `30` points spanning `2026-02-25` through `2026-03-26`
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-26`, `availableDates=372`, `gapCount=2`
+    - GitHub Pages fallback latest `aed` date `2026-03-26`
+    - canonical Worker quote resolved on `2026-03-26` at `0.27227896`
+    - canonical Worker coverage returned `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`
+    - dated snapshot branch `2026-03-26` serves `base=eur` with `166` rates
+  - review / dead-code / observability state:
+    - `clipdiff HEAD~3..HEAD` confirms the recent trunk delta is still the already-shipped canary telemetry fix plus nurse checkpoints; no fresh regression surface appeared on trunk
+    - the hooks production dead-code sweep stayed clean for `resplit-currency-api`; only `resplit-web` reported separate findings
+    - Sentry org `firstbite-labs` still exposes only `resplit-ios`, `resplit-ios-clip`, and `resplit-web`; there is still no dedicated `resplit-currency-api` project
+    - Sentry aggregate error-event count for `smoke_check_mismatch`, `worker_route_exception`, `coverage_failure`, `canary_error`, and `currency_publish_failed` remained `0` over the last `30` days
+    - unresolved Sentry issue searches for `smoke_check_mismatch`, `worker_route_exception`, `canary_error`, and `currency_publish_failed` returned no matches in the last `30` days
+    - workflow log context confirms `SENTRY_DSN`, `SENTRY_RELEASE`, and `CRON_SECRET` were uploaded successfully in run `23579584287`; the remaining recurring warning is the expected Wrangler `pages_build_output_dir` Pages warning
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op with proof; no locale catalogs, non-English runtime paths, or App Store copy assets exist in this repo.
+  - `2 App Store Connect Feedback Triage`: blocked external; no repo-local ASC/TestFlight tracker exists here and ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: blocked on external project ownership only; current FX failure signals stayed at `0` and no unresolved issues were found.
+  - `4 UX Feedback Triage Lead`: no-op with proof; this checkout owns the FX data/API train, not the user-feedback queue.
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof; recent trunk diff is the already-shipped Worker telemetry fix plus checkpoint churn, with no new severity-ranked findings.
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op with proof; Worker, Cloudflare Pages, GitHub Pages, and the dated snapshot branch still agree on the published March 26 payload.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; `resplit-currency-api` stayed clean on the production dead-code sweep.
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; publisher/Worker boundaries are unchanged and `42/42` tests plus the canonical smoke gate remain green on current trunk.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op with proof; hosted dated snapshot proof remains aligned with trunk and this repo owns data snapshots rather than App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op with proof; ASO metadata and screenshot ordering remain outside this checkout.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future hosted publish/deploy run goes red, live Pages/Worker payloads drift away from `HEAD`, the team intentionally migrates Cloudflare Pages config into source control, or a dedicated currency-api Sentry project becomes a release requirement.
