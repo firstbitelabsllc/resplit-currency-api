@@ -327,6 +327,75 @@ test('captureFxCoverageMismatch logs live worker coverage signals with quote con
   })
 })
 
+test('captureFxCoverageMismatch keeps public coverage-route mismatches out of Sentry', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const report = {
+      from: 'AED',
+      to: 'USD',
+      anchorDate: '2026-03-26',
+      requestedDays: 30,
+      mismatchCount: 2,
+      signals: ['prior_day_fallback_used', 'history_range_incomplete'],
+      quote: {
+        resolutionKind: 'prior_day_fallback',
+        resolvedDate: '2026-03-25',
+      },
+      historyCoverage: {
+        requestedDays: 30,
+        availableDays: 29,
+        missingDayCount: 1,
+        archiveGapCount: 0,
+      },
+    }
+
+    const result = await monitoring.captureFxCoverageMismatch(report, 'fx-coverage-route', 'req-public-route', {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+
+    assert.equal(result, false)
+    assert.deepEqual(calls.captureMessage, [])
+    assert.deepEqual(calls.flush, [])
+    assert.equal(calls.scopes.length, 0)
+  })
+})
+
+test('captureFxCoverageMismatch escalates canary mismatches to Sentry when DSN is present', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const report = {
+      from: 'AED',
+      to: 'USD',
+      anchorDate: '2026-03-26',
+      requestedDays: 30,
+      mismatchCount: 2,
+      signals: ['history_range_incomplete', 'archive_gap_detected'],
+      quote: {
+        resolutionKind: 'exact',
+        resolvedDate: '2026-03-26',
+      },
+      historyCoverage: {
+        requestedDays: 30,
+        availableDays: 28,
+        missingDayCount: 1,
+        archiveGapCount: 1,
+      },
+    }
+
+    const result = await monitoring.captureFxCoverageMismatch(report, 'fx-canary-cron', 'req-canary-route', {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+
+    assert.equal(result, true)
+    assert.deepEqual(calls.captureMessage, [
+      'FX integrity warning for AED->USD on 2026-03-26',
+    ])
+    assert.deepEqual(calls.flush, [2_000])
+    assert.equal(calls.scopes.length, 1)
+    assert.equal(calls.scopes[0].level, 'error')
+    assert.equal(calls.scopes[0].tags['fx.source'], 'fx-canary-cron')
+    assert.equal(calls.scopes[0].tags['monitoring.signal'], 'history_range_incomplete')
+  })
+})
+
 test('captureFxCoverageFailure preserves source and request context in structured monitoring logs', async () => {
   const monitoring = await import('../worker/src/monitoring.mjs')
 

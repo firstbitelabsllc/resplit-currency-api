@@ -205,7 +205,7 @@ export async function captureFxCoverageMismatch(report, source, requestId, env) 
     }
   }
 
-  if (!isFxMonitoringEnabled(env)) {
+  if (!isFxMonitoringEnabled(env) || source !== 'fx-canary-cron') {
     return false
   }
 

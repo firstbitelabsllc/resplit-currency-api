@@ -178,6 +178,7 @@ Current monitor + signal model:
 - Cron monitor slug: `resplit-currency-api-daily-publish`
 - Schedule: `0 0 * * *` UTC
 - Workflow tag: `daily_publish`
+- Public `/coverage` route mismatches stay as structured warning logs only; Sentry issue creation is reserved for the cron canary so expected pre-publish fallback diagnostics do not open false production issues.
 - Grouped issue signals:
   - `currency_publish_failed`
   - `upstream_fetch_failure`
