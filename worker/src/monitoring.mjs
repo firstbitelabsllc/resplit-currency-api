@@ -97,6 +97,7 @@ export function logFxMonitoringEvent(level, event, env) {
  * @param {{
  *   route: string
  *   signal: string
+ *   source?: 'fx-coverage-route' | 'fx-canary-cron'
  *   requestId?: string
  *   from?: string
  *   to?: string
@@ -114,6 +115,7 @@ export async function captureFxRouteFailure(error, context, env) {
   logFxMonitoringEvent('error', {
     signal: context.signal,
     route: context.route,
+    source: context.source,
     requestId: context.requestId,
     from: context.from,
     to: context.to,
@@ -136,6 +138,9 @@ export async function captureFxRouteFailure(error, context, env) {
     scope.setTag('route', context.route)
     scope.setTag('monitoring.domain', 'fx')
     scope.setTag('monitoring.signal', context.signal)
+    if (context.source) {
+      scope.setTag('fx.source', context.source)
+    }
     if (context.requestId) {
       scope.setTag('request.id', context.requestId)
     }
