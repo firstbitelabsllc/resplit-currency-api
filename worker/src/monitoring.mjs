@@ -171,7 +171,7 @@ export async function captureFxRouteFailure(error, context, env) {
 
 /**
  * @param {Awaited<import('./fx-diagnostics.mjs').buildFxCoverageReport>} report
- * @param {'fx-coverage-route' | 'fx-canary-cron'} source
+ * @param {'fx-coverage-route'} source
  * @param {string | undefined} requestId
  * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
  * @returns {Promise<boolean>}
@@ -205,37 +205,8 @@ export async function captureFxCoverageMismatch(report, source, requestId, env) 
     }
   }
 
-  if (!isFxMonitoringEnabled(env) || source !== 'fx-canary-cron') {
-    return false
-  }
-
-  sentrySdk.withScope(scope => {
-    scope.setLevel('error')
-    scope.setTag('surface', SURFACE)
-    scope.setTag('runtime', 'worker')
-    scope.setTag('monitoring.domain', 'fx')
-    scope.setTag('monitoring.signal', report.signals[0] ?? 'fx_integrity_warning')
-    scope.setTag('fx.source', source)
-    scope.setTag('fx.from', report.from)
-    scope.setTag('fx.to', report.to)
-    if (requestId) {
-      scope.setTag('request.id', requestId)
-    }
-    scope.setContext('fxCoverage', {
-      anchorDate: report.anchorDate,
-      requestedDays: report.requestedDays,
-      quote: report.quote,
-      historyCoverage: report.historyCoverage,
-      mismatchCount: report.mismatchCount,
-      signals: report.signals,
-      requestId,
-    })
-    sentrySdk.captureMessage(
-      `FX integrity warning for ${report.from}->${report.to} on ${report.anchorDate}`
-    )
-  })
-
-  return sentrySdk.flush(2_000)
+  // Public coverage mismatches stay log-only. Cron canary failures escalate via captureFxCanaryIncident.
+  return false
 }
 
 /**

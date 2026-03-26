@@ -230,6 +230,47 @@ test('captureFxRouteFailure preserves source in structured monitoring logs', asy
   })
 })
 
+test('captureFxRouteFailure reports DSN-enabled route failures to Sentry', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const result = await monitoring.captureFxRouteFailure(new Error('boom'), {
+      route: 'cron_fx_canary',
+      signal: 'canary_error',
+      source: 'fx-canary-cron',
+      requestId: 'req-canary-failure',
+      from: 'MULTI',
+      to: 'MULTI',
+      anchorDate: '2026-03-26',
+      requestedDays: 30,
+    }, {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+
+    assert.equal(result, true)
+    assert.equal(calls.captureException.length, 1)
+    assert.equal(calls.captureException[0].message, 'boom')
+    assert.deepEqual(calls.flush, [2_000])
+    assert.equal(calls.scopes.length, 1)
+    assert.equal(calls.scopes[0].level, 'error')
+    assert.equal(calls.scopes[0].tags.surface, 'resplit-currency-api')
+    assert.equal(calls.scopes[0].tags.runtime, 'worker')
+    assert.equal(calls.scopes[0].tags.route, 'cron_fx_canary')
+    assert.equal(calls.scopes[0].tags['monitoring.signal'], 'canary_error')
+    assert.equal(calls.scopes[0].tags['fx.source'], 'fx-canary-cron')
+    assert.equal(calls.scopes[0].tags['request.id'], 'req-canary-failure')
+    assert.deepEqual(calls.scopes[0].contexts.fxRoute, {
+      route: 'cron_fx_canary',
+      signal: 'canary_error',
+      source: 'fx-canary-cron',
+      requestId: 'req-canary-failure',
+      from: 'MULTI',
+      to: 'MULTI',
+      anchorDate: '2026-03-26',
+      requestedDays: 30,
+      error: 'boom',
+    })
+  })
+})
+
 test('captureFxCoverageMismatch logs the fallback integrity warning payload without Sentry', async () => {
   const monitoring = await import('../worker/src/monitoring.mjs')
   const report = {
@@ -359,43 +400,6 @@ test('captureFxCoverageMismatch keeps public coverage-route mismatches out of Se
   })
 })
 
-test('captureFxCoverageMismatch escalates canary mismatches to Sentry when DSN is present', async () => {
-  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
-    const report = {
-      from: 'AED',
-      to: 'USD',
-      anchorDate: '2026-03-26',
-      requestedDays: 30,
-      mismatchCount: 2,
-      signals: ['history_range_incomplete', 'archive_gap_detected'],
-      quote: {
-        resolutionKind: 'exact',
-        resolvedDate: '2026-03-26',
-      },
-      historyCoverage: {
-        requestedDays: 30,
-        availableDays: 28,
-        missingDayCount: 1,
-        archiveGapCount: 1,
-      },
-    }
-
-    const result = await monitoring.captureFxCoverageMismatch(report, 'fx-canary-cron', 'req-canary-route', {
-      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
-    })
-
-    assert.equal(result, true)
-    assert.deepEqual(calls.captureMessage, [
-      'FX integrity warning for AED->USD on 2026-03-26',
-    ])
-    assert.deepEqual(calls.flush, [2_000])
-    assert.equal(calls.scopes.length, 1)
-    assert.equal(calls.scopes[0].level, 'error')
-    assert.equal(calls.scopes[0].tags['fx.source'], 'fx-canary-cron')
-    assert.equal(calls.scopes[0].tags['monitoring.signal'], 'history_range_incomplete')
-  })
-})
-
 test('captureFxCoverageFailure preserves source and request context in structured monitoring logs', async () => {
   const monitoring = await import('../worker/src/monitoring.mjs')
 
@@ -415,5 +419,37 @@ test('captureFxCoverageFailure preserves source and request context in structure
     assert.ok(loggedLines[0].includes('"source":"fx-coverage-route"'))
     assert.ok(loggedLines[0].includes('"requestId":"req-coverage-failure"'))
     assert.ok(loggedLines[0].includes('"error":"coverage exploded"'))
+  })
+})
+
+test('captureFxCoverageFailure reports DSN-enabled failures to Sentry', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const result = await monitoring.captureFxCoverageFailure(new Error('coverage exploded'), {
+      source: 'fx-coverage-route',
+      from: 'AED',
+      to: 'USD',
+      anchorDate: '2026-03-26',
+      requestedDays: 30,
+      requestId: 'req-coverage-failure',
+    }, {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+
+    assert.equal(result, true)
+    assert.equal(calls.captureException.length, 1)
+    assert.equal(calls.captureException[0].message, 'coverage exploded')
+    assert.deepEqual(calls.flush, [2_000])
+    assert.equal(calls.scopes.length, 1)
+    assert.equal(calls.scopes[0].level, 'error')
+    assert.equal(calls.scopes[0].tags.surface, 'resplit-currency-api')
+    assert.equal(calls.scopes[0].tags.runtime, 'worker')
+    assert.equal(calls.scopes[0].tags['monitoring.signal'], 'coverage_failure')
+    assert.equal(calls.scopes[0].tags['fx.source'], 'fx-coverage-route')
+    assert.equal(calls.scopes[0].tags['request.id'], 'req-coverage-failure')
+    assert.deepEqual(calls.scopes[0].contexts.fxCoverageRequest, {
+      anchorDate: '2026-03-26',
+      requestedDays: 30,
+      requestId: 'req-coverage-failure',
+    })
   })
 })

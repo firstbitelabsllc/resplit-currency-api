@@ -191,7 +191,6 @@ Current monitor + signal model:
   - `validate_package_failed`
   - `worker_route_exception`
   - `coverage_failure`
-  - `fx_integrity_warning`
   - `canary_error`
 
 Quick verification after a manual workflow run:
