@@ -16,6 +16,198 @@ async function withCapturedConsole(method, run) {
   }
 }
 
+async function withMockedSentryCloudflare(run) {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const calls = {
+    captureCheckIn: [],
+    flush: [],
+    captureMessage: [],
+    captureException: [],
+    scopes: [],
+  }
+
+  const mockedSentry = {
+    captureCheckIn(payload, config) {
+      calls.captureCheckIn.push({ payload, config })
+      return 'mock-canary-checkin'
+    },
+    flush(timeout) {
+      calls.flush.push(timeout)
+      return Promise.resolve(true)
+    },
+    captureMessage(message) {
+      calls.captureMessage.push(message)
+    },
+    captureException(error) {
+      calls.captureException.push(error)
+    },
+    withScope(callback) {
+      const scope = {
+        level: null,
+        tags: {},
+        contexts: {},
+        setLevel(level) {
+          this.level = level
+        },
+        setTag(key, value) {
+          this.tags[key] = value
+        },
+        setContext(key, value) {
+          this.contexts[key] = value
+        },
+      }
+      calls.scopes.push(scope)
+      callback(scope)
+    },
+  }
+
+  monitoring.setSentryWorkerSdkForTests(mockedSentry)
+
+  try {
+    await run({ calls, monitoring })
+  } finally {
+    monitoring.resetSentryWorkerSdkForTests()
+  }
+}
+
+test('getSentryWorkerOptions returns dedicated worker config when DSN is present', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    SENTRY_ENVIRONMENT: 'staging',
+    SENTRY_RELEASE: 'worker-unit-test',
+  })
+
+  assert.deepEqual(options, {
+    dsn: 'https://worker@example.ingest.sentry.io/1',
+    enabled: true,
+    environment: 'staging',
+    release: 'worker-unit-test',
+    tracesSampleRate: 0,
+    sendDefaultPii: false,
+    initialScope: {
+      tags: {
+        surface: 'resplit-currency-api',
+        runtime: 'worker',
+      },
+    },
+  })
+})
+
+test('startFxCanaryCheckIn starts the dedicated worker canary monitor when DSN is present', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const checkInId = monitoring.startFxCanaryCheckIn({
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+
+    assert.equal(checkInId, 'mock-canary-checkin')
+    assert.deepEqual(calls.captureCheckIn, [
+      {
+        payload: {
+          monitorSlug: 'resplit-currency-api-fx-canary',
+          status: 'in_progress',
+        },
+        config: {
+          schedule: {
+            type: 'crontab',
+            value: '0 13 * * *',
+          },
+          checkinMargin: 60,
+          maxRuntime: 1,
+          timezone: 'UTC',
+          failureIssueThreshold: 1,
+          recoveryThreshold: 1,
+        },
+      },
+    ])
+  })
+})
+
+test('finishFxCanaryCheckIn records a completed worker canary check-in with duration', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const startedAt = 1_000
+    const originalNow = Date.now
+    Date.now = () => startedAt + 1_234
+
+    try {
+      const result = await monitoring.finishFxCanaryCheckIn(
+        'mock-canary-checkin',
+        'ok',
+        startedAt,
+        { SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1' }
+      )
+
+      assert.equal(result, true)
+      assert.deepEqual(calls.captureCheckIn, [
+        {
+          payload: {
+            checkInId: 'mock-canary-checkin',
+            monitorSlug: 'resplit-currency-api-fx-canary',
+            status: 'ok',
+            duration: 1.234,
+          },
+          config: undefined,
+        },
+      ])
+      assert.deepEqual(calls.flush, [2_000])
+    } finally {
+      Date.now = originalNow
+    }
+  })
+})
+
+test('captureFxCanaryIncident reports a DSN-enabled worker canary failure to Sentry', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const report = {
+      checkedAt: '2026-03-26T05:47:58.000Z',
+      mismatchCount: 1,
+      failureCount: 1,
+      results: [
+        {
+          pair: { from: 'AED', to: 'USD' },
+          anchorDate: '2026-03-26',
+          ok: false,
+          summary: 'coverage mismatch',
+          error: 'coverage exploded',
+        },
+      ],
+    }
+
+    const result = await monitoring.captureFxCanaryIncident(report, 'req-canary-incident', {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+
+    assert.equal(result, true)
+    assert.deepEqual(calls.captureMessage, [
+      'FX canary failed with 1 mismatches and 1 failures',
+    ])
+    assert.equal(calls.scopes.length, 1)
+    assert.equal(calls.scopes[0].level, 'error')
+    assert.equal(calls.scopes[0].tags.surface, 'resplit-currency-api')
+    assert.equal(calls.scopes[0].tags.runtime, 'worker')
+    assert.equal(calls.scopes[0].tags['monitoring.signal'], 'canary_error')
+    assert.equal(calls.scopes[0].tags['fx.source'], 'fx-canary-cron')
+    assert.equal(calls.scopes[0].tags['request.id'], 'req-canary-incident')
+    assert.deepEqual(calls.scopes[0].contexts.fxCanary, {
+      checkedAt: '2026-03-26T05:47:58.000Z',
+      mismatchCount: 1,
+      failureCount: 1,
+      failingChecks: [
+        {
+          from: 'AED',
+          to: 'USD',
+          anchorDate: '2026-03-26',
+          summary: 'coverage mismatch',
+          error: 'coverage exploded',
+        },
+      ],
+      requestId: 'req-canary-incident',
+    })
+    assert.deepEqual(calls.flush, [2_000])
+  })
+})
+
 test('captureFxRouteFailure preserves source in structured monitoring logs', async () => {
   const monitoring = await import('../worker/src/monitoring.mjs')
 

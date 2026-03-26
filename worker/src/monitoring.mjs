@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/cloudflare'
 
 const SURFACE = 'resplit-currency-api'
+let sentrySdk = Sentry
 const FX_CANARY_MONITOR_SLUG = 'resplit-currency-api-fx-canary'
 const FX_CANARY_MONITOR_CONFIG = {
   schedule: {
@@ -46,6 +47,14 @@ export function getSentryWorkerOptions(env) {
       },
     },
   }
+}
+
+export function setSentryWorkerSdkForTests(mock) {
+  sentrySdk = mock
+}
+
+export function resetSentryWorkerSdkForTests() {
+  sentrySdk = Sentry
 }
 
 /**
@@ -131,7 +140,7 @@ export async function captureFxRouteFailure(error, context, env) {
     return false
   }
 
-  Sentry.withScope(scope => {
+  sentrySdk.withScope(scope => {
     scope.setLevel('error')
     scope.setTag('surface', SURFACE)
     scope.setTag('runtime', 'worker')
@@ -154,10 +163,10 @@ export async function captureFxRouteFailure(error, context, env) {
       ...context,
       error: normalizedError.message,
     })
-    Sentry.captureException(normalizedError)
+    sentrySdk.captureException(normalizedError)
   })
 
-  return Sentry.flush(2_000)
+  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -200,7 +209,7 @@ export async function captureFxCoverageMismatch(report, source, requestId, env) 
     return false
   }
 
-  Sentry.withScope(scope => {
+  sentrySdk.withScope(scope => {
     scope.setLevel('error')
     scope.setTag('surface', SURFACE)
     scope.setTag('runtime', 'worker')
@@ -221,12 +230,12 @@ export async function captureFxCoverageMismatch(report, source, requestId, env) 
       signals: report.signals,
       requestId,
     })
-    Sentry.captureMessage(
+    sentrySdk.captureMessage(
       `FX integrity warning for ${report.from}->${report.to} on ${report.anchorDate}`
     )
   })
 
-  return Sentry.flush(2_000)
+  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -259,7 +268,7 @@ export async function captureFxCoverageFailure(error, context, env) {
     return false
   }
 
-  Sentry.withScope(scope => {
+  sentrySdk.withScope(scope => {
     scope.setLevel('error')
     scope.setTag('surface', SURFACE)
     scope.setTag('runtime', 'worker')
@@ -276,10 +285,10 @@ export async function captureFxCoverageFailure(error, context, env) {
       requestedDays: context.requestedDays,
       requestId: context.requestId,
     })
-    Sentry.captureException(normalizedError)
+    sentrySdk.captureException(normalizedError)
   })
 
-  return Sentry.flush(2_000)
+  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -314,7 +323,7 @@ export async function captureFxCanaryIncident(report, requestId, env) {
       error: result.error,
     }))
 
-  Sentry.withScope(scope => {
+  sentrySdk.withScope(scope => {
     scope.setLevel('error')
     scope.setTag('surface', SURFACE)
     scope.setTag('runtime', 'worker')
@@ -331,12 +340,12 @@ export async function captureFxCanaryIncident(report, requestId, env) {
       failingChecks,
       requestId,
     })
-    Sentry.captureMessage(
+    sentrySdk.captureMessage(
       `FX canary failed with ${report.mismatchCount} mismatches and ${report.failureCount} failures`
     )
   })
 
-  return Sentry.flush(2_000)
+  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -348,7 +357,7 @@ export function startFxCanaryCheckIn(env) {
     return null
   }
 
-  return Sentry.captureCheckIn(
+  return sentrySdk.captureCheckIn(
     {
       monitorSlug: FX_CANARY_MONITOR_SLUG,
       status: 'in_progress',
@@ -369,14 +378,14 @@ export async function finishFxCanaryCheckIn(checkInId, status, startedAt, env) {
     return false
   }
 
-  Sentry.captureCheckIn({
+  sentrySdk.captureCheckIn({
     checkInId,
     monitorSlug: FX_CANARY_MONITOR_SLUG,
     status,
     duration: Number(((Date.now() - startedAt) / 1000).toFixed(3)),
   })
 
-  return Sentry.flush(2_000)
+  return sentrySdk.flush(2_000)
 }
 
 /**
