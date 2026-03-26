@@ -356,11 +356,11 @@ test('captureFxCoverageMismatch logs live worker coverage signals with quote con
   assert.deepEqual(report.signals, ['history_range_incomplete', 'archive_gap_detected'])
 
   await withCapturedConsole('warn', async loggedLines => {
-    const result = await monitoring.captureFxCoverageMismatch(report, 'fx-canary-cron', 'req-canary-mismatch', {})
+    const result = await monitoring.captureFxCoverageMismatch(report, 'fx-coverage-route', 'req-coverage-mismatch', {})
 
     assert.equal(result, false)
     assert.equal(loggedLines.length, 2)
-    assert.ok(loggedLines.every(line => line.includes('"source":"fx-canary-cron"')))
+    assert.ok(loggedLines.every(line => line.includes('"source":"fx-coverage-route"')))
     assert.ok(loggedLines.some(line => line.includes('"signal":"history_range_incomplete"')))
     assert.ok(loggedLines.some(line => line.includes('"signal":"archive_gap_detected"')))
     assert.ok(loggedLines.every(line => line.includes('"quoteResolution":"exact"')))
