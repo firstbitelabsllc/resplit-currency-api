@@ -1,5 +1,56 @@
 # Resplit Nurse Log
 
+## 2026-03-26 08:55 EDT
+
+- Rehydrated the repo-owned release state and found one real repo-owned gap: current `main` had advanced to `f0fc74d7` after the last green publish run `23579584287` on `feddf54f`, so the deployed FX Worker train no longer matched trunk even though local gates were green.
+- Moved the release-train state twice this run:
+  - manually dispatched `gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api`, which completed green as run `23594995333` on `headSha=f0fc74d7cfb3b6fd9c81c2fdccd5ec85c16e5d58`; downstream `pages build and deployment` run `23595045662` also completed green
+  - while I was closing out, an adjacent lane shipped `5f2f7039` (`fix: keep public fx coverage mismatches out of sentry`) and published it successfully via runs `23595117171` (`Update Currency Rates`) and `23595166886` (`pages build and deployment`); I detected that new drift immediately and cancelled my redundant follow-up dispatch `23595334580`
+- Fresh proof this run:
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt`
+  - `gh run view 23595117171 --repo firstbitelabsllc/resplit-currency-api --log | rg 'warning::|Uploaded secret|pages_build_output_dir|Success! Uploaded secret'`
+  - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~3..HEAD`
+  - Sentry MCP: `find_organizations`, `find_projects`, `search_events`, `search_issues`
+  - structured live probes for Cloudflare Pages latest/history/manifest, GitHub Pages fallback, dated snapshot branch, and canonical Worker `quote` / `coverage`
+- Live proof details:
+  - `npm run check` passed with `49/49` tests and `Snapshot window: 363 days (362 local, 0 network)`.
+  - `npm run smoke:deploy` passed with `date=2026-03-26` and `historyPoints=30`.
+  - dead-code sweep stayed clean for `resplit-currency-api` on both default and production passes; only `resplit-web` reported separate findings.
+  - latest successful hosted publish proof now matches current trunk:
+    - `Update Currency Rates` run `23595117171` succeeded on `headSha=5f2f70399539ae03c05ecf5760ff32f5c5347c65`
+    - downstream `pages build and deployment` run `23595166886` succeeded on `gh-pages`
+    - my extra dispatch `23595334580` was cancelled once it was clear that `5f2f7039` had already been published cleanly
+  - workflow log for run `23595117171` confirms `SENTRY_DSN`, `SENTRY_RELEASE`, and `CRON_SECRET` were all uploaded successfully; the remaining recurring warning is the expected Cloudflare Pages `pages_build_output_dir` notice.
+  - live public surfaces stayed aligned on the March 26 payload after the final publish:
+    - Cloudflare Pages latest `aed` date `2026-03-26`
+    - Cloudflare Pages history `30` points spanning `2026-02-25` through `2026-03-26`
+    - archive manifest `earliestDate=2025-03-18`, `latestDate=2026-03-26`, `availableDates=372`, `gapCount=2`
+    - GitHub Pages fallback latest `aed` date `2026-03-26`
+    - canonical Worker quote resolved on `2026-03-26` at `0.27227896`
+    - canonical Worker coverage returned `requestedDays=30`, `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`
+    - dated snapshot branch `2026-03-26` serves `base=eur` with `166` rates
+  - Sentry state remains quiet:
+    - org `firstbite-labs` still exposes only `resplit-ios`, `resplit-ios-clip`, and `resplit-web`; there is still no dedicated `resplit-currency-api` project
+    - aggregate error-event count for `smoke_check_mismatch`, `worker_route_exception`, `coverage_failure`, `canary_error`, `currency_publish_failed`, `validate_package_failed`, and `fx_worker_deploy_failure` remained `0` over the last `30` days
+    - unresolved issue searches for `coverage_failure`, `currency_publish_failed`, and `canary_error` all returned no matches in the last `30` days
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op with proof; no locale catalogs, non-English runtime paths, or App Store copy assets exist outside ignored/generated paths in this repo.
+  - `2 App Store Connect Feedback Triage`: blocked external; no repo-local ASC/TestFlight tracker exists here and ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: blocked by ownership; current FX failure signals stayed at `0`, and the current-head monitoring-policy change was already shipped by the adjacent lane before closeout.
+  - `4 UX Feedback Triage Lead`: no-op with proof; this checkout owns the FX data/API train, not the user-feedback queue.
+  - `5 Code Review + Clipdiff Auditor`: shipped; review of the recent monitoring hardening chain caught deployed-trunk drift and forced the release-train back onto current `main`.
+  - `6 UX Uniformity + Canonical Surface Mayor`: shipped; Cloudflare Pages, GitHub Pages, the dated snapshot branch, and the canonical Worker are aligned again on current trunk `5f2f7039`.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; `resplit-currency-api` stayed clean on both default and production dead-code passes.
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; `49/49` tests and the canonical smoke gate are green on current trunk.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op with proof; hosted dated snapshot proof remains aligned with trunk and this repo owns data snapshots rather than App Store screenshot scenes.
+  - `10 App Store SEO + Metadata God`: no-op with proof; ASO metadata and screenshot ordering remain outside this checkout.
+- Current repo status remains `GO` on deployed trunk `5f2f7039`.
+- Remaining blocker for overall Resplit 2.0 launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future hosted publish/deploy run goes red, `main` advances without a matching green publish, or a dedicated currency-api Sentry project becomes a release requirement.
+
 ## 2026-03-23 16:40 EDT
 
 - Rehydrated repo-owned state for `resplit-currency-api`: no local `RALPH.md`, no existing `.cursor/plans`, clean `main`, and recent ledger entries showed the hot launch blockers living in `resplit-ios`, not this repo.
