@@ -262,25 +262,57 @@ test('captureFxCoverageMismatch logs the fallback integrity warning payload with
   })
 })
 
-test('captureFxCoverageMismatch logs each worker coverage signal with quote context', async () => {
+test('captureFxCoverageMismatch logs live worker coverage signals with quote context', async () => {
   const monitoring = await import('../worker/src/monitoring.mjs')
-  const report = {
+  const { buildFxCoverageReport } = await import('../worker/src/fx-diagnostics.mjs')
+  const baseUrl = 'https://fx.example.test'
+  const fixtures = new Map([
+    [`${baseUrl}/archive-manifest.min.json`, {
+      generatedAt: '2026-03-24T00:00:00.000Z',
+      base: 'eur',
+      earliestDate: '2026-03-22',
+      latestDate: '2026-03-24',
+      availableDates: ['2026-03-22', '2026-03-24'],
+      gapCount: 1,
+      supportedCurrencies: ['AED', 'USD'],
+    }],
+    [`${baseUrl}/archive-years/2026.min.json`, {
+      year: '2026',
+      base: 'eur',
+      snapshots: [
+        {
+          date: '2026-03-22',
+          base: 'eur',
+          rates: { aed: 4, usd: 1 },
+        },
+        {
+          date: '2026-03-24',
+          base: 'eur',
+          rates: { aed: 4, usd: 1 },
+        },
+      ],
+    }],
+  ])
+  const fetchImpl = async url => {
+    const payload = fixtures.get(url)
+    if (!payload) {
+      return new Response('Not found', { status: 404 })
+    }
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  const report = await buildFxCoverageReport({
     from: 'AED',
     to: 'USD',
-    anchorDate: '2026-03-26',
-    requestedDays: 30,
-    mismatchCount: 2,
-    signals: ['history_window_shorter_than_30_days', 'archive_gap_present'],
-    quote: {
-      resolutionKind: 'prior_day_fallback',
-      resolvedDate: '2026-03-25',
-    },
-    historyCoverage: {
-      requestedDays: 30,
-      availableDays: 28,
-      missingDayCount: 2,
-    },
-  }
+    days: 3,
+    anchorDate: '2026-03-24',
+    fetchImpl,
+    baseUrl,
+  })
+
+  assert.deepEqual(report.signals, ['history_range_incomplete', 'archive_gap_detected'])
 
   await withCapturedConsole('warn', async loggedLines => {
     const result = await monitoring.captureFxCoverageMismatch(report, 'fx-canary-cron', 'req-canary-mismatch', {})
@@ -288,10 +320,10 @@ test('captureFxCoverageMismatch logs each worker coverage signal with quote cont
     assert.equal(result, false)
     assert.equal(loggedLines.length, 2)
     assert.ok(loggedLines.every(line => line.includes('"source":"fx-canary-cron"')))
-    assert.ok(loggedLines.some(line => line.includes('"signal":"history_window_shorter_than_30_days"')))
-    assert.ok(loggedLines.some(line => line.includes('"signal":"archive_gap_present"')))
-    assert.ok(loggedLines.every(line => line.includes('"quoteResolution":"prior_day_fallback"')))
-    assert.ok(loggedLines.every(line => line.includes('"quoteResolvedDate":"2026-03-25"')))
+    assert.ok(loggedLines.some(line => line.includes('"signal":"history_range_incomplete"')))
+    assert.ok(loggedLines.some(line => line.includes('"signal":"archive_gap_detected"')))
+    assert.ok(loggedLines.every(line => line.includes('"quoteResolution":"exact"')))
+    assert.ok(loggedLines.every(line => line.includes('"quoteResolvedDate":"2026-03-24"')))
   })
 })
 
