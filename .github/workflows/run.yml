@@ -133,11 +133,10 @@ jobs:
           tmpdir="$(mktemp -d)"
           remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
-          git init "$tmpdir"
+          git init --initial-branch=gh-pages "$tmpdir"
           cd "$tmpdir"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan gh-pages
           cp -R "$publish_dir"/. .
           touch .nojekyll
           git add --all
