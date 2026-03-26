@@ -1268,3 +1268,50 @@
 - Current repo status remains `GO`.
 - Remaining blocker for overall Resplit 2.0 launch is still external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future publish/deploy run goes red, Worker secret ownership becomes a release requirement, or the team intentionally schedules a Wrangler-managed Pages config migration.
+
+## 2026-03-25 20:45 EDT
+
+- Rehydrated the repo-owned state again in the required order and found one real repo-local observability slice via the code-review + architecture lanes: the unexpected `/cron/fx-canary` exception path in [`worker/src/index.mjs`](/Users/leokwan/Development/resplit-currency-api/worker/src/index.mjs) was still routing through `captureFxCoverageFailure`, so a true canary crash would emit `coverage_failure` instead of `canary_error`, and there was no focused 500-path proof for that branch.
+- Shipped `bada1c34` (`fix: tag unexpected fx canary failures`) on `main`.
+  - [`worker/src/index.mjs`](/Users/leokwan/Development/resplit-currency-api/worker/src/index.mjs) now uses `captureFxRouteFailure` with `route: 'cron_fx_canary'` and `signal: 'canary_error'` in the unexpected canary catch path.
+  - [`tests/fx-worker-routes.test.js`](/Users/leokwan/Development/resplit-currency-api/tests/fx-worker-routes.test.js) now proves the unexpected 500 branch returns the stable JSON error contract and emits the `canary_error` monitoring signal.
+- Fresh proof this run:
+  - `node --test tests/fx-worker-routes.test.js`
+  - `npm run check`
+  - `npm run smoke:deploy`
+  - `gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api`
+  - `gh run watch 23571858412 --repo firstbitelabsllc/resplit-currency-api --exit-status`
+  - `gh run watch 23571891695 --repo firstbitelabsllc/resplit-currency-api --exit-status`
+  - structured live probes after the hosted deploy for:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json`
+    - `https://resplit-currency-api.pages.dev/archive-manifest.json`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-26`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-26&days=30`
+    - `https://2026-03-26.resplit-currency-api.pages.dev/snapshots/base-rates.json`
+- Live proof details:
+  - `node --test tests/fx-worker-routes.test.js` passed `10/10`.
+  - `npm run check` passed with `41/41` tests and `Snapshot window: 363 days (362 local, 0 network)`.
+  - `npm run smoke:deploy` passed with `date=2026-03-25` and `historyPoints=30` before the hosted deploy advanced public artifacts.
+  - hosted `Update Currency Rates` run `23571858412` completed green on `headSha=bada1c342e80f48c081a04487251d20b8976a954`.
+  - downstream `pages build and deployment` run `23571891695` completed green on `headSha=239c399dcf16b4a5262d8b2fecb7a4b516c7c45e`.
+  - after the hosted run, live public surfaces advanced to the March 26 payload:
+    - Cloudflare Pages latest `aed` date `2026-03-26`
+    - canonical Worker coverage for `AED -> USD` on `2026-03-26` returned `mismatchCount=0`, `signals=[]`, `availableDays=30`, `missingDayCount=0`
+    - dated snapshot branch `2026-03-26` serves `base=eur`
+  - local trunk was then fast-forwarded to `f44cab57` (`chore: archive daily snapshot 2026-03-26`) so the checkout matches repo truth again.
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: no-op; no locale catalog, Apple strings surface, or non-English runtime path exists in this repo.
+  - `2 App Store Connect Feedback Triage`: no-op; ASC/TestFlight ownership remains in `resplit-ios`.
+  - `3 Sentry + Seer Error Hunter`: shipped; fixed the canary crash telemetry path and redeployed the Worker, while dedicated Sentry project ownership remains external setup debt.
+  - `4 UX Feedback Triage Lead`: no-op; user-facing UX feedback queue remains outside this repo.
+  - `5 Code Review + Clipdiff Auditor`: shipped; review surfaced the `coverage_failure` vs `canary_error` mismatch and the missing 500-path proof.
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op with proof; Worker, Pages, GitHub fallback, and dated snapshot surfaces align again on `2026-03-26`.
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; the shared dead-code sweep stayed clean for `resplit-currency-api`, though snapshot-retention pruning still looks like follow-up debt rather than a launch blocker.
+  - `8 Architecture + Test Discipline Guardian`: shipped; added focused route-level proof for the touched unexpected-failure branch.
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: no-op; this repo owns data snapshots and smoke probes, not App Store screenshot/UI harness work.
+  - `10 App Store SEO + Metadata God`: no-op; ASO metadata remains outside this checkout.
+- Current repo status remains `GO`.
+- Remaining blocker for overall Resplit 2.0 launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work.
+- Exact next slice in this repo: fast-exit unless a future publish/deploy run regresses, or the team promotes the snapshot-retention pruning contract or Worker secret ownership into a release requirement.
