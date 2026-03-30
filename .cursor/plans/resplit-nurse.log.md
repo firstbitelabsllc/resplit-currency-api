@@ -1,5 +1,33 @@
 # Resplit Nurse Log
 
+## 2026-03-29 23:12 EDT
+
+- Launch is still `NO-GO` overall, but this pass materially improved release state instead of just re-auditing it. `resplit-currency-api` and production web are already current from fresh proof, and canonical iOS trunk is now built, uploaded, processed, and distributed as TestFlight build `2.0.0 (573)` from a clean detached worktree.
+- Shipped this run:
+  - no repo-owned FX code change shipped; `resplit-currency-api` stayed green and current
+  - `resplit-ios` release execution shipped build `2.0.0 (573)` from clean worktree `/private/tmp/resplit-ios-release-20260329-0256`
+- Fresh proof this run:
+  - FX release truth:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 6 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt` shows `Update Currency Rates` run `23725399664` succeeded on `2026-03-30T02:31:52Z` at `headSha=5ebd8b2108d431550a5438103f368c6ccbe13f43`, followed by successful Pages deploy `23725424171`
+    - live curls returned `200` from `https://resplit-currency-api.pages.dev/latest/aed.json`, `https://resplit-currency-api.pages.dev/history/30d/aed.json`, `https://2026-03-29.resplit-currency-api.pages.dev/snapshots/base-rates.json`, `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-29`, and `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-29&days=30`
+    - GitHub Pages fallback `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` now serves `date=2026-03-30` with `166` rates
+  - web release truth:
+    - `vercel inspect https://www.resplit.app` shows production deploy `dpl_Nm9ciqMdTAUy8TjXYKFgerRQCfRK` ready on March 29, 2026 at `20:37:07 EDT`
+    - `curl -s https://www.resplit.app/.well-known/apple-app-site-association | python3 -m json.tool` returned the expected applinks/webcredentials payload
+    - `curl -s https://www.resplit.app/robots.txt` and `curl -s https://www.resplit.app/sitemap.xml` returned current metadata with `lastmod=2026-03-30T00:37:42.883Z`
+  - iOS release execution:
+    - `tuist test "ResplitCore Unit Tests" --no-selective-testing -- -destination 'platform=iOS Simulator,id=67DA4781-C23B-4674-85DA-FF34B35A08FC' -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 -derivedDataPath /tmp/resplit-dd-release-20260329-units -only-testing:ResplitCoreTests/ParticipantManagementLocalizationTests -only-testing:ResplitCoreTests/LiveClaimsManagerTests -only-testing:ResplitCoreTests/LiveSessionViewModelTests` passed (`100/100`)
+    - `tuist build "Resplit Release" -- -destination 'generic/platform=iOS' -derivedDataPath /tmp/resplit-dd-release-build-20260329` passed
+    - `bundle exec fastlane ios testflight_upload` from `/private/tmp/resplit-ios-release-20260329-0256` uploaded, processed, and distributed build `2.0.0 (573)` and uploaded `24` missing Sentry debug files
+- Release execution status this run:
+  - `resplit-currency-api`: `already current` — origin is ahead by daily snapshot commits and live FX surfaces agree with the fresh March 29/30 payload
+  - `resplit-web`: `already current` — production `www.resplit.app` is ready and serving the expected AASA / robots / sitemap surfaces from this run
+  - `resplit-ios`: `shipped` — current trunk successfully moved to TestFlight build `2.0.0 (573)` from a clean detached worktree despite the dirty canonical root
+- Remaining blocker:
+  - launch is still blocked on current-build verification and release-assets truth, not on deploy/build plumbing. The screenshot lane remains `REOPENED` for mixed-language locale output and `02_Scan` vs `02_Camera` drift, localization is still incomplete for the claimed 9-locale launch, and the ASC/native queue still needs build-573 verification on camera/add-receipt plus still-open user-facing tickets
+- Exact next slice:
+  - dogfood TestFlight build `573` through the add-receipt camera flow and the fixed-but-unverified ASC rows, then rewrite or retract the misleading “fully localized in 9 languages” metadata before any next App Store screenshot/metadata upload
+
 ## 2026-03-26 18:42 EDT
 
 - Rehydrated from `RALPH.md`, this nurse log, `.github/workflows/run.yml`, `RUNBOOK.md`, the repo ledger, clean trunk state, and the required release skills. No repo-local hot-files board existed, and this pass kept the canonical checkout clean while isolated proof ran in a detached worktree.
