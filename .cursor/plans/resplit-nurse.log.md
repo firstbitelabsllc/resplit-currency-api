@@ -1,5 +1,62 @@
 # Resplit Nurse Log
 
+## 2026-03-30 12:03 EDT
+
+- Launch remains `NO-GO`, and this repo still stays `GO`. No repo-owned FX/runtime change shipped because `resplit-currency-api` re-proved green again on trunk and the remaining hold is still the external iOS screenshot/localization/App Store lane plus apex-host / storefront drift.
+- Shipped this run:
+  - no repo-owned FX/runtime code change shipped
+  - durable release-room truth was refreshed with current Sentry MCP, Vercel, App Store lookup, and iOS plan proof on top of the green FX repo gates
+- Fresh proof this run:
+  - `npm run check` -> passed (`53/53` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`)
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` still shows scheduled publish `23725399664` and Pages deploy `23725424171` both succeeded on `2026-03-30`
+  - live FX probes this run:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `mismatchCount=0`
+  - local audit proof:
+    - `npx knip` returned only configuration hints in `knip.config.js`, not live dead-code findings
+    - `git diff --stat HEAD~5..HEAD` is still just the shipped archive-retention fix plus checkpoints
+  - web / storefront truth:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_7ipaffGamx8MSdXBBMHLsDrRjKHx`, `Ready`, created `2026-03-30 11:21:26 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 200`
+    - `https://www.resplit.app/join` -> `HTTP/2 200`
+    - `https://resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 307`
+    - `https://resplit.app/join` -> `HTTP/2 307`
+    - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"` while checked-in metadata name remains `Resplit`
+  - iOS / release-room truth:
+    - latest valid TestFlight build still `622 | 2026-03-30T06:20:29-07:00 | VALID | false`
+    - `/Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-feedback.plan.md` still reports `26` open rows (`11 new`, `1 triaged`, `11 fixed`, `2 blocked`, `1 claimed`)
+    - each launch locale in `Localizable.xcstrings` is still broad-red at `442 translated / 131 missing`
+    - `/Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-screenshots.plan.md` still calls for one clean-trunk Japanese canary and still flags English runtime chrome inside non-English upload-ready assets
+  - Sentry / observability truth:
+    - `resplit-web` unresolved issues in the last `7` days -> none
+    - `resplit-ios` unresolved issues in the last `7` days -> active native backlog remains (`32` issues in the MCP query)
+    - `RESPLIT-IOS-D8` last seen `2026-03-30T13:23:09.849Z`, `dist=621`, `release=resplit-ios@2.0.0+621`, with `fx_historical_lookup_exhausted` on `CAD -> EUR`
+    - `RESPLIT-IOS-A2` last seen `2026-03-30T09:20:41.090Z`, still active on older builds including `dist=598`
+    - Sentry aggregate error-event searches for releases `2.0.0+621` and `2.0.0+622` over the last `24` hours both returned `0`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `already current` for upload freshness, but overall lane remains blocked on screenshot/localization/current-build verification
+- Remaining blocker:
+  - overall launch is still blocked outside this repo by one authoritative non-English screenshot rerun, broad launch-locale copy gaps, `26` open ASC rows, apex-host deep-link parity, stale public storefront metadata, and active native Sentry issues led by `RESPLIT-IOS-D8`
+- Exact next slice:
+  - from one clean `resplit-ios` trunk worktree, run the serialized Japanese screenshot canary already called for in the screenshot plan:
+    - `LOCALES='ja' DEVICE_NAMES='iPhone 16 Pro Max' DERIVED_DATA_ROOT='<fresh path>' PW_PORT=3142 ./scripts/capture-marketing-screenshots.sh`
+  - after that canary, re-evaluate whether the next move is metadata upload, ASC verification promotion, or another native code fix
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked external; launch locales still missing `131` keys each
+  - `2 App Store Connect Feedback Triage`: no-op with proof; tracker still `26` open and unchanged
+  - `3 Sentry + Seer Error Hunter`: blocked external; `RESPLIT-IOS-D8` on build `621` remains the sharpest current runtime issue
+  - `4 UX Feedback Triage Lead`: blocked external; the next highest-value visible slice is still screenshot/current-build verification
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof; no fresh repo-local regression surfaced
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked external; `www` is current but apex parity and storefront naming still drift
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; `knip` only reported config hints
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; repo gates stayed green with current retention/test contract
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked external; room is clear, but the Japanese canary still has not been re-proven
+  - `10 App Store SEO + Metadata God`: blocked external; public App Store name/version still lag the checked-in product story
+
 ## 2026-03-30 11:53 EDT
 
 - Launch remains `NO-GO`. This pass did not ship repo-owned FX code because `resplit-currency-api` stayed green in a fresh detached proof, but the external release boundary moved again: `www.resplit.app` is now production deploy `dpl_7ipaffGamx8MSdXBBMHLsDrRjKHx`, the public App Store listing still says `Resplit - Tip Calculator` `1.8.0`, and the iOS room is still blocked on current-build verification plus stale localized screenshot proof.
