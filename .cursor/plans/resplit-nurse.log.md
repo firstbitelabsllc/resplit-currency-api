@@ -1,5 +1,57 @@
 # Resplit Nurse Log
 
+## 2026-03-30 18:57 EDT
+
+- Launch stays `NO-GO` overall. No repo-owned FX/runtime fix shipped in `resplit-currency-api`; current trunk re-proved green again and the material room change is external: Sentry MCP now shows one fresh production issue on the current TestFlight release `resplit-ios@2.0.0+679` (`RESPLIT-IOS-F0`, app hang in camera teardown at `2026-03-30T22:22:17Z`), so `679` is no longer a fully clean release boundary.
+- Fresh proof this run:
+  - `npm run check` -> passed (`55/55` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`)
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` still shows scheduled publish `23725399664` and downstream Pages deploy `23725424171` both `success` on `2026-03-30`
+  - live FX probes this run:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://2026-03-30.resplit-currency-api.pages.dev/snapshots/base-rates.json` -> `HTTP 200`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `mismatchCount=0`
+  - code/dead-code guardrails this run:
+    - `git diff --stat HEAD~5..HEAD` still reduces to the last shipped FX backfill fix plus prior room checkpoints
+    - repo working tree still has no active code diff beyond user-owned `.codex/hooks.json`
+    - `npx --yes knip@latest --no-progress --reporter compact` in `resplit-currency-api` surfaced no live deletion candidate
+  - release perimeter truth this run:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_5rWC2s2ieUiJLvvfiavQ5Th4UrZt`, `Ready`, created `2026-03-30 18:05:01 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` -> `HTTP 200`
+    - `https://www.resplit.app/join` -> `HTTP 200`
+    - `https://resplit.app/.well-known/apple-app-site-association` -> `HTTP 307` redirecting to `www`
+    - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+  - iOS / App Store truth this run:
+    - direct ASC API-key query via `bundle exec ruby` + `Spaceship::ConnectAPI::Build.all(...)` still shows newest TestFlight build `679 | 2026-03-30T14:15:38-07:00 | VALID | false`
+    - `/Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-feedback.plan.md` still carries `26` non-verified ASC rows (`11 new`, `1 triaged`, `11 fixed`, `2 blocked`, `1 claimed`)
+    - `/Users/leokwan/Development/resplit-ios/ResplitCore/Resources/Localizable.xcstrings` still shows `de/es/fr/ja/ko/pt-BR/zh-Hans = 442 translated / 131 missing`, `it = 0 / 573`
+    - screenshot room is clear again (`ps ... capture-marketing-screenshots|Resplit Locale Snapshots` -> no matches), but `/Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-screenshots.plan.md` still gates on manual `ja` review plus one serialized `es-ES` rerun before any upload/metadata retry
+  - observability truth this run:
+    - `find_releases(firstbite-labs/resplit-ios, 2.0.0+679)` -> release exists, created `2026-03-30T21:20:15.634Z`
+    - `search_issues(... release:resplit-ios@2.0.0+679 lastSeen:-24h)` -> one unresolved issue, `RESPLIT-IOS-F0`
+    - `search_events(... release resplit-ios@2.0.0+679 last 24h)` -> one production error event at `2026-03-30T22:22:17Z`
+    - `get_sentry_resource(RESPLIT-IOS-F0)` + Seer both point at synchronous camera teardown on dismissal (`RealCameraStrategy.removePreviewSurface` / `strategy.cleanup()` path), but the exact symbol no longer exists on current `origin/master`, so the next move needs a clean source-mapped iOS lane rather than a speculative attached-root patch
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (`679` is already uploaded/current, but it is not release-clean because `RESPLIT-IOS-F0` is now live on the current build and screenshot/localization/ASC closeout still remain`)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/deploy/live FX truth turns red again
+  - from one clean `origin/master` worktree in `resplit-ios`, source-map `RESPLIT-IOS-F0` against the camera teardown path and ship the smallest safe fix or dismissal proof before spending another serialized lane on screenshots/metadata
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked; launch locales still miss `131` strings each (`it` missing `573`)
+  - `2 App Store Connect Feedback Triage`: blocked; `26` feedback rows remain non-verified
+  - `3 Sentry + Seer Error Hunter`: blocked; fresh current-build issue `RESPLIT-IOS-F0` is now the top runtime blocker
+  - `4 UX Feedback Triage Lead`: blocked; current-build camera dismissal hang outranks screenshot polish
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof; no new repo-owned committed diff to flag
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked; `www` is current but apex deep-link parity and screenshot/runtime freshness still drift
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; no live dead-code slice surfaced in this repo
+  - `8 Architecture + Test Discipline Guardian`: blocked; next safe move is one isolated camera-fix lane, not attached-root cleanup
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked; room is clear, but `ja` review + `es-ES` rerun still gate upload
+  - `10 App Store SEO + Metadata God`: blocked; public storefront still says `Resplit - Tip Calculator` `1.8.0`
+
 ## 2026-03-30 18:54 EDT
 
 - Launch stays `NO-GO` overall. No new repo-owned FX/runtime fix shipped in `resplit-currency-api`; current trunk re-proved green and the remaining launch hold is still external iOS / App Store closeout work.
