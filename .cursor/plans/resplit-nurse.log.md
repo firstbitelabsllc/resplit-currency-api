@@ -1,5 +1,63 @@
 # Resplit Nurse Log
 
+## 2026-03-30 20:55 EDT
+
+- Launch stays `NO-GO` overall, but this pass shipped one real repo-owned fix on `main`: older backfill runs no longer delete newer source snapshots from `snapshot-archive/`; they now filter future dates out of the packaged archive while preserving the committed source archive. `resplit-currency-api` remains `GO`; the remaining launch hold is still external iOS / App Store work.
+- Shipped this run:
+  - `currscript.js` now loads archive snapshots with `latestDate` filtering for package generation and stops pruning dates newer than an explicit backfill target from the source archive.
+  - `tests/currscript.test.js` now proves both halves of that contract: backfill packaging ignores future snapshots, and archive pruning does not delete newer source snapshots during a backfill.
+  - code-review proof for this slice: `clipdiff main -- currscript.js tests/currscript.test.js` showed the hot working-tree delta was exactly the backfill archive-behavior correction (`2 modified`, `+27/-12`).
+- Fresh proof this run:
+  - `node --test tests/currscript.test.js` -> passed (`18/18`)
+  - `npm run check` -> passed (`55/55` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`)
+  - release train truth in this pass:
+    - `resplit-currency-api`: scheduled publish `23725399664` and downstream Pages deploy `23725424171` are still `success`
+    - `resplit-web`: live `www` is already current; apex `/join` still `307`s to `www`
+    - `resplit-ios`: latest valid build boundary remains `638`; current-build Sentry truth is still clean in repo-owned checkpoint, but the room is blocked elsewhere
+- Remaining blocker:
+  - launch is still blocked outside this repo by `131` missing strings in each non-English launch locale, `26` non-verified ASC rows, screenshot review plus a serialized `es-ES` rerun, the AJsn receipt-detail regression lane, and stale public App Store metadata (`Resplit - Tip Calculator`, `1.8.0`)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless live FX publish/deploy proof turns red again
+  - next mayor move belongs on one serialized iOS lane: finish screenshot review / `es-ES` rerun and close the remaining ASC + localization blockers before another upload attempt
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked external; launch locales still `442 translated / 131 missing`
+  - `2 App Store Connect Feedback Triage`: blocked external; tracker still has `26` non-verified rows
+  - `3 Sentry + Seer Error Hunter`: no-op with proof; current build boundary is still `638`, and no repo-owned FX Sentry action surfaced
+  - `4 UX Feedback Triage Lead`: blocked external; AJsn receipt-detail remains the sharpest visible blocker
+  - `5 Code Review + Clipdiff Auditor`: shipped; review surfaced the backfill/source-archive regression and this pass fixed it
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked external; `www` is current, but apex and storefront/story drift remain
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; no practical dead-code slice outranked the hot FX fix
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; script/test/smoke discipline stayed green after the fix
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked external; Japanese set exists but still needs review and `es-ES` rerun
+  - `10 App Store SEO + Metadata God`: blocked external; public name/version still lag the checked-in product story
+
+## 2026-03-30 15:54 EDT
+
+- Proof-only checkpoint. No repo-owned fix shipped this run. `resplit-currency-api` remains `GO`; overall launch remains `NO-GO` for external iOS / App Store work.
+- Fresh proof this run:
+  - `npm run check` -> passed (`55/55` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`)
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,workflowName,displayTitle,event,status,conclusion,createdAt,updatedAt,headSha` still shows scheduled publish `23725399664` and Pages deploy `23725424171` both `success` on `2026-03-30`
+  - live payload probes this run:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json` -> `30` points spanning `2026-03-01` through `2026-03-30`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `mismatchCount=0`
+- Current Sentry/build boundary from repo-owned checkpoint only; this turn did not rerun live Sentry MCP:
+  - latest valid TestFlight build remains `638`
+  - the prior nurse checkpoint says aggregate Sentry queries for `resplit-ios@2.0.0+638` were clean over the last `24h`
+  - the remaining actionable Sentry issue in repo truth is still `RESPLIT-IOS-D8` on older release `resplit-ios@2.0.0+621`, already hot-owned elsewhere
+- Local blocker / no-op reason:
+  - concurrent uncommitted edits appeared on `currscript.js` and `tests/currscript.test.js` during this proof pass; `git blame` shows `Not Committed Yet` lines stamped `2026-03-30 15:52:57 -0400`, so this lane stayed off that hot FX archive surface instead of duplicating it
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `skipped` in this turn; prior room proof already had `www` current and apex/storefront parity blocked externally
+  - `resplit-ios`: `skipped` in this turn; repo-owned checkpoint still says build `638` is valid and current, not missing
+- Exact next slice:
+  - after the hot FX archive edit either lands or is abandoned, review/ship that backfill fix on clean trunk if it is still needed; otherwise keep this repo on fast-exit until a publish/deploy/live payload drift red appears
+
 ## 2026-03-30 15:03 EDT
 
 - Launch stays `NO-GO`, but `resplit-currency-api` remains `GO` and no repo-owned fix shipped this run. The material room change is external: the live iOS/TestFlight boundary is now `2.0.0 (638)`, not `622`, and current-build Sentry queries for `638` are clean over the last `24h`; the remaining blockers are screenshot/localization/App Store verification, not FX or upload freshness.

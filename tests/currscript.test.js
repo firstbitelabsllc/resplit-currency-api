@@ -201,6 +201,26 @@ test('loadAllSnapshotsFromArchive returns sorted immutable archive snapshots', (
   assert.deepEqual(snapshots.map(snapshot => snapshot.date), dates.slice().sort())
 })
 
+test('loadAllSnapshotsFromArchive can ignore future-dated snapshots for backfill packaging', (t) => {
+  const dates = ['2099-01-01', '2099-01-02', '2099-01-03']
+
+  t.after(() => {
+    for (const date of dates) {
+      fs.removeSync(path.join(snapshotArchiveDir, `${date}.json`))
+    }
+  })
+
+  for (const [index, date] of dates.entries()) {
+    saveSnapshotToArchive(date, { eur: 1, usd: 1.1 + index })
+  }
+
+  const filteredSnapshots = loadAllSnapshotsFromArchive({ latestDate: '2099-01-02' })
+    .filter(snapshot => snapshot.date.startsWith('2099-01-0'))
+
+  assert.deepEqual(filteredSnapshots.map(snapshot => snapshot.date), ['2099-01-01', '2099-01-02'])
+  assert.deepEqual(listSnapshotArchiveDates().filter(date => date.startsWith('2099-01-0')), dates)
+})
+
 test('pruneSnapshotArchive keeps a rolling retention window anchored to the newest snapshot', (t) => {
   const dates = ['2099-01-01', '2099-01-02', '2099-01-03']
 
@@ -224,7 +244,7 @@ test('pruneSnapshotArchive keeps a rolling retention window anchored to the newe
   assert.deepEqual(listSnapshotArchiveDates().filter(date => date.startsWith('2099-01-0')), ['2099-01-02', '2099-01-03'])
 })
 
-test('pruneSnapshotArchive removes dates newer than an explicit latest publish date', (t) => {
+test('pruneSnapshotArchive does not delete newer source snapshots during backfill packaging', (t) => {
   const dates = ['2099-01-01', '2099-01-02', '2099-01-03']
   const removedPaths = []
 
@@ -237,6 +257,6 @@ test('pruneSnapshotArchive removes dates newer than an explicit latest publish d
     }
   })
 
-  assert.deepEqual(pruned, ['2099-01-03'])
-  assert.deepEqual(removedPaths, ['2099-01-03'])
+  assert.deepEqual(pruned, [])
+  assert.deepEqual(removedPaths, [])
 })

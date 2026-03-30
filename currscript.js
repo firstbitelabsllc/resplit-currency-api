@@ -41,7 +41,7 @@ async function main() {
     latestRates,
     retentionDays: snapshotRetentionDays
   })
-  const archiveSnapshots = loadAllSnapshotsFromArchive()
+  const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: dateToday })
   const historySnapshots = recentSnapshots.slice(-historyDays)
 
   if (historySnapshots.length < historyDays) {
@@ -291,8 +291,9 @@ function loadSnapshotFromArchive(date) {
   return null
 }
 
-function loadAllSnapshotsFromArchive() {
+function loadAllSnapshotsFromArchive({ latestDate = null } = {}) {
   return listSnapshotArchiveDates()
+    .filter((date) => latestDate === null || date <= latestDate)
     .map((date) => {
       const rates = loadSnapshotFromArchive(date)
       if (!rates) return null
@@ -315,13 +316,7 @@ function pruneSnapshotArchive({
 
   const effectiveLatestDate = latestDate ?? dates[dates.length - 1]
   const earliestRetainedDate = dateDaysBeforeUTC(effectiveLatestDate, retentionDays - 1)
-  const prunedDates = dates.filter((date) => {
-    if (date > effectiveLatestDate) {
-      return true
-    }
-
-    return date < earliestRetainedDate
-  })
+  const prunedDates = dates.filter((date) => date < earliestRetainedDate)
 
   for (const date of prunedDates) {
     removeFile(path.join(snapshotArchiveDir, `${date}.json`))
