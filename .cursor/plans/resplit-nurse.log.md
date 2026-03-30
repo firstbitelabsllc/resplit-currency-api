@@ -18,8 +18,8 @@
     - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_5rWC2s2ieUiJLvvfiavQ5Th4UrZt`, `Ready`, created `2026-03-30 18:05:01 EDT`; aliases now include both `https://www.resplit.app` and `https://resplit.app`
     - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 200`
     - `curl -I -s https://www.resplit.app/join | head -n 1` -> `HTTP/2 200`
-    - `curl -I -s https://resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 307`
-    - `curl -I -s https://resplit.app/join | head -n 1` -> `HTTP/2 307`
+    - `python3` probe for `https://resplit.app/.well-known/apple-app-site-association` -> `HTTP 200`, final URL `https://www.resplit.app/.well-known/apple-app-site-association`
+    - `python3` probe for `https://resplit.app/join` -> `HTTP 200`, final URL `https://www.resplit.app/join`
     - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
   - iOS / App Store truth this run:
     - direct ASC API-key query via `bundle exec ruby` + `Spaceship::ConnectAPI::Build.all(...)` -> newest TestFlight build `679 | 2026-03-30T14:15:38-07:00 | VALID | false`; next builds are `673` and `670`, so upload freshness is not the blocker
@@ -32,6 +32,7 @@
     - repo-owned iOS proof is still current on the same day: `/Users/leokwan/Development/resplit-ios/.cursor/plans/sentry-dev-loop.plan.md` `2026-03-30 17:54 EDT` says `resplit-ios@2.0.0+679` exists and is quiet (`0` production errors in the last `24h`, no unresolved issues on release `679`)
 - External release-room truth refreshed this run:
   - `resplit-ios` attached checkout is not a safe ship surface: it is `127` commits behind `origin/master` and still carries broad uncommitted edits across native, screenshot, Fastlane, and web files
+  - active isolated native owners are already consuming the hottest iOS surfaces: `ps -axo pid,etime,%cpu,%mem,state,command | rg 'tuist build|xcodebuild test|fastlane ios testflight_upload' | rg -v 'rg '` shows one `tuist build Resplit Release` owner plus two focused `AJsn` proof lanes, so this run did not take a competing native build/upload lane
   - the remaining high-value blockers are still outside this repo: `26` unverified ASC rows, `131` missing strings per non-English launch locale, stale localized screenshot assets in the attached root, `AJsnfc6n18x5I7Iha3QSazw` still awaiting clean focused UI proof, and stale public App Store metadata/name/version
 - Release execution status this run:
   - `resplit-currency-api`: `already current`
@@ -39,14 +40,14 @@
   - `resplit-ios`: `already current`
 - Exact next slice:
   - keep `resplit-currency-api` on fast-exit unless publish/deploy/live FX truth turns red again
-  - next serialized release-mayor move still belongs on clean `origin/master` in `resplit-ios`: either surface a fresh reviewable `ja` screenshot set and rerun `es-ES`, or reopen `AJsnfc6n18x5I7Iha3QSazw` with focused UI proof before any new metadata/upload attempt
+  - consume the active `resplit-ios` `Release` / `AJsn` proof results first; after those finish, either surface a fresh reviewable `ja` screenshot set and rerun `es-ES`, or reopen `AJsnfc6n18x5I7Iha3QSazw` with focused UI proof before any new metadata/upload attempt
 - Role coverage summary:
   - `1 Localization + Copy Sentinel`: blocked external; launch locales still sit at `442 translated / 131 missing`
   - `2 App Store Connect Feedback Triage`: blocked external; tracker still has `26` non-verified rows
   - `3 Sentry + Seer Error Hunter`: no-op with repo proof; direct Sentry auth is unavailable here, but the same-day iOS plan still marks release `679` quiet
   - `4 UX Feedback Triage Lead`: blocked external; `AJsnfc6n18x5I7Iha3QSazw` still lacks one clean focused UI proof pass
   - `5 Code Review + Clipdiff Auditor`: no-op with proof; recent trunk delta is still backfill hardening plus docs checkpoints, and no new severity finding surfaced
-  - `6 UX Uniformity + Canonical Surface Mayor`: blocked external; web is freshly deployed, but apex still canonicalizes via `307` and storefront drift remains
+  - `6 UX Uniformity + Canonical Surface Mayor`: no-op with fresh proof; web is freshly deployed and apex now resolves through the same production deploy, but storefront drift remains
   - `7 Dead Code + Drift Analyzer`: no-op with proof; `knip` only surfaced configuration hints
   - `8 Architecture + Test Discipline Guardian`: blocked external; the attached iOS/web checkout is too dirty and behind for a safe release-lane ship
   - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked external; screenshot room is clear, but the attached-root `ja` / `es-ES` assets are still stale and not ready for upload
