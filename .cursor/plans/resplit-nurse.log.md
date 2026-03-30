@@ -1,5 +1,35 @@
 # Resplit Nurse Log
 
+## 2026-03-30 08:58 EDT
+
+- Launch remains `NO-GO`. This pass improved coordination and cleanup, not product code: the attached `resplit-currency-api` checkout was preserved on salvage branch `codex/currency-canonical-salvage-20260330-1258`, `main` was fast-forwarded clean to `origin/main`, and the release-room boundary is now build `2.0.0 (621)` instead of `613`.
+- Shipped this run:
+  - no repo-owned FX/runtime code change shipped
+  - canonical `resplit-currency-api` `main` is clean and current again, with stale local drift preserved off-branch
+  - repo-owned launch truth is now updated from stale `613 / 25-open` assumptions to current `621 / 24-open / 13-verified` proof
+- Fresh proof this run:
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt` still shows scheduled publish `23725399664` and Pages deploy `23725424171` both succeeded on `2026-03-30`
+  - live FX probes still agree on March 30 truth: Cloudflare Pages latest `aed` `date=2026-03-30` with `166` rates, GitHub Pages fallback latest `aed` `date=2026-03-30` with `166` rates, `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` returned exact `rate=0.27229318`, and `/coverage?...days=30` still returned `mismatchCount=0`
+  - `npx vercel inspect https://www.resplit.app` now shows production deploy `dpl_7FzQeVJpqdxSQicmNDKVj6iW2Z1F`, `Ready`, created `2026-03-30 08:13:45 EDT`; `www` AASA + `/join` still return `HTTP/2 200`, while apex `https://resplit.app/.well-known/apple-app-site-association` and `/join` still return `HTTP/2 307`
+  - direct ASC query this run now returns build `621 | 2026-03-30T05:33:46-07:00 | VALID | false` as the newest valid `2.0.0` build, ahead of `613`, `610`, `604`, `602`, `599`, and `598`
+  - `git -C /Users/leokwan/Development/resplit-ios rev-list --count origin/master` -> `621`, `git -C /Users/leokwan/Development/resplit-ios rev-parse --short origin/master` -> `74ab7d09` (`fix: defer completed mixed-currency settlement fallback`)
+  - `rg '^  status:' /Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-feedback.plan.md | sed 's/^  status: //' | sort | uniq -c` now reports `10 new`, `11 fixed`, `2 blocked`, `1 claimed`, and `13 verified` (`24` non-verified total)
+  - `sentry-cli releases list` still tops out at readable release `resplit-ios@2.0.0+613`; Sentry MCP still ties `RESPLIT-IOS-A2` to exact build `598`, while `RESPLIT-IOS-BY` remains unresolved on `dist 613`
+  - the blocked mixed-currency proof lane recovered host disk from `119Mi` free to `38Gi` free after artifact-only cleanup
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current` on `www`; apex-host parity is still platform-level, not a repo-only patch
+  - `resplit-ios`: current valid build boundary is now `621`; no new upload ran this pass because `621` already exists and current-build verification plus Sentry release coverage have not caught up
+- Remaining blocker:
+  - launch remains blocked by current-build verification on the `24` non-verified ASC rows, missing Sentry release coverage for build `621`, `RESPLIT-IOS-A2` still being the top exact runtime blocker on `598`, unresolved `RESPLIT-IOS-BY` on `613`, screenshot proof still blocked on the serialized `02_Camera` canary plus localization debt, and the public App Store storefront still saying `Resplit - Tip Calculator` `1.8.0`
+- Exact next slice:
+  - verify build `621` on the fixed current-build rows first
+  - rerun release-scoped Sentry checks once `resplit-ios@2.0.0+621` exists
+  - only after that decide whether `74ab7d09` needs another mixed-currency release lane
+- Cleanup:
+  - preserved pre-fast-forward local drift on `codex/currency-canonical-salvage-20260330-1258`
+  - canonical `main` was restored clean before this checkpoint landed
+
 ## 2026-03-30 07:55 EDT
 
 - Launch remains `NO-GO`. This pass materially improved repo-owned launch truth: `resplit-currency-api` is still green on fresh clean-worktree proof, `www.resplit.app` is current on production deploy `dpl_E6rDW5fwbfjSZTChsBgdizB5eNFE`, canonical iOS/TestFlight has moved to build `2.0.0 (613)`, and Sentry now sees release `resplit-ios@2.0.0+613`, but the honest blockers are still `RESPLIT-IOS-A2` exact evidence on `dist 598`, apex-host AASA and `/join` `307` redirects, the live App Store storefront still saying `Resplit - Tip Calculator` `1.8.0`, localization debt, and `25` open non-verified ASC rows.
