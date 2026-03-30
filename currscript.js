@@ -31,6 +31,10 @@ async function main() {
   console.log(`Fetched ${Object.keys(latestRates).length} currencies for ${dateToday}`)
 
   saveSnapshotToArchive(dateToday, latestRates)
+  pruneSnapshotArchive({
+    retentionDays: snapshotRetentionDays,
+    latestDate: dateToday
+  })
 
   const recentSnapshots = await buildSnapshotWindow({
     todayDate: dateToday,
@@ -265,6 +269,17 @@ function saveSnapshotToArchive(date, rates) {
   fs.writeJsonSync(filePath, { date, base: 'eur', rates })
 }
 
+function listSnapshotArchiveDates() {
+  if (!fs.existsSync(snapshotArchiveDir)) {
+    return []
+  }
+
+  return fs.readdirSync(snapshotArchiveDir)
+    .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+    .map((name) => name.replace(/\.json$/, ''))
+    .sort((lhs, rhs) => lhs.localeCompare(rhs))
+}
+
 function loadSnapshotFromArchive(date) {
   const filePath = path.join(snapshotArchiveDir, `${date}.json`)
   try {
@@ -277,20 +292,36 @@ function loadSnapshotFromArchive(date) {
 }
 
 function loadAllSnapshotsFromArchive() {
-  if (!fs.existsSync(snapshotArchiveDir)) {
-    return []
-  }
-
-  return fs.readdirSync(snapshotArchiveDir)
-    .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
-    .map((name) => {
-      const date = name.replace(/\.json$/, '')
+  return listSnapshotArchiveDates()
+    .map((date) => {
       const rates = loadSnapshotFromArchive(date)
       if (!rates) return null
       return { date, rates }
     })
     .filter(Boolean)
     .sort((lhs, rhs) => lhs.date.localeCompare(rhs.date))
+}
+
+function pruneSnapshotArchive({
+  retentionDays,
+  latestDate = null,
+  listDates = listSnapshotArchiveDates,
+  removeFile = fs.removeSync
+}) {
+  const dates = listDates()
+  if (dates.length === 0) {
+    return []
+  }
+
+  const effectiveLatestDate = latestDate ?? dates[dates.length - 1]
+  const earliestRetainedDate = dateDaysBeforeUTC(effectiveLatestDate, retentionDays - 1)
+  const prunedDates = dates.filter((date) => date <= effectiveLatestDate && date < earliestRetainedDate)
+
+  for (const date of prunedDates) {
+    removeFile(path.join(snapshotArchiveDir, `${date}.json`))
+  }
+
+  return prunedDates
 }
 
 async function fetchLatestRates() {
@@ -445,17 +476,16 @@ module.exports = {
   buildArchiveManifest,
   buildArchiveYearPayloads,
   buildSnapshotWindow,
-  buildCurrencyList,
   computeCrossRates,
   dateDaysBeforeUTC,
-  dateDaysAgoUTC,
   loadAllSnapshotsFromArchive,
+  listSnapshotArchiveDates,
   loadSnapshotFromArchive,
+  pruneSnapshotArchive,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
   snapshotRetentionDays,
   snapshotArchiveDir,
-  toDateStringUTC,
   toLowerSorted
 }

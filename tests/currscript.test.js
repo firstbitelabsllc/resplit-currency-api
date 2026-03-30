@@ -9,8 +9,10 @@ const {
   buildSnapshotWindow,
   computeCrossRates,
   dateDaysBeforeUTC,
+  listSnapshotArchiveDates,
   loadAllSnapshotsFromArchive,
   loadSnapshotFromArchive,
+  pruneSnapshotArchive,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
@@ -197,4 +199,27 @@ test('loadAllSnapshotsFromArchive returns sorted immutable archive snapshots', (
     .filter(snapshot => snapshot.date.startsWith('2099-01-0'))
 
   assert.deepEqual(snapshots.map(snapshot => snapshot.date), dates.slice().sort())
+})
+
+test('pruneSnapshotArchive keeps a rolling retention window anchored to the newest snapshot', (t) => {
+  const dates = ['2099-01-01', '2099-01-02', '2099-01-03']
+
+  t.after(() => {
+    for (const date of dates) {
+      fs.removeSync(path.join(snapshotArchiveDir, `${date}.json`))
+    }
+  })
+
+  for (const [index, date] of dates.entries()) {
+    saveSnapshotToArchive(date, { eur: 1, usd: 1.1 + index })
+  }
+
+  const pruned = pruneSnapshotArchive({
+    retentionDays: 2,
+    latestDate: '2099-01-03',
+    listDates: () => dates.slice()
+  })
+
+  assert.deepEqual(pruned, ['2099-01-01'])
+  assert.deepEqual(listSnapshotArchiveDates().filter(date => date.startsWith('2099-01-0')), ['2099-01-02', '2099-01-03'])
 })

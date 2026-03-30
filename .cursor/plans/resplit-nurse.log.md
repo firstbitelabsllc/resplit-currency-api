@@ -1,5 +1,75 @@
 # Resplit Nurse Log
 
+## 2026-03-30 11:04 EDT
+
+- Launch remains `NO-GO` overall, but this pass shipped a real repo-owned fix on `main`: the FX snapshot archive now enforces the documented rolling 365-day retention window instead of growing forever, and validation/tests now fail if the archive count or span exceeds that contract.
+- Shipped this run:
+  - `currscript.js` now prunes archived snapshot files older than the current publish-date window and ignores stray future-dated files when calculating the cutoff
+  - `scripts/validate-package.js` now enforces both the minimum tolerated archive coverage and the maximum `365`-day count/span
+  - `tests/currscript.test.js` now proves the pruning behavior without leaking future-dated test artifacts into the real archive
+  - committed archive state is back inside contract: `snapshot-archive/` now spans `2025-03-31` through `2026-03-30` (`363` files because two known gaps remain inside the allowed window)
+- Fresh proof this run:
+  - `npm run check` -> passed (`53/53` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`, canonical Worker smoke still green)
+  - live FX surfaces still agree on March 30 truth:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json` -> `30` points from `2026-03-01` through `2026-03-30`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `mismatchCount=0`
+- Release execution status this run:
+  - `resplit-currency-api`: `shipped` repo-owned fix; live publish is still current, so no extra workflow dispatch was needed
+  - `resplit-web`: `already current` on `www`; apex-host `307` parity and stale App Store storefront metadata are still the blockers, not a missing deploy
+  - `resplit-ios`: `blocked` on current-build verification / observability truth; `621` is the newest Sentry-visible release object with exactly one unresolved issue (`RESPLIT-IOS-D8`), while `622` still has no release object from this client
+- Remaining blocker:
+  - overall Resplit 2.0 launch is still blocked outside this repo by iOS/TestFlight verification (`26` open ASC rows), screenshot proof ownership, apex-host parity, and stale public App Store metadata
+- Exact next slice:
+  - from one clean screenshot owner, bootstrap a real local `resplit-web/node_modules` inside a fresh `resplit-ios` worktree and rerun the serialized Japanese `02_Camera` / web `04_Link` screenshot path
+  - if that stays environment-blocked, stay on the existing `RESPLIT-IOS-D8` / current-build ASC verification lane before considering any new iOS upload
+
+## 2026-03-30 09:59 EDT
+
+- Launch remains `NO-GO`. This pass did not ship repo-owned code because `resplit-currency-api` is still green and already current, but the cross-repo release boundary moved again: latest valid iOS build is now `2.0.0 (622)`, App Store feedback is now `26` open / `13` verified / `0` archived, Sentry now has a release object for `621` but not yet for `622`, and `www.resplit.app` is now on production deploy `dpl_4Q3nUuoW6krk2Zt4GiGTaTyJn8rW`.
+- Shipped this run:
+  - no repo-owned FX/runtime code change shipped
+  - fresh detached-lane proof for `resplit-currency-api` on `/tmp/resplit-currency-api-nurse-20260330-095020`
+  - repo-owned launch truth advanced from stale `621 / 24-open / no-621-release-object` assumptions to current `622 / 26-open / 621-release-present / web-dpl_4Q3nUuoW6krk2Zt4GiGTaTyJn8rW`
+- Fresh proof this run:
+  - detached worktree gates passed:
+    - `npm run check` -> `52/52` tests passed, `Snapshot window: 363 days (362 local, 0 network)`
+    - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-03-30, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - FX release truth:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt` still shows scheduled publish `23725399664` and Pages deploy `23725424171` both succeeded on `2026-03-30`
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `mismatchCount=0`
+  - web / storefront truth:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_4Q3nUuoW6krk2Zt4GiGTaTyJn8rW`, `Ready`, created `2026-03-30 09:19:49 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 200`
+    - `https://www.resplit.app/join` -> `HTTP/2 200`
+    - `https://resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 307`
+    - `https://resplit.app/join` -> `HTTP/2 307`
+    - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+  - iOS / release-room truth:
+    - direct ASC API query this run now returns latest builds `622`, `621`, `613`, `610`, `604`, `602`, `599`, `598` as `VALID`; newest valid build is `622 | 2026-03-30T06:20:29-07:00 | VALID | false`
+    - `sentry-cli releases info 'resplit-ios@2.0.0+621'` now shows `Date created 2026-03-30 13:23:09.849176 UTC`
+    - `sentry-cli releases info 'resplit-ios@2.0.0+622'` -> `No such release`
+    - current iOS tracker file now shows `26` open / `13` verified / `0` archived, with `12 new`, `11 fixed`, `2 blocked`, `1 claimed`
+    - top exact runtime blocker remains `RESPLIT-IOS-A2` on `dist 598`; `RESPLIT-IOS-BY` is newer by recency but only on `dist 613`
+    - screenshot/upload parity is still red: checked-in upload-ready screenshots are March 25 assets, and the last March 30 verify attempt ended `exit 65` with corrupt xcresult
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current` on `www`; apex-host parity and public App Store copy are still the blockers, not a missing deploy
+  - `resplit-ios`: `already current` for upload freshness because build `622` is already `VALID`; no new upload ran this pass
+- Remaining blocker:
+  - launch is still blocked outside the FX repo by current-build verification on the `26` open ASC rows, missing Sentry release coverage for build `622`, `RESPLIT-IOS-A2` still being the top exact runtime blocker, stale mixed-language screenshot assets with no fresh sole-owner rerun, apex-host `307` redirects, and public App Store metadata still lagging the shipped product
+- Exact next slice:
+  - verify build `622` on the `11` fixed ASC rows and the `12` new rows first
+  - rerun screenshot capture/verify once with one sole owner on clean trunk
+  - rerun release-scoped Sentry checks once `resplit-ios@2.0.0+622` exists
+  - only after that decide whether `RESPLIT-IOS-A2` still warrants another native release lane
+
 ## 2026-03-30 08:58 EDT
 
 - Launch remains `NO-GO`. This pass improved coordination and cleanup, not product code: the attached `resplit-currency-api` checkout was preserved on salvage branch `codex/currency-canonical-salvage-20260330-1258`, `main` was fast-forwarded clean to `origin/main`, and the release-room boundary is now build `2.0.0 (621)` instead of `613`.

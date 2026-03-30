@@ -6,6 +6,7 @@ const { runMonitoredScript } = require('./sentry-monitoring')
 
 const packageRoot = path.join(__dirname, '..', 'package')
 const MIN_ARCHIVE_DAYS = 365
+const MAX_ARCHIVE_DAYS = 365
 const MAX_ARCHIVE_GAP_DAYS = 7
 
 runMonitoredScript('validate_package', main, {
@@ -110,8 +111,16 @@ function main() {
     `archive availableDates must contain at least ${MIN_ARCHIVE_DAYS - MAX_ARCHIVE_GAP_DAYS} dates, got ${archiveManifest.availableDates.length}`
   )
   ensure(
+    archiveManifest.availableDates.length <= MAX_ARCHIVE_DAYS,
+    `archive availableDates must not exceed ${MAX_ARCHIVE_DAYS} dates, got ${archiveManifest.availableDates.length}`
+  )
+  ensure(
     daysBetween(archiveManifest.earliestDate, archiveManifest.latestDate) + 1 >= MIN_ARCHIVE_DAYS,
     `archive date span must cover at least ${MIN_ARCHIVE_DAYS} days, got ${archiveManifest.earliestDate}..${archiveManifest.latestDate}`
+  )
+  ensure(
+    daysBetween(archiveManifest.earliestDate, archiveManifest.latestDate) + 1 <= MAX_ARCHIVE_DAYS,
+    `archive date span must not exceed ${MAX_ARCHIVE_DAYS} days, got ${archiveManifest.earliestDate}..${archiveManifest.latestDate}`
   )
   ensure(
     archiveManifest.gapCount <= MAX_ARCHIVE_GAP_DAYS,
