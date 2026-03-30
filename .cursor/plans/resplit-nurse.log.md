@@ -1,5 +1,44 @@
 # Resplit Nurse Log
 
+## 2026-03-30 17:55 EDT
+
+- Launch stays `NO-GO` overall. No new repo-owned FX/runtime fix shipped in `resplit-currency-api` because current trunk re-proved green again and the real blockers remain external iOS / App Store closeout work.
+- Fresh proof this run:
+  - `npm run check` -> passed (`55/55` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`)
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` still shows scheduled publish `23725399664` and downstream Pages deploy `23725424171` both `success` on `2026-03-30`
+  - live FX probes this run:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://2026-03-30.resplit-currency-api.pages.dev/snapshots/base-rates.json` -> `HTTP/2 200`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `mismatchCount=0`
+  - dead-code check in this repo: `npx knip` returned configuration hints only, not a live deletion candidate
+  - environment hygiene this run: trimmed `.agent-ledger/activity.jsonl` from `699` entries to `200`; no stale worktrees, tmp roots, or merged `codex/*` branches needed cleanup
+- External release-room truth refreshed this run:
+  - `resplit-web`: `npx vercel inspect https://www.resplit.app` shows production deploy `dpl_GuY6KKaGPxiQ4xAiaaTL8CZFg6nb`, `Ready`, created `2026-03-30 17:21:24 EDT`; `www` AASA and `/join` return `HTTP/2 200`, but bare `resplit.app` still `307`s on both surfaces
+  - public App Store listing still says `Resplit - Tip Calculator` `1.8.0`
+  - `resplit-ios`: newest valid TestFlight build is now `2.0.0 (679)` and Sentry now has a real `resplit-ios@2.0.0+679` release object; current-build queries return `0` production error events in the last `24h` and no unresolved production issues on release `679`
+  - launch blockers remain external: `AJsnfc6n18x5I7Iha3QSazw` is still product-red on clean-trunk focused UI proof, `.cursor/plans/app-store-feedback.plan.md` still has `26` non-verified rows, and `.cursor/plans/app-store-screenshots.plan.md` still calls for manual `ja` review plus one serialized `es-ES` rerun before retrying screenshot upload or metadata
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `already current`
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/deploy/live FX truth turns red again
+  - next serialized release-mayor move belongs on clean `origin/master` in `resplit-ios`: either fix/reprove `AJsnfc6n18x5I7Iha3QSazw`, or finish screenshot closeout (`ja` manual review + `es-ES` rerun) before any new metadata/upload attempt
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked external; launch-locale gaps still block non-English ship proof
+  - `2 App Store Connect Feedback Triage`: blocked external; `26` rows remain non-verified
+  - `3 Sentry + Seer Error Hunter`: no-op with fresh proof; `679` is observability-clean and this repo has no current FX failure signal
+  - `4 UX Feedback Triage Lead`: blocked external; `AJsn...` remains product-red on clean focused UI proof
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof; no new repo-owned correctness finding beyond keeping `.codex/hooks.json` out of release work
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked external; `www` is current but apex/storefront drift remains
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; `knip` surfaced config hints only
+  - `8 Architecture + Test Discipline Guardian`: blocked external; no new clean-trunk iOS binary slice is proved beyond the already-current `679`
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked external; `ja` needs manual review and `es-ES` still needs the serialized rerun
+  - `10 App Store SEO + Metadata God`: blocked external; public App Store name/version still lag the checked-in product story
+
 ## 2026-03-30 20:55 EDT
 
 - Launch stays `NO-GO` overall, but this pass shipped one real repo-owned fix on `main`: older backfill runs no longer delete newer source snapshots from `snapshot-archive/`; they now filter future dates out of the packaged archive while preserving the committed source archive. `resplit-currency-api` remains `GO`; the remaining launch hold is still external iOS / App Store work.
