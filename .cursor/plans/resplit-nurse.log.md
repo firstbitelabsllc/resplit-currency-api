@@ -1,5 +1,58 @@
 # Resplit Nurse Log
 
+## 2026-03-30 15:03 EDT
+
+- Launch stays `NO-GO`, but `resplit-currency-api` remains `GO` and no repo-owned fix shipped this run. The material room change is external: the live iOS/TestFlight boundary is now `2.0.0 (638)`, not `622`, and current-build Sentry queries for `638` are clean over the last `24h`; the remaining blockers are screenshot/localization/App Store verification, not FX or upload freshness.
+- Shipped this run:
+  - no repo-owned code change
+  - updated release-room truth in this nurse log so the next cold start does not inherit the stale `622` build boundary
+- Fresh proof this run:
+  - `npm run check` -> passed (`54/54` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`)
+  - FX/train truth:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` still shows scheduled publish `23725399664` and Pages deploy `23725424171` both `success` on `2026-03-30`
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json` -> `30` points
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> healthy payload, `mismatchCount=0`
+  - web/storefront truth:
+    - local `resplit-web` checkout is missing from `/Users/leokwan/Development`, so this pass could only verify live surfaces
+    - `https://www.resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 200`
+    - `https://www.resplit.app/join` -> `HTTP/2 200`
+    - `https://resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 307`
+    - `https://resplit.app/join` -> `HTTP/2 307`
+    - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+  - iOS / release-room truth:
+    - direct ASC/API proof from the iOS lane now puts the newest valid build at `638 | 2026-03-30T09:18:02-07:00 | VALID | false`
+    - commit mapping in repo proof: `aaba331a` (`fix: recover D8 historical FX quotes from canonical history`) is revision `638`
+    - Sentry MCP live aggregate queries for release `resplit-ios@2.0.0+638` over the last `24h` now return `0` production error events and `0` unresolved production issues
+    - project-wide Sentry MCP query still shows `11` unresolved `resplit-ios` production issues over the last `7` days; `resplit-web` still shows none
+    - the sharpest user-visible blocker is now the AJsn receipt-detail entry regression: the focused rerun recorded in the iOS nurse log still fails both targeted receipt-detail row/item-sheet UI tests, and that lane is explicitly hot/owned on `origin/codex/super-hourly-ajsn-20260330`
+    - screenshot/localization debt remains broad: launch screenshot proof still needs human review plus an `es-ES` rerun, and each non-English launch locale in `Localizable.xcstrings` is still `442 translated / 131 missing`
+    - `app-store-feedback.plan.md` still carries `26` non-verified rows (`11 new`, `11 fixed`, `2 blocked`, `1 claimed`, `1 triaged`)
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current` on `www`, but local checkout missing and apex-host parity / storefront metadata are still blockers
+  - `resplit-ios`: `already current` for upload freshness because build `638` is valid and current-build Sentry aggregate queries are clean; launch remains blocked on screenshot/localization/ASC proof, not on a missing upload
+- Remaining blocker:
+  - overall launch is still blocked outside this repo by the hot AJsn receipt-detail entry regression, one sole-owner screenshot review/rerun path (`ja` review, then `es-ES` rerun), `131` missing strings in each launch locale, `26` non-verified ASC rows, bare-host deep-link parity, and stale public App Store metadata/name/version
+- Exact next slice:
+  - do not kick another iOS upload yet
+  - respect the hot AJsn owner first: run one sole-owner serialized rerun of the two receipt-detail UI tests on clean trunk with fresh simulator / `-derivedDataPath` / `-clonedSourcePackagesDirPath`, then inspect the accessibility tree if they stay red
+  - after that, take one sole-owner screenshot lane on clean trunk: visually review the fresh Japanese six-screen set already called out in the screenshot plan, then rerun `es-ES`; only if those outputs are clean should the next pass attempt screenshot upload or `ASC_UPLOAD_ENGLISH_NAME=1` metadata retry
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked external; each launch locale still has `131` missing strings
+  - `2 App Store Connect Feedback Triage`: blocked external; tracker still has `26` non-verified rows
+  - `3 Sentry + Seer Error Hunter`: no-op with fresh proof; release `638` shows `0` production errors/issues in the last `24h`, but older unresolved iOS backlog remains
+  - `4 UX Feedback Triage Lead`: blocked external; AJsn receipt-detail entry remains the sharpest visible blocker and is already hot-owned
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof; no new repo-owned FX regression surfaced
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked external; `www` is green but apex parity and storefront drift remain
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; no live dead-code slice outranked the current blockers
+  - `8 Architecture + Test Discipline Guardian`: blocked external; the receipt-detail UI contract is still failing targeted serial proof on the iOS lane
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked external; Japanese set exists but still needs visual sign-off and `es-ES` rerun
+  - `10 App Store SEO + Metadata God`: blocked external; checked-in name is `Resplit`, but public storefront is still `Resplit - Tip Calculator` `1.8.0`
+
 ## 2026-03-30 13:56 EDT
 
 - Launch remains `NO-GO` overall, but this pass shipped one real repo-owned fix on `main`: older-date/backfill runs now prune future-dated snapshot artifacts instead of leaving them in the archive and tripping the stricter retention validator. `resplit-currency-api` stays `GO`; the remaining launch hold is still external iOS/web/App Store work.
