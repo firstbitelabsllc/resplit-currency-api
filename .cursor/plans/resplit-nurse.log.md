@@ -1,5 +1,56 @@
 # Resplit Nurse Log
 
+## 2026-03-30 07:55 EDT
+
+- Launch remains `NO-GO`. This pass materially improved repo-owned launch truth: `resplit-currency-api` is still green on fresh clean-worktree proof, `www.resplit.app` is current on production deploy `dpl_E6rDW5fwbfjSZTChsBgdizB5eNFE`, canonical iOS/TestFlight has moved to build `2.0.0 (613)`, and Sentry now sees release `resplit-ios@2.0.0+613`, but the honest blockers are still `RESPLIT-IOS-A2` exact evidence on `dist 598`, apex-host AASA and `/join` `307` redirects, the live App Store storefront still saying `Resplit - Tip Calculator` `1.8.0`, localization debt, and `25` open non-verified ASC rows.
+- Shipped this run:
+  - no repo-owned FX/runtime code change shipped
+  - shipped a fresh repo-owned checkpoint from clean trunk proof so the next cold-start run inherits build `613` plus current web/FX truth instead of the stale build-`573` room
+- Fresh proof this run:
+  - clean worktree `/private/tmp/resplit-currency-super-hourly-20260330`:
+    - `npm ci`
+    - `npm run check`
+    - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-03-30, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - FX release truth:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json databaseId,displayTitle,event,headBranch,headSha,status,conclusion,workflowName,createdAt,updatedAt` still shows scheduled publish `23725399664` succeeded on `2026-03-30T02:31:52Z` and downstream Pages deploy `23725424171` succeeded on `2026-03-30T02:32:59Z`
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`, `archiveGapCount=0`
+  - web / storefront truth:
+    - `npx vercel inspect https://www.resplit.app` from `resplit-ios/resplit-web` -> production deploy `dpl_E6rDW5fwbfjSZTChsBgdizB5eNFE`, `Ready`, created `2026-03-30 07:24:26 EDT`
+    - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 5` -> `HTTP/2 200`
+    - `curl -I -s https://www.resplit.app/join | head -n 5` -> `HTTP/2 200`
+    - `curl -I -s https://resplit.app/.well-known/apple-app-site-association | head -n 5` -> `HTTP/2 307`
+    - `curl -I -s https://resplit.app/join | head -n 5` -> `HTTP/2 307`
+    - `curl -fsS 'https://itunes.apple.com/lookup?id=6466376742&country=us' | jq` still reports `trackName="Resplit - Tip Calculator"`, `version="1.8.0"`, `currentVersionReleaseDate="2025-02-11T23:56:36Z"`
+  - iOS / release-room truth:
+    - direct ASC API-key read this run returned builds `613`, `610`, `604`, `602`, `599`, `598`, `593`, and `588` as `VALID`; newest build `613` uploaded `2026-03-30T04:18:07-07:00`
+    - `sentry-cli releases info 'resplit-ios@2.0.0+613'` now shows release created `2026-03-30 11:40:03 UTC`
+    - current repo-owned Sentry plan still names `RESPLIT-IOS-A2` as the top exact runtime blocker with freshest concrete evidence on `dist 598`, while `613` is still too fresh for an observability all-clear
+    - current trunk ASC tracker status from `origin/master:.cursor/plans/app-store-feedback.plan.md` is `25` open non-verified rows (`new: 10`, `fixed: 12`, `blocked: 2`, `claimed: 1`) plus `12` `verified`
+    - current trunk localization from `origin/master:ResplitCore/Resources/Localizable.xcstrings` is `de-DE/es-ES/fr-FR = 0/605`, `ja/ko/pt-BR/th/zh-Hans = 474/605`, `en = 477/605`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current` — fresh clean-worktree gates passed and the live FX train still matches March 30 truth
+  - `resplit-web`: `already current` — fresh production deploy is live on `www`, but the next honest work is apex-host redirect/storefront drift, not a repo-owned redeploy
+  - `resplit-ios`: `already current` — build `2.0.0 (613)` is already valid/distributed from current trunk, and no new iOS slice shipped in this pass that justified another upload
+- Remaining blocker:
+  - overall launch is still blocked outside the FX train: `RESPLIT-IOS-A2` still needs `613`-era runtime verification, the ASC tracker still has `25` open non-verified rows, `de-DE/es-ES/fr-FR` remain `0/605`, apex-host universal-link parity is still red, and the live App Store identity/copy is still stale
+- Exact next slice:
+  - verify build `613` on the current-build rows first, especially `AF2ox6Pz0k13_tu4OVz90xw` plus the already-fixed `610`-carried rows; then rerun release-scoped Sentry checks for `613` and take `RESPLIT-IOS-A2` only if it still reproduces
+  - do not open new FX or repo-owned web code unless the live FX train or `www` deploy regresses
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked — current trunk now has `605` strings, and `de-DE`, `es-ES`, and `fr-FR` are still `0/605`
+  - `2 App Store Connect Feedback Triage`: blocked — current tracker truth is `25` open non-verified rows with newest valid build `613`
+  - `3 Sentry + Seer Error Hunter`: blocked — release `613` exists, but the top exact runtime blocker is still `RESPLIT-IOS-A2` on `dist 598`
+  - `4 UX Feedback Triage Lead`: blocked — the next honest UX work is build-`613` verification of the fixed custom-tip and current-build rows
+  - `5 Code Review + Clipdiff Auditor`: no-op with proof — this repo needed only a truth refresh; no new FX diff risk surfaced
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked — `www` is current, but apex-host redirects and storefront identity still drift from the intended canonical surface
+  - `7 Dead Code + Drift Analyzer`: no-op with proof — no new safe dead-code action surfaced in the FX repo this run
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof — fresh clean-worktree `npm run check` and `npm run smoke:deploy` passed, so no new repo-owned architecture/test slice was warranted here
+  - `9 Screenshot + Snapshot + UI Proof Lead`: blocked — the screenshot lane still needs sole-owner proof in the iOS room
+  - `10 App Store SEO + Metadata Lead`: blocked — the live storefront still says `Resplit - Tip Calculator` `1.8.0` on March 30, 2026
+
 ## 2026-03-29 23:12 EDT
 
 - Launch is still `NO-GO` overall, but this pass materially improved release state instead of just re-auditing it. `resplit-currency-api` and production web are already current from fresh proof, and canonical iOS trunk is now built, uploaded, processed, and distributed as TestFlight build `2.0.0 (573)` from a clean detached worktree.
