@@ -223,3 +223,20 @@ test('pruneSnapshotArchive keeps a rolling retention window anchored to the newe
   assert.deepEqual(pruned, ['2099-01-01'])
   assert.deepEqual(listSnapshotArchiveDates().filter(date => date.startsWith('2099-01-0')), ['2099-01-02', '2099-01-03'])
 })
+
+test('pruneSnapshotArchive removes dates newer than an explicit latest publish date', (t) => {
+  const dates = ['2099-01-01', '2099-01-02', '2099-01-03']
+  const removedPaths = []
+
+  const pruned = pruneSnapshotArchive({
+    retentionDays: 10,
+    latestDate: '2099-01-02',
+    listDates: () => dates.slice(),
+    removeFile: (filePath) => {
+      removedPaths.push(path.basename(filePath, '.json'))
+    }
+  })
+
+  assert.deepEqual(pruned, ['2099-01-03'])
+  assert.deepEqual(removedPaths, ['2099-01-03'])
+})

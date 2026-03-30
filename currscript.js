@@ -315,7 +315,13 @@ function pruneSnapshotArchive({
 
   const effectiveLatestDate = latestDate ?? dates[dates.length - 1]
   const earliestRetainedDate = dateDaysBeforeUTC(effectiveLatestDate, retentionDays - 1)
-  const prunedDates = dates.filter((date) => date <= effectiveLatestDate && date < earliestRetainedDate)
+  const prunedDates = dates.filter((date) => {
+    if (date > effectiveLatestDate) {
+      return true
+    }
+
+    return date < earliestRetainedDate
+  })
 
   for (const date of prunedDates) {
     removeFile(path.join(snapshotArchiveDir, `${date}.json`))

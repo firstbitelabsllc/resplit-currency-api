@@ -1,5 +1,52 @@
 # Resplit Nurse Log
 
+## 2026-03-30 13:56 EDT
+
+- Launch remains `NO-GO` overall, but this pass shipped one real repo-owned fix on `main`: older-date/backfill runs now prune future-dated snapshot artifacts instead of leaving them in the archive and tripping the stricter retention validator. `resplit-currency-api` stays `GO`; the remaining launch hold is still external iOS/web/App Store work.
+- Shipped this run:
+  - `currscript.js` now deletes snapshot files newer than an explicit `latestDate` during archive pruning, so manual backfills or older `PUBLISH_DATE` reruns cannot package future snapshots or fail `archiveManifest.latestDate === meta.latestDate`
+  - `tests/currscript.test.js` now covers that explicit backfill/future-date cleanup path with a stubbed regression test
+- Fresh proof this run:
+  - `node --test tests/currscript.test.js` -> passed (`17/17`)
+  - `npm run check` -> passed (`54/54` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+  - `npm run smoke:deploy` -> passed (`date=2026-03-30`, `historyPoints=30`)
+  - release-train / live FX truth:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` still shows scheduled publish `23725399664` and Pages deploy `23725424171` both `success` on `2026-03-30`
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://resplit-currency-api.pages.dev/history/30d/aed.json` -> `30` points (`2026-03-01` through `2026-03-30`)
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-30`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-30` -> `resolvedDate=2026-03-30`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-30&days=30` -> `mismatchCount=0`
+  - external release-room truth refreshed this run:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_CL1Am3TkqWbmscvNptabpZ1e1PtY`, `Ready`, created `2026-03-30 12:23:07 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 200`
+    - `https://www.resplit.app/join` -> `HTTP/2 200`
+    - `https://resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 307`
+    - `https://resplit.app/join` -> `HTTP/2 307`
+    - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+    - `ResplitCore/Resources/Localizable.xcstrings` still shows each non-English launch locale at `442 translated / 131 missing`
+    - `.cursor/plans/app-store-feedback.plan.md` still reports `26` non-verified ASC rows (`11 new`, `1 triaged`, `1 claimed`, `2 blocked`, `11 fixed`, `13 verified`)
+    - Sentry still shows `11` unresolved production `resplit-ios` issues over the last `7` days, `0` for `resplit-web`, and release `resplit-ios@2.0.0+621` still has exactly `1` production error event in the last `24` hours: `RESPLIT-IOS-D8`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current` before the fix, then `shipped` repo-owned backfill hardening on trunk in this pass
+  - `resplit-web`: `already current` on `www`; overall web lane still blocked on apex-host parity and stale public storefront metadata, not on a missing deploy
+  - `resplit-ios`: `already current` for upload freshness because build `622` remains the newest `VALID` TestFlight build in repo proof, but the lane is still blocked on `D8`, screenshot/current-build verification, and broader launch proof
+- Remaining blocker:
+  - overall Resplit 2.0 launch is still blocked outside this repo by `RESPLIT-IOS-D8`, one clean non-English screenshot rerun, `131` missing strings in every non-English launch locale, `26` non-verified ASC rows, apex-host `307` parity, and stale public App Store metadata/name/version
+- Exact next slice:
+  - from one clean `resplit-ios` trunk worktree, ship a post-`aaba331a` build that contains the D8 historical FX recovery, rerun issue-readable Sentry checks on that new dist, then return to the Japanese screenshot canary if D8 is clean
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: blocked external; each non-English locale still has `131` missing strings
+  - `2 App Store Connect Feedback Triage`: blocked external; `26` feedback rows are still not `verified`
+  - `3 Sentry + Seer Error Hunter`: blocked external; `RESPLIT-IOS-D8` is still the current-build production issue on release `621`
+  - `4 UX Feedback Triage Lead`: blocked external; current-build receipt-detail / conversion surfaces still need fresh tester-visible proof
+  - `5 Code Review + Clipdiff Auditor`: shipped; review surfaced the backfill/future-snapshot regression and this pass fixed it
+  - `6 UX Uniformity + Canonical Surface Mayor`: blocked external; `www` is current but apex deep-link parity and storefront naming still drift
+  - `7 Dead Code + Drift Analyzer`: no-op with proof; no live dead-code finding outranked the shipped retention fix
+  - `8 Architecture + Test Discipline Guardian`: no-op with proof; the repo-owned fix landed with focused regression coverage plus full repo gates
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: blocked external; screenshot matrix exists but non-English assets still show stale mixed-language runtime chrome
+  - `10 App Store SEO + Metadata God`: blocked external; checked-in metadata says `Resplit`, but the public storefront still says `Resplit - Tip Calculator` `1.8.0`
+
 ## 2026-03-30 12:03 EDT
 
 - Launch remains `NO-GO`, and this repo still stays `GO`. No repo-owned FX/runtime change shipped because `resplit-currency-api` re-proved green again on trunk and the remaining hold is still the external iOS screenshot/localization/App Store lane plus apex-host / storefront drift.
