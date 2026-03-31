@@ -1,5 +1,39 @@
 # Resplit Nurse Log
 
+## 2026-03-31 07:01 EDT
+
+- Launch stays `NO-GO` overall. No repo-owned fix shipped in `resplit-currency-api`; this run only tightened the current release proof after `06:41` because the current `origin/main` delta since `21e683fb` is nurse-log-only, not product/runtime code.
+- Fresh proof this run:
+  - current trunk drift:
+    - `git diff --name-only 21e683fb..603b7eef` -> only `.cursor/plans/resplit-nurse.log.md`
+    - current clean detached lane `/private/tmp/resplit-currency-api-nurse-0702` is on `603b7eef` and `git status --short --branch` stays clean
+  - current-build / observability truth:
+    - direct ASC query this run via `bundle exec ruby` + `Spaceship::ConnectAPI::Build.all(...)` now succeeds again and confirms newest build `695 | 2026-03-30T18:50:29-07:00 | VALID | false`
+    - `mcp__sentry__search_issues(firstbite-labs/resplit-ios, 'unresolved production issues for release 2.0.0+695 with newest events')` -> no unresolved issues returned for the release-filtered query
+    - `mcp__sentry__get_issue_tag_values(firstbite-labs, RESPLIT-IOS-DD, release)` still shows one `resplit-ios@2.0.0+695` event on top of older `324` traffic, and `mcp__sentry__get_sentry_resource(firstbite-labs, RESPLIT-IOS-DD)` still reports `3` total occurrences / `1` user / low Seer actionability
+  - release posture unchanged:
+    - `resplit-currency-api` and `www.resplit.app` remain already current from the earlier `06:41` clean-trunk proof on March 31, 2026
+    - storefront drift still stands: App Store lookup returns `Resplit - Tip Calculator` `1.8.0`, while web metadata markets `Resplit — Split Bills, Share Moments`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (build `695` is the newest valid build, but the next honest move is still manual/device review plus metadata/deep-link parity, not a speculative `696`)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/deploy/live FX truth turns red
+  - do one human/manual-device pass on build `695` for `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI`
+  - if those do not reproduce, shift the next release room action to apex-domain/App Store metadata parity instead of reopening the anti-looped screenshot or iOS upload lanes
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still miss `131` strings each in eight tracked locales and `573` in `it`
+  - `2 App Store Connect Feedback Triage`: `blocked`; the plan still has `26` non-verified rows and the newest valid build is still `695`
+  - `3 Sentry + Seer Error Hunter`: `blocked`; release-filtered `695` queries are now quieter, but `RESPLIT-IOS-DD` still tagged one build-`695` event and no safer repo-owned fix emerged
+  - `4 UX Feedback Triage Lead`: `blocked`; the next visible slice is manual review / naming parity, not a new FX/web patch
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; no new severity issue surfaced in the FX train delta
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is current, but apex deep-link parity and naming still drift
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` stayed clean
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; attached iOS remains an undisciplined build/upload surface
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; the `ja` share lane remains anti-looped pending environment change or manual proof
+  - `10 App Store SEO + Metadata God`: `blocked`; storefront metadata still drifts from the live web message
+
 ## 2026-03-31 06:41 EDT
 
 - Launch stays `NO-GO` overall. No repo-owned fix shipped in `resplit-currency-api`; this run was a clean-trunk fast-exit because the FX train and `www` are current, while the remaining blockers are still iOS dirty-root / screenshot manual-review owned.
