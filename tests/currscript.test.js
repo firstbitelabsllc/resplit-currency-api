@@ -21,7 +21,9 @@ const {
   significantNum,
   snapshotRetentionDays,
   snapshotArchiveDir,
-  toLowerSorted
+  toLowerSorted,
+  writeJsonFile,
+  writeTextFile
 } = require('../currscript')
 
 test('snapshot retention is pinned to one year', () => {
@@ -189,6 +191,7 @@ test('promoteBuildOutput swaps staged files into place', (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-'))
   const destinationRoot = path.join(tempRoot, 'package')
   const backupRoot = path.join(tempRoot, 'package.backup')
+  const stagingRoot = path.join(tempRoot, 'package.staging')
 
   t.after(() => {
     fs.removeSync(tempRoot)
@@ -200,6 +203,7 @@ test('promoteBuildOutput swaps staged files into place', (t) => {
   promoteBuildOutput({
     destinationRoot,
     backupRoot,
+    stagingRoot,
     build: (root) => {
       fs.writeFileSync(path.join(root, 'fresh.txt'), 'fresh')
     }
@@ -214,6 +218,7 @@ test('promoteBuildOutput restores the previous output when staging fails', (t) =
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-fail-'))
   const destinationRoot = path.join(tempRoot, 'package')
   const backupRoot = path.join(tempRoot, 'package.backup')
+  const stagingRoot = path.join(tempRoot, 'package.staging')
 
   t.after(() => {
     fs.removeSync(tempRoot)
@@ -226,6 +231,7 @@ test('promoteBuildOutput restores the previous output when staging fails', (t) =
     promoteBuildOutput({
       destinationRoot,
       backupRoot,
+      stagingRoot,
       build: (root) => {
         fs.writeFileSync(path.join(root, 'partial.txt'), 'partial')
         throw new Error('build failed')
@@ -236,6 +242,85 @@ test('promoteBuildOutput restores the previous output when staging fails', (t) =
   assert.equal(fs.readFileSync(path.join(destinationRoot, 'stale.txt'), 'utf8'), 'stale')
   assert.equal(fs.existsSync(path.join(destinationRoot, 'partial.txt')), false)
   assert.equal(fs.existsSync(backupRoot), false)
+  assert.equal(fs.existsSync(stagingRoot), false)
+})
+
+test('promoteBuildOutput throws when promoted backup cleanup fails', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-cleanup-'))
+  const destinationRoot = path.join(tempRoot, 'package')
+  const backupRoot = path.join(tempRoot, 'package.backup')
+  const stagingRoot = path.join(tempRoot, 'package.staging')
+
+  t.after(() => {
+    fs.removeSync(tempRoot)
+  })
+
+  fs.mkdirpSync(destinationRoot)
+  fs.writeFileSync(path.join(destinationRoot, 'stale.txt'), 'stale')
+
+  assert.throws(() => {
+    promoteBuildOutput({
+      destinationRoot,
+      backupRoot,
+      stagingRoot,
+      build: (root) => {
+        fs.writeFileSync(path.join(root, 'fresh.txt'), 'fresh')
+      },
+      removeDir: (dirPath) => {
+        if (dirPath === backupRoot) {
+          const error = new Error('cleanup busy')
+          error.code = 'ENOTEMPTY'
+          throw error
+        }
+        fs.removeSync(dirPath)
+      },
+      warn: () => {}
+    })
+  }, /failed to remove backup/)
+
+  assert.equal(fs.readFileSync(path.join(destinationRoot, 'fresh.txt'), 'utf8'), 'fresh')
+  assert.equal(fs.existsSync(path.join(destinationRoot, 'stale.txt')), false)
+  assert.equal(fs.existsSync(backupRoot), true)
+})
+
+test('promoteBuildOutput restores the backup after partial promotion cleanup', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-partial-'))
+  const destinationRoot = path.join(tempRoot, 'package')
+  const backupRoot = path.join(tempRoot, 'package.backup')
+  const stagingRoot = path.join(tempRoot, 'package.staging')
+
+  t.after(() => {
+    fs.removeSync(tempRoot)
+  })
+
+  fs.mkdirpSync(destinationRoot)
+  fs.writeFileSync(path.join(destinationRoot, 'stale.txt'), 'stale')
+
+  assert.throws(() => {
+    promoteBuildOutput({
+      destinationRoot,
+      backupRoot,
+      stagingRoot,
+      build: (root) => {
+        fs.writeFileSync(path.join(root, 'fresh.txt'), 'fresh')
+      },
+      moveDir: (source, destination) => {
+        if (source === stagingRoot && destination === destinationRoot) {
+          fs.mkdirpSync(destinationRoot)
+          fs.writeFileSync(path.join(destinationRoot, 'partial.txt'), 'partial')
+          throw new Error('promotion failed')
+        }
+
+        fs.moveSync(source, destination, { overwrite: false })
+      },
+      warn: () => {}
+    })
+  }, /promotion failed/)
+
+  assert.equal(fs.readFileSync(path.join(destinationRoot, 'stale.txt'), 'utf8'), 'stale')
+  assert.equal(fs.existsSync(path.join(destinationRoot, 'partial.txt')), false)
+  assert.equal(fs.existsSync(backupRoot), false)
+  assert.equal(fs.existsSync(stagingRoot), false)
 })
 
 test('bestEffortRemoveDir tolerates transient cleanup failures', () => {
@@ -259,6 +344,32 @@ test('bestEffortRemoveDir tolerates transient cleanup failures', () => {
 
   assert.equal(removed, true)
   assert.equal(attempts, 3)
+})
+
+test('writeTextFile creates missing parent directories before writing', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-write-text-'))
+  const target = path.join(tempRoot, 'nested', 'deeper', 'file.txt')
+
+  t.after(() => {
+    fs.removeSync(tempRoot)
+  })
+
+  writeTextFile(target, 'ok')
+
+  assert.equal(fs.readFileSync(target, 'utf8'), 'ok')
+})
+
+test('writeJsonFile creates missing parent directories before writing', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-write-json-'))
+  const target = path.join(tempRoot, 'nested', 'deeper', 'file.json')
+
+  t.after(() => {
+    fs.removeSync(tempRoot)
+  })
+
+  writeJsonFile(target, { ok: true }, true)
+
+  assert.deepEqual(fs.readJsonSync(target), { ok: true })
 })
 
 test('loadAllSnapshotsFromArchive returns sorted immutable archive snapshots', (t) => {

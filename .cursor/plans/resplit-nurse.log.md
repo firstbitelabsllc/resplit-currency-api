@@ -1,5 +1,37 @@
 # Resplit Nurse Log
 
+## 2026-03-30 22:57 EDT
+
+- Launch stays `NO-GO` overall, but this repo shipped a real trunk fix: `promoteBuildOutput` now stages artifacts outside `package/`, restores the previous tree after partial promotion failures, and fails hard if backup cleanup still leaks after a successful swap. This closes the repo-owned promotion-path red surfaced by review; `resplit-currency-api` remains `GO`.
+- Fresh proof this run:
+  - hygiene:
+    - stale detached worktree `/private/tmp/resplit-currency-api-nurse-fix-20260331` removed
+    - `.agent-ledger/activity.jsonl` trimmed from `720` entries to `200`
+    - no stale `/private/tmp/resplit-*` dirs older than 24h and no merged `codex/*` branches
+  - repo gates on the shipped slice:
+    - `node --test tests/currscript.test.js` -> passed (`25/25`)
+    - `npm run check` -> passed (`64/64` in the clean release worktree on `origin/main`)
+    - `npm run smoke:deploy` -> passed (`date=2026-03-31`, `historyPoints=30`)
+  - release perimeter:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` -> latest publish `23777526441` and pages deploy `23777554746` both `success`
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-31`, `166` rates
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-31`, `166` rates
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` -> `resolvedDate=2026-03-31`, `rate=0.27229469`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-31&days=30` -> `mismatchCount=0`
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_5tpro5c57SxAMvmgC9aUai5JgM2d`, `Ready`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` + `/join` -> `HTTP/2 200`; bare apex still `HTTP/2 307`
+  - iOS / observability perimeter:
+    - `sentry-cli releases info resplit-ios@2.0.0+695` now returns a real release object with `0` new issues, so the old missing-release-row blocker is stale
+    - unresolved issue + monitor reads still return `403`, so the remaining observability blocker is access, not proof of a current-build runtime regression in this repo
+- Release execution status this run:
+  - `resplit-currency-api`: `ready to kick off from repaired main`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (manual screenshot/build verification plus issue-readable Sentry access still live outside this repo)
+- Exact next slice:
+  - push the `currscript` hardening fix directly to `main` and manually dispatch `run.yml` from the repaired trunk
+  - keep `resplit-currency-api` on fast-exit after that unless the FX train turns red again
+  - from a clean current-`master` `resplit-ios` worktree, manually verify `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI`, then replace or repair the Sentry credential path so unresolved issues and monitors can be read honestly for build `695`
+
 ## 2026-03-30 22:52 EDT
 
 - Launch stays `NO-GO` overall. No repo-owned product code shipped in `resplit-currency-api`; this run corrected stale release-room assumptions and re-proved the FX train after the room moved again.

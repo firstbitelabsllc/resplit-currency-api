@@ -1,4 +1,5 @@
 const fs = require('fs-extra')
+const os = require('os')
 const path = require('path')
 const {
   captureIssue,
@@ -83,6 +84,10 @@ async function main() {
 function promoteBuildOutput({
   destinationRoot,
   backupRoot,
+  stagingRoot = path.join(
+    os.tmpdir(),
+    `.package-staging-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  ),
   build,
   pathExists = fs.existsSync,
   ensureDir = fs.mkdirpSync,
@@ -92,37 +97,66 @@ function promoteBuildOutput({
 }) {
   let destinationBackedUp = false
   let promoted = false
+  let promotionError = null
 
   try {
+    ensureDir(stagingRoot)
+    build(stagingRoot)
+
     if (pathExists(destinationRoot)) {
       moveDir(destinationRoot, backupRoot)
       destinationBackedUp = true
     }
 
-    ensureDir(destinationRoot)
-    build(destinationRoot)
+    moveDir(stagingRoot, destinationRoot)
     promoted = true
   } catch (error) {
+    promotionError = error
+  }
+
+  if (promotionError) {
     bestEffortRemoveDir({
-      dirPath: destinationRoot,
+      dirPath: stagingRoot,
       pathExists,
       removeDir,
       warn
     })
 
-    if (destinationBackedUp && !pathExists(destinationRoot) && pathExists(backupRoot)) {
-      moveDir(backupRoot, destinationRoot)
-      destinationBackedUp = false
-    }
-    throw error
-  } finally {
-    if (promoted && destinationBackedUp) {
-      bestEffortRemoveDir({
-        dirPath: backupRoot,
+    if (destinationBackedUp) {
+      const destinationCleared = bestEffortRemoveDir({
+        dirPath: destinationRoot,
         pathExists,
         removeDir,
         warn
       })
+
+      if (!destinationCleared && pathExists(destinationRoot)) {
+        const restoreError = new Error(
+          `Failed to restore ${destinationRoot} after promotion error: cleanup failed while handling ${promotionError.message}`
+        )
+        restoreError.cause = promotionError
+        throw restoreError
+      }
+
+      if (pathExists(backupRoot)) {
+        moveDir(backupRoot, destinationRoot)
+        destinationBackedUp = false
+      }
+    }
+
+    throw promotionError
+  }
+
+  if (promoted && destinationBackedUp) {
+    const backupRemoved = bestEffortRemoveDir({
+      dirPath: backupRoot,
+      pathExists,
+      removeDir,
+      warn
+    })
+
+    if (!backupRemoved && pathExists(backupRoot)) {
+      throw new Error(`Promoted ${destinationRoot}, but failed to remove backup ${backupRoot}`)
     }
   }
 }
@@ -158,8 +192,17 @@ function writeRootPackageMetadata({ root, dateToday }) {
   const semverDate = dateToday.replaceAll('-', '.')
   const pkg = fs.readJsonSync(path.join(__dirname, 'skeleton-package.json'))
   pkg.version = semverDate
-  fs.writeJsonSync(path.join(root, 'package.json'), pkg)
-  fs.writeFileSync(path.join(root, 'index.js'), '')
+  writeJsonFile(path.join(root, 'package.json'), pkg, true)
+  writeTextFile(path.join(root, 'index.js'), '')
+}
+
+function writeTextFile(filePath, contents) {
+  fs.mkdirpSync(path.dirname(filePath))
+  fs.writeFileSync(filePath, contents)
+}
+
+function writeJsonFile(filePath, payload, pretty = false) {
+  writeTextFile(filePath, JSON.stringify(payload, null, pretty ? indent : undefined))
 }
 
 function writeArtifacts({
@@ -181,16 +224,16 @@ function writeArtifacts({
   fs.mkdirpSync(archiveYearsDir)
 
   const currencyList = buildCurrencyList(latestRates)
-  fs.writeFileSync(path.join(root, 'currencies.json'), JSON.stringify(currencyList, null, indent))
-  fs.writeFileSync(path.join(root, 'currencies.min.json'), JSON.stringify(currencyList))
+  writeJsonFile(path.join(root, 'currencies.json'), currencyList, true)
+  writeJsonFile(path.join(root, 'currencies.min.json'), currencyList)
 
   const snapshotPayload = {
     date: dateToday,
     base: 'eur',
     rates: latestRates
   }
-  fs.writeFileSync(path.join(snapshotsDir, 'base-rates.json'), JSON.stringify(snapshotPayload, null, indent))
-  fs.writeFileSync(path.join(snapshotsDir, 'base-rates.min.json'), JSON.stringify(snapshotPayload))
+  writeJsonFile(path.join(snapshotsDir, 'base-rates.json'), snapshotPayload, true)
+  writeJsonFile(path.join(snapshotsDir, 'base-rates.min.json'), snapshotPayload)
 
   const availableArchiveDates = archiveSnapshots.map((snapshot) => snapshot.date)
   const archiveYears = buildArchiveYearPayloads(archiveSnapshots)
@@ -212,10 +255,10 @@ function writeArtifacts({
     archiveLatestDate: archiveManifest.latestDate,
     archiveGapCount: archiveManifest.gapCount
   }
-  fs.writeFileSync(path.join(root, 'meta.json'), JSON.stringify(metaPayload, null, indent))
-  fs.writeFileSync(path.join(root, 'meta.min.json'), JSON.stringify(metaPayload))
-  fs.writeFileSync(path.join(root, 'archive-manifest.json'), JSON.stringify(archiveManifest, null, indent))
-  fs.writeFileSync(path.join(root, 'archive-manifest.min.json'), JSON.stringify(archiveManifest))
+  writeJsonFile(path.join(root, 'meta.json'), metaPayload, true)
+  writeJsonFile(path.join(root, 'meta.min.json'), metaPayload)
+  writeJsonFile(path.join(root, 'archive-manifest.json'), archiveManifest, true)
+  writeJsonFile(path.join(root, 'archive-manifest.min.json'), archiveManifest)
 
   for (const snapshot of archiveSnapshots) {
     const payload = {
@@ -223,13 +266,13 @@ function writeArtifacts({
       base: 'eur',
       rates: snapshot.rates
     }
-    fs.writeFileSync(path.join(archiveDir, `${snapshot.date}.json`), JSON.stringify(payload, null, indent))
-    fs.writeFileSync(path.join(archiveDir, `${snapshot.date}.min.json`), JSON.stringify(payload))
+    writeJsonFile(path.join(archiveDir, `${snapshot.date}.json`), payload, true)
+    writeJsonFile(path.join(archiveDir, `${snapshot.date}.min.json`), payload)
   }
 
   for (const [year, yearPayload] of Object.entries(archiveYears)) {
-    fs.writeFileSync(path.join(archiveYearsDir, `${year}.json`), JSON.stringify(yearPayload, null, indent))
-    fs.writeFileSync(path.join(archiveYearsDir, `${year}.min.json`), JSON.stringify(yearPayload))
+    writeJsonFile(path.join(archiveYearsDir, `${year}.json`), yearPayload, true)
+    writeJsonFile(path.join(archiveYearsDir, `${year}.min.json`), yearPayload)
   }
 
   writeCrossRateFiles({
@@ -259,8 +302,8 @@ function writeArtifacts({
       windowDays: historyDays,
       points
     }
-    fs.writeFileSync(path.join(historyDir, `${fromCode}.json`), JSON.stringify(payload, null, indent))
-    fs.writeFileSync(path.join(historyDir, `${fromCode}.min.json`), JSON.stringify(payload))
+    writeJsonFile(path.join(historyDir, `${fromCode}.json`), payload, true)
+    writeJsonFile(path.join(historyDir, `${fromCode}.min.json`), payload)
   }
 }
 
@@ -269,8 +312,8 @@ function writeCrossRateFiles({ outputDir, fromRates, outputShape }) {
     const ratesByTo = computeCrossRates(fromRate, fromRates)
 
     const payload = outputShape(fromCode, ratesByTo)
-    fs.writeFileSync(path.join(outputDir, `${fromCode}.json`), JSON.stringify(payload, null, indent))
-    fs.writeFileSync(path.join(outputDir, `${fromCode}.min.json`), JSON.stringify(payload))
+    writeJsonFile(path.join(outputDir, `${fromCode}.json`), payload, true)
+    writeJsonFile(path.join(outputDir, `${fromCode}.min.json`), payload)
   }
 }
 
@@ -566,5 +609,7 @@ module.exports = {
   significantNum,
   snapshotRetentionDays,
   snapshotArchiveDir,
-  toLowerSorted
+  toLowerSorted,
+  writeJsonFile,
+  writeTextFile
 }
