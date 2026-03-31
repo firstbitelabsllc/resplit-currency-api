@@ -43,6 +43,7 @@ async function withMonitoringModule(env, callback) {
     SENTRY_DSN: process.env.SENTRY_DSN,
     SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT,
     SENTRY_RELEASE: process.env.SENTRY_RELEASE,
+    GITHUB_EVENT_NAME: process.env.GITHUB_EVENT_NAME,
   }
   const originalSentryCache = require.cache[sentryPath]
   const sentryMock = createSentryMock()
@@ -61,6 +62,11 @@ async function withMonitoringModule(env, callback) {
 
   process.env.SENTRY_ENVIRONMENT = env.SENTRY_ENVIRONMENT || 'test'
   process.env.SENTRY_RELEASE = env.SENTRY_RELEASE || 'unit-test'
+  if (env.GITHUB_EVENT_NAME === undefined) {
+    delete process.env.GITHUB_EVENT_NAME
+  } else {
+    process.env.GITHUB_EVENT_NAME = env.GITHUB_EVENT_NAME
+  }
 
   delete require.cache[monitoringPath]
   require.cache[sentryPath] = {
@@ -95,6 +101,7 @@ test('startWorkflowCheckIn prefers SENTRY_CURRENCY_API_DSN when SENTRY_DSN is un
   await withMonitoringModule({
     SENTRY_CURRENCY_API_DSN: 'https://currency@example.ingest.sentry.io/1',
     SENTRY_DSN: undefined,
+    GITHUB_EVENT_NAME: 'schedule',
   }, async ({ monitoring, sentryMock }) => {
     const checkInId = monitoring.startWorkflowCheckIn()
 
@@ -114,6 +121,7 @@ test('finishWorkflowCheckIn no-ops when check-in id is missing', async () => {
   await withMonitoringModule({
     SENTRY_CURRENCY_API_DSN: 'https://currency@example.ingest.sentry.io/1',
     SENTRY_DSN: undefined,
+    GITHUB_EVENT_NAME: 'schedule',
   }, async ({ monitoring, sentryMock }) => {
     const result = await monitoring.finishWorkflowCheckIn(null, 'error', Date.now())
 
@@ -127,6 +135,7 @@ test('finishWorkflowCheckIn completes successfully with the dedicated DSN path',
   await withMonitoringModule({
     SENTRY_CURRENCY_API_DSN: 'https://currency@example.ingest.sentry.io/1',
     SENTRY_DSN: undefined,
+    GITHUB_EVENT_NAME: 'schedule',
   }, async ({ monitoring, sentryMock }) => {
     const startedAt = Date.now() - 1500
     const result = await monitoring.finishWorkflowCheckIn('mock-checkin-id', 'ok', startedAt)
@@ -139,5 +148,32 @@ test('finishWorkflowCheckIn completes successfully with the dedicated DSN path',
     assert.equal(typeof sentryMock.captureCheckInCalls[0].duration, 'number')
     assert.equal(sentryMock.flushCalls.length, 1)
     assert.equal(sentryMock.flushCalls[0], 2000)
+  })
+})
+
+test('startWorkflowCheckIn skips monitor check-ins for workflow_dispatch runs', async () => {
+  await withMonitoringModule({
+    SENTRY_CURRENCY_API_DSN: 'https://currency@example.ingest.sentry.io/1',
+    SENTRY_DSN: undefined,
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+  }, async ({ monitoring, sentryMock }) => {
+    const checkInId = monitoring.startWorkflowCheckIn()
+
+    assert.equal(checkInId, null)
+    assert.equal(sentryMock.captureCheckInCalls.length, 0)
+  })
+})
+
+test('finishWorkflowCheckIn skips monitor completion for workflow_dispatch runs', async () => {
+  await withMonitoringModule({
+    SENTRY_CURRENCY_API_DSN: 'https://currency@example.ingest.sentry.io/1',
+    SENTRY_DSN: undefined,
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+  }, async ({ monitoring, sentryMock }) => {
+    const result = await monitoring.finishWorkflowCheckIn('mock-checkin-id', 'ok', Date.now() - 1500)
+
+    assert.equal(result, false)
+    assert.equal(sentryMock.captureCheckInCalls.length, 0)
+    assert.equal(sentryMock.flushCalls.length, 0)
   })
 })

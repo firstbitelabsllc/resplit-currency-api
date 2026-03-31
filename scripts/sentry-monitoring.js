@@ -21,6 +21,16 @@ const DAILY_PUBLISH_MONITOR_CONFIG = {
 let hasInitializedSentry = false
 const reportedErrors = new WeakSet()
 
+function shouldEmitDailyPublishCheckIn() {
+  const eventName = process.env.GITHUB_EVENT_NAME
+
+  if (!eventName) {
+    return false
+  }
+
+  return eventName === 'schedule'
+}
+
 function resolveDsn() {
   return process.env.SENTRY_CURRENCY_API_DSN || process.env.SENTRY_DSN || null
 }
@@ -232,7 +242,7 @@ async function runMonitoredScript(scriptName, fn, options = {}) {
 }
 
 function startWorkflowCheckIn() {
-  if (!isEnabled()) {
+  if (!isEnabled() || !shouldEmitDailyPublishCheckIn()) {
     return null
   }
 
@@ -247,7 +257,7 @@ function startWorkflowCheckIn() {
 }
 
 async function finishWorkflowCheckIn(checkInId, status, startedAt = Date.now()) {
-  if (!isEnabled()) {
+  if (!isEnabled() || !shouldEmitDailyPublishCheckIn()) {
     return false
   }
 

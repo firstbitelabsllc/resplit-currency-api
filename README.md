@@ -82,7 +82,7 @@ GET https://resplit-currency-api.pages.dev/latest/aed.json
 This repo includes Sentry-based publisher and Worker observability.
 
 - `scripts/sentry-monitoring.js` initializes `@sentry/node` with surface, environment, and release metadata for the publisher workflow.
-- `scripts/sentry-checkin.js` emits cron monitor check-ins for the daily publish workflow.
+- `scripts/sentry-checkin.js` emits cron monitor check-ins for the scheduled daily publish workflow only, so manual `workflow_dispatch` reruns do not create false missed/failure incidents on the daily monitor.
 - `worker/src/monitoring.mjs` initializes `@sentry/cloudflare` for the Worker runtime and tags events with `runtime=worker`.
 - `currscript.js`, `scripts/validate-package.js`, and `scripts/smoke-check-deploy.js` all run through the monitored wrapper and report grouped failures.
 - The GitHub Actions workflow prefers `SENTRY_CURRENCY_API_DSN`, falls back to shared `SENTRY_DSN`, and syncs the chosen DSN into the Worker runtime secret `SENTRY_DSN`.
