@@ -1,5 +1,62 @@
 # Resplit Nurse Log
 
+## 2026-03-31 11:45 EDT
+
+- Launch stays `NO-GO` overall. No repo-owned fix shipped in `resplit-currency-api`; this run was a clean-trunk proof pass plus blocker refresh because FX is green, `www` is freshly deployed, and the remaining launch blockers are still iOS/manual-review/apex-parity owned.
+- Fresh proof this run:
+  - hygiene:
+    - `git worktree list` cleanup removed the stale detached nurse lanes from earlier runs, `.agent-ledger/activity.jsonl` was trimmed from `799` rows to `200`, and merged branch `codex/resplit-nurse-20260331-1033` was deleted
+    - the attached checkout is now even less safe to ship from: `main...origin/main [behind 14]` with local edits under `.codex/hooks.json`, `.cursor/plans/resplit-nurse.log.md`, `currscript.js`, `tests/currscript.test.js`, plus untracked `.playwright-mcp/`
+    - stable clean lane `.worktrees/resplit-nurse-1145` was cut from `origin/main` `244ab017`
+  - FX release-train:
+    - in the clean lane, `npm ci`, `npm run check`, and `npm run smoke:deploy` all passed (`64/64` tests, publish date `2026-03-31`, `historyPoints=30`) and left the lane clean
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` still shows publish `23794156684` `success` and downstream Pages deploy `23794197481` `success`
+    - live FX probes this run:
+      - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://2026-03-31.resplit-currency-api.pages.dev/snapshots/base-rates.json` -> `date=2026-03-31`, `166` rates
+      - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` -> `resolvedDate=2026-03-31`, `rate=0.27229469`, `resolutionKind=exact`
+      - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-31&days=30` -> `mismatchCount=0`, `availableDays=30`
+  - review / dead-code:
+    - `git diff origin/main -- currscript.js tests/currscript.test.js` stayed empty, and `clipdiff origin/main~6..origin/main -- currscript.js tests/currscript.test.js .github/workflows/run.yml` reported `0 modified`
+    - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production` -> `resplit-currency-api.knip` and `resplit-currency-api.knip.production` clean; only `resplit-web` surfaced separate cleanup candidates
+  - web / App Store / iOS perimeter:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_7gCXgaNPDAh5Mm7qvoZ4exQPoM1F`, `Ready`, created `2026-03-31 11:28:56 EDT`
+    - `curl -I -s --max-time 10 https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 200`
+    - `curl -I -s --max-time 10 https://www.resplit.app/join | head -n 1` -> `HTTP/2 200`
+    - `curl -I -s --max-time 10 https://resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 307`
+    - `curl -I -s --max-time 10 https://resplit.app/join | head -n 1` -> `HTTP/2 307`
+    - `curl -s 'https://itunes.apple.com/lookup?id=6466376742&country=us' | jq ...` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+    - release overlay this run: `resplit-currency-api` `already current`, `resplit-web` `already current`, `resplit-ios` `blocked`
+    - `sentry-cli releases info resplit-ios@2.0.0+695` -> release exists and `Last event   | 2026-03-31 14:54:53 UTC`
+    - `/Users/leokwan/Development/resplit-ios` remains an unsafe upload lane at `master...origin/master [ahead 559, behind 56]`, and `ps -axo pid,etime,%cpu,%mem,state,command | rg 'tuist build|xcodebuild test|fastlane ios testflight_upload|capture-marketing-screenshots|Resplit Locale Snapshots' | rg -v 'rg '` found no active build/upload/screenshot owners
+  - feedback / localization / screenshot / architecture truth:
+    - `/Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-feedback.plan.md` now sits at `13 verified`, `13 fixed`, `9 new`, `4 triaged`, `1 blocked` (`27` non-verified rows)
+    - the mapped high-value feedback rows remain `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI`, both still needing manual/device proof on build `695`
+    - `ResplitCore/Resources/Localizable.xcstrings` still shows `de/es/fr/ja/ko/pt-BR/th/zh-Hans = 442 translated / 131 missing`, `it = 0 / 573`
+    - the screenshot lane stays anti-looped on this host: clean-trunk verification still needs Tuist auth/generated `Derived/Sources`, so do not blindly rerun `ja` `03_Share`
+    - dirty-root `PersonSuggestionService` / `PeoplePickerViewModel` is still a non-promotable regression lane: the broader saved-person fallback was collapsed into a bounded recent-window search and the focused exact/fuzzy/off-window protections were removed from dirty-root tests, so role 4/8 remains blocked until a clean-trunk owner re-proves or reverts that surface
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (latest confirmed build remains `695`, build `695` is still receiving traffic, and the attached root is far too dirty/stale for `tuist build 'Resplit Release'` + `fastlane ios testflight_upload`)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/deploy/live FX truth turns red
+  - rerun issue-readable MCP against `RESPLIT-IOS-DD` on build `695`; if it is still the same low-volume share-sheet hang, keep role 3 watch-only and do not cut `696` for observability alone
+  - do one human/manual-device pass on build `695` for `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI`
+  - take a clean `resplit-web` / `resplit-ios` owner for apex-host AASA `/join` parity plus the App Store metadata rename; do not reopen the anti-looped screenshot/bootstrap or PeoplePicker lanes from dirty roots
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; locale coverage is still `131` missing strings in eight launch locales and `573` in `it`, and the attached `xcstrings` state is not trustworthy
+  - `2 App Store Connect Feedback Triage`: `blocked`; `27` non-verified rows remain and the mapped blockers still need manual/device proof on build `695`
+  - `3 Sentry + Seer Error Hunter`: `blocked/watch-only`; build `695` has fresh traffic (`Last event   | 2026-03-31 14:54:53 UTC`) but this client still lacks issue-readable access, so the next honest move is MCP recheck, not a speculative upload
+  - `4 UX Feedback Triage Lead`: `blocked`; the highest-value visible blockers are still manual/device screenshot review, apex-host parity, and the dirty-root PeoplePicker regression lane
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; the FX hot path is trunk-equivalent and no new severity issue surfaced
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is current, but apex AASA `/join` parity is still wrong
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` is clean and the new dead-code findings live in separate `resplit-web` surfaces
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; the attached iOS tree is too dirty/ahead-behind for an honest build/upload lane and the PeoplePicker regression lane is not proof-complete
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot/bootstrap trust remains anti-looped on this host and the highest-value rows still need manual/device review
+  - `10 App Store SEO + Metadata God`: `blocked`; the storefront still says `Resplit - Tip Calculator` `1.8.0` while apex-host parity remains unresolved
+
 ## 2026-03-31 11:04 EDT
 
 - Launch stays `NO-GO` overall. No repo-owned fix shipped in `resplit-currency-api`; this run was a proof-first fast-exit because FX is still green, `www` is current, and the remaining blockers stay on iOS/manual-device review, screenshot trust, apex-domain parity, and storefront drift.
