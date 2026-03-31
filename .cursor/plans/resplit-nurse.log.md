@@ -1,5 +1,32 @@
 # Resplit Nurse Log
 
+## 2026-03-31 02:04 EDT
+
+- Launch stays `NO-GO`. No repo-owned code shipped after the 01:58 checkpoint; the only material state change in this delta pass is that current-build observability is now re-proved red, so the hold is explicitly iOS runtime + manual screenshot closeout, not FX/web ambiguity.
+- Fresh proof this delta run:
+  - `mcp__sentry__search_issues(firstbite-labs/resplit-ios, 'unresolved production issues for release resplit-ios@2.0.0+695 seen in the last 7 days')` -> `1` unresolved issue, `RESPLIT-IOS-DD`
+  - `mcp__sentry__get_sentry_resource(firstbite-labs, RESPLIT-IOS-DD)` -> `Status: unresolved`, `Substatus: ongoing`, `Occurrences: 3`, `Users: 1`, `Last Seen: 2026-03-31T03:57:33Z`, `dist: 695`, app-hang stack ending in `AVCaptureVideoPreviewLayer` / `commitConfiguration`
+  - `mcp__sentry__search_issues(firstbite-labs/resplit-ios, 'unresolved monitor check-in failure issues in production seen in the last 7 days')` -> none
+  - sibling release lane shell proof: `sentry-cli releases info resplit-ios@2.0.0+695` -> real release row, `Last event 2026-03-31 03:57:33 UTC`
+- Release execution status this delta run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked`
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/deploy/live FX truth turns red
+  - from one clean current-`master` `resplit-ios` worktree, triage/fix `RESPLIT-IOS-DD` on build `695` or newer, then close manual `ja` / `AGtLA-kgK8CVsi5rPzzHuAM` / `AILgPoYq0feGqc4wPKfb8MI` screenshot proof before any `tuist build 'Resplit Release'` + `testflight_upload`
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still miss `131` strings each in eight locales and `573` in `it`
+  - `2 App Store Connect Feedback Triage`: `blocked`; manual screenshot/device blockers `AGtLA...` and `AILgPo...` are unchanged
+  - `3 Sentry + Seer Error Hunter`: `blocked`; fresh MCP proof shows unresolved `RESPLIT-IOS-DD` on build `695`
+  - `4 UX Feedback Triage Lead`: `blocked`; runtime hang + screenshot/manual proof still outrank polish
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; incoming `resplit-currency-api` delta remains bounded and low-risk
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is current, but apex still `307` and sibling web/native roots are dirty
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` stayed clean in the production sweep
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; attached iOS root is ahead/behind and not a safe build/upload surface
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot plan still requires manual `ja` review plus `AGtLA...` / `AILgPo...` mapping
+  - `10 App Store SEO + Metadata God`: `blocked`; storefront naming/version drift is still live and English-name upload remains gated
+
 ## 2026-03-31 01:58 EDT
 
 - Launch stays `NO-GO`. No repo-owned code shipped in `resplit-currency-api`; this run re-proved clean `origin/main`, confirmed a newer live web deploy, and narrowed the remaining red back to the dirty iOS/App Store closeout surfaces outside this repo.
