@@ -1,5 +1,47 @@
 # Resplit Nurse Log
 
+## 2026-03-30 23:53 EDT
+
+- Launch stays `NO-GO`. No new repo-owned product fix shipped in this pass because `resplit-currency-api` is already green on current trunk and the remaining blockers are outside this repo: manual App Store screenshot verification on build `695`, storefront metadata drift, localization debt, and dirty-root iOS release discipline.
+- Fresh proof this run:
+  - release-train:
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 6 --json ...` -> repaired-trunk dispatch `23778301987` (`59e629db`) is `success`, and downstream Pages deploy `23778328712` is `success`
+    - `gh run view 23778296632 --repo firstbitelabsllc/resplit-currency-api --log-failed` -> older manual dispatch on `f955a6ca` failed only on `git push` (`main -> main (fetch first)`) after trunk moved; treat as a transient fast-forward race, not a new product red
+    - live FX probes this run:
+      - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` -> `resolvedDate=2026-03-31`, `rate=0.27229469`, `resolutionKind=exact`
+      - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-31&days=30` -> `mismatchCount=0`
+  - repo-state correction:
+    - attached canonical checkout is `main...origin/main [behind 2]` with user-owned `.codex/hooks.json` plus stale local edits, but `git diff --exit-code origin/main -- currscript.js tests/currscript.test.js` returned `0`; do not keep treating the `currscript` surface as an unlanded local hot lane
+    - `origin/main` already carries both `f955a6ca` (`fix: ignore manual FX publish monitor checkins`) and `59e629db` (`fix: harden package promotion rollback`)
+  - web / App Store / iOS perimeter:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_BaxdzQLb8DAWsdSLSFbpj8cgYaiz`, `Ready`, aliased to both `https://www.resplit.app` and `https://resplit.app`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` + `/join` -> `HTTP/2 200`; bare apex still `HTTP/2 307`
+    - `curl -s 'https://itunes.apple.com/lookup?id=6466376742&country=us' | jq ...` -> storefront still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+    - `/Users/leokwan/Development/resplit-ios` remains an unsafe upload root: `master...origin/master [ahead 559, behind 13]` with broad native / screenshot / Fastlane / web edits
+    - issue-readable Sentry proof now shows no unresolved production issues for `resplit-ios@2.0.0+695` in the last 7 days, `RESPLIT-IOS-DB` is resolved, and no unresolved monitor failures were found; observability is no longer the honest launch blocker
+    - `.cursor/plans/app-store-feedback.plan.md` and `.cursor/plans/app-store-screenshots.plan.md` both point to the same next gate: manual review / mapping for `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI` on build `695`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current` (repaired-trunk dispatch `23778301987` + Pages deploy `23778328712` both green)
+  - `resplit-web`: `already current` (`dpl_BaxdzQLb8DAWsdSLSFbpj8cgYaiz` live; apex parity still `307` outside repo-code scope)
+  - `resplit-ios`: `blocked` (dirty attached root, manual screenshot/build verification still pending, metadata/localization closeout still live)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/deploy/live FX truth turns red again
+  - one clean reviewer manually verifies `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI` against TestFlight build `695`
+  - only if that review finds a concrete runtime defect should a new product lane open; otherwise move to the gated metadata/localization closeout from a clean current-trunk iOS lane
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still have large missing-string debt, but screenshot/manual verification on build `695` is the nearer gate
+  - `2 App Store Connect Feedback Triage`: `blocked`; `AGtLA...` and `AILgPo...` still need exact current-build verification
+  - `3 Sentry + Seer Error Hunter`: `no-op with proof`; build `695` is issue-quiet and `RESPLIT-IOS-DB` is resolved
+  - `4 UX Feedback Triage Lead`: `blocked`; screenshot/manual review plus the dirty people-search lane still outrank polish-only work
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; the apparent `currscript` red is stale-checkout drift, not a new regression
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; web deploy is current, but apex parity and dirty web/native roots remain
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` remains clean and web cleanup is a separate broad lane
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; attached iOS root is ahead/behind and broadly dirty, so it is not a safe build/upload surface
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; manual `ja`/feedback review is still the next honest proof step
+  - `10 App Store SEO + Metadata God`: `blocked`; storefront naming/version drift is still live and English-name upload remains gated
+
 ## 2026-03-30 22:57 EDT
 
 - Launch stays `NO-GO` overall, but this repo shipped a real trunk fix: `promoteBuildOutput` now stages artifacts outside `package/`, restores the previous tree after partial promotion failures, and fails hard if backup cleanup still leaks after a successful swap. This closes the repo-owned promotion-path red surfaced by review; `resplit-currency-api` remains `GO`.
