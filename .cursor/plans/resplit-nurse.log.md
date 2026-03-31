@@ -14,11 +14,13 @@
     - do not treat the first `npm run check` red in this run as repo truth; it was caused by my own bad lane discipline while `npm run smoke:deploy` was running in parallel against the same generated surface
     - `npm run smoke:deploy` -> passed (`date=2026-03-31`, `historyPoints=30`)
     - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 6 --json ...` -> latest March 31 train is still current: publish `23775122167` `success`, downstream Pages deploy `23775151196` `success`, redundant manual dispatch `23775152816` `cancelled`
+    - same-day local regen drift is not a live red: rerunning `npm run check` changed `snapshot-archive/2026-03-31.json`, but a direct compare against `HEAD` plus `https://2026-03-31.resplit-currency-api.pages.dev/snapshots/base-rates.json` proved `live_equals_head=true`, `live_equals_local=false`
   - live surface truth:
     - `https://resplit-currency-api.pages.dev/latest/aed.json`, `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`, and `https://2026-03-31.resplit-currency-api.pages.dev/snapshots/base-rates.json` all remain live for `2026-03-31`
     - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` still resolves exact March 31 data, and `npm run smoke:deploy` kept worker coverage exact for 30 days
     - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_6oJkrt1sPz6HEPdA7YNN4vFi4St4`, `Ready`, created `2026-03-30 21:46:16 EDT`
-    - apex and `www` deep-link surfaces are now both `HTTP 200` (apex resolves through `www`)
+    - `https://www.resplit.app/.well-known/apple-app-site-association` and `https://www.resplit.app/join` -> `HTTP/2 200`
+    - `https://resplit.app/.well-known/apple-app-site-association` and `https://resplit.app/join` -> `HTTP/2 307`
     - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
   - iOS / ASC / screenshot / localization truth:
     - `/Users/leokwan/Development/resplit-ios` is now `master...origin/master [behind 136]` and still broadly dirty across native, screenshot, Fastlane, and embedded-web files; not a safe build/upload surface
@@ -31,7 +33,7 @@
     - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production` -> `resplit-currency-api` clean; only external `resplit-web` cleanup candidates remain
 - Release execution status this run:
   - `resplit-currency-api`: `already current`
-  - `resplit-web`: `already current` (new production deploy `dpl_6oJkrt1sPz6HEPdA7YNN4vFi4St4` is ready on both apex and `www`)
+  - `resplit-web`: `already current` (new production deploy `dpl_6oJkrt1sPz6HEPdA7YNN4vFi4St4` is ready on `www`; apex still redirects with `307`)
   - `resplit-ios`: `blocked` (`RESPLIT-IOS-F0` unresolved on current build `679`, and the attached checkout is too dirty/stale for an honest `tuist build 'Resplit Release'` + `fastlane ios testflight_upload` lane)
 - Exact next slice:
   - keep `resplit-currency-api` on fast-exit unless the March 31 publish/live worker truth turns red
