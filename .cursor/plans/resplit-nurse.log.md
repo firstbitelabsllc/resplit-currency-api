@@ -1,5 +1,53 @@
 # Resplit Nurse Log
 
+## 2026-03-30 21:54 EDT
+
+- Launch stays `NO-GO`. No new repo-owned product fix shipped in `resplit-currency-api`; this run re-proved the FX train is green on current trunk and confirmed a newer production web deploy is already live. The remaining release hold is still external iOS/App Store health: `RESPLIT-IOS-F0` on current TestFlight build `679`, open ASC/screenshot/localization debt, and public storefront metadata drift.
+- Fresh proof this run:
+  - hygiene:
+    - `git worktree list` -> only the canonical `main` checkout
+    - `find /private/tmp -maxdepth 1 -type d -name 'resplit-*' -mtime +1` -> no stale temp roots
+    - `.agent-ledger/activity.jsonl` trimmed from `714` entries to `200`
+    - `git branch --merged main --format='%(refname:short)' | rg '^codex/'` -> no merged `codex/*` branches to delete
+  - FX release-train:
+    - `npm run check` -> passed when rerun serially (`55/55` tests, `validate-package: OK`, publish date `2026-03-31`)
+    - do not treat the first `npm run check` red in this run as repo truth; it was caused by my own bad lane discipline while `npm run smoke:deploy` was running in parallel against the same generated surface
+    - `npm run smoke:deploy` -> passed (`date=2026-03-31`, `historyPoints=30`)
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 6 --json ...` -> latest March 31 train is still current: publish `23775122167` `success`, downstream Pages deploy `23775151196` `success`, redundant manual dispatch `23775152816` `cancelled`
+  - live surface truth:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json`, `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json`, and `https://2026-03-31.resplit-currency-api.pages.dev/snapshots/base-rates.json` all remain live for `2026-03-31`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` still resolves exact March 31 data, and `npm run smoke:deploy` kept worker coverage exact for 30 days
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_6oJkrt1sPz6HEPdA7YNN4vFi4St4`, `Ready`, created `2026-03-30 21:46:16 EDT`
+    - apex and `www` deep-link surfaces are now both `HTTP 200` (apex resolves through `www`)
+    - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+  - iOS / ASC / screenshot / localization truth:
+    - `/Users/leokwan/Development/resplit-ios` is now `master...origin/master [behind 136]` and still broadly dirty across native, screenshot, Fastlane, and embedded-web files; not a safe build/upload surface
+    - `.cursor/plans/sentry-dev-loop.plan.md` still pins `RESPLIT-IOS-F0` to current release `resplit-ios@2.0.0+679`
+    - `.cursor/plans/app-store-feedback.plan.md` currently counts `26` non-verified rows (`11 new`, `11 fixed`, `2 blocked`, `1 triaged`, `1 claimed`) plus `13` verified
+    - `ResplitCore/Resources/Localizable.xcstrings` still shows `131` missing strings for `de/es/fr/ja/ko/pt-BR/th/zh-Hans` and `573` for `it`
+    - `.cursor/plans/app-store-screenshots.plan.md` still points at manual `ja` review plus `AILgPoYq0feGqc4wPKfb8MI` / `AGtLA-kgK8CVsi5rPzzHuAM`; do not reopen the repeated `AEmN9VGxamkiZSH6QEYpCck` loop from nurse
+  - review / drift:
+    - `source ~/.zshrc; clipdiff HEAD~8..HEAD -- currscript.js tests/currscript.test.js` produced no new code delta beyond the already-shipped FX slice
+    - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production` -> `resplit-currency-api` clean; only external `resplit-web` cleanup candidates remain
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current` (new production deploy `dpl_6oJkrt1sPz6HEPdA7YNN4vFi4St4` is ready on both apex and `www`)
+  - `resplit-ios`: `blocked` (`RESPLIT-IOS-F0` unresolved on current build `679`, and the attached checkout is too dirty/stale for an honest `tuist build 'Resplit Release'` + `fastlane ios testflight_upload` lane)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless the March 31 publish/live worker truth turns red
+  - from one clean current-`master` `resplit-ios` worktree, take the camera teardown lane for `RESPLIT-IOS-F0`; only if that is already owned elsewhere should the next nurse lane switch to manual `ja` screenshot review and mapping `AILgPo...` / `AGtLA...`
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still miss `131` strings each and `it` still misses `573`
+  - `2 App Store Connect Feedback Triage`: `blocked`; `26` non-verified feedback rows remain open in the plan
+  - `3 Sentry + Seer Error Hunter`: `blocked`; `RESPLIT-IOS-F0` is still the current-build runtime blocker
+  - `4 UX Feedback Triage Lead`: `blocked`; the camera-dismiss hang still outranks screenshot polish
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; no new repo-owned severity finding surfaced
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; web deploy is current, but embedded-web + storefront parity still drift from the current product story
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` is clean and web cleanup is external
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; no safe clean-trunk iOS build/upload lane exists from the attached root
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; next move is manual `ja` review plus exact screenshot complaint mapping
+  - `10 App Store SEO + Metadata God`: `blocked`; public storefront name/version still lag the intended launch metadata
+
 ## 2026-03-30 20:55 EDT
 
 - Launch stays `NO-GO` overall, but this repo did move one real release slice: the March 31 FX train is now current again on trunk and live surfaces after the scheduled publish completed during this run. The top blocker is still external iOS release health: `RESPLIT-IOS-F0` remains the only unresolved production issue tied to current TestFlight build `679`, while the attached `resplit-ios` / embedded `resplit-web` checkout is still dirty and `behind 132`.
