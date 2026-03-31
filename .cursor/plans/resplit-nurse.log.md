@@ -1,5 +1,118 @@
 # Resplit Nurse Log
 
+## 2026-03-30 22:52 EDT
+
+- Launch stays `NO-GO` overall. No repo-owned product code shipped in `resplit-currency-api`; this run corrected stale release-room assumptions and re-proved the FX train after the room moved again.
+- Fresh proof this run:
+  - hygiene:
+    - `git worktree remove /private/tmp/resplit-currency-api-nurse-fix-20260331` removed the stale detached nurse lane; `git worktree list --porcelain` now shows only the canonical `main` checkout
+    - `.agent-ledger/activity.jsonl` trimmed from `720` entries to `200`
+    - `find /private/tmp -maxdepth 1 -type d -name 'resplit-*' -mtime +1` -> no stale temp roots older than 24h
+    - `git branch --merged main --format='%(refname:short)' | rg '^codex/'` -> no merged `codex/*` branches to delete
+  - FX release-train:
+    - `npm run check` -> passed (`58/58` tests, `validate-package: OK`, publish date `2026-03-31`)
+    - `npm run smoke:deploy` -> passed (`date=2026-03-31`, `historyPoints=30`)
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` -> latest publish `23777526441` and downstream Pages deploy `23777554746` both `success`
+    - live FX probes this run:
+      - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` -> `resolvedDate=2026-03-31`, `rate=0.27229469`, `resolutionKind=exact`
+      - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-31&days=30` -> `mismatchCount=0`
+  - web / App Store / iOS perimeter:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_5tpro5c57SxAMvmgC9aUai5JgM2d`, `Ready`, created `2026-03-30 22:24:43 EDT`, aliased to both `https://www.resplit.app` and `https://resplit.app`
+    - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 200`
+    - `curl -I -s https://www.resplit.app/join | head -n 1` -> `HTTP/2 200`
+    - `curl -I -s https://resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 307`
+    - `curl -I -s https://resplit.app/join | head -n 1` -> `HTTP/2 307`
+    - `/Users/leokwan/Development/resplit-ios` attached root is now even less safe as a ship surface than the prior checkpoint said: `master...origin/master [ahead 559, behind 9]` with broad native / screenshot / Fastlane / web edits
+    - `sentry-cli releases info 'resplit-ios@2.0.0+695'` now returns a real release object (`Date created 2026-03-31 02:03:44 UTC`), so the earlier `No such release` blocker is stale
+    - `sentry-cli monitors list` still returns `HTTP 403`, and the repo plan still documents direct unresolved-issue access as `HTTP 403`, so this client still cannot honestly clear unresolved issue groups or monitor truth on the newest build
+    - `curl -s 'https://itunes.apple.com/lookup?id=6466376742&country=us' | jq ...` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+    - `fastlane/metadata/en-US/name.txt` still says `Resplit`, but `fastlane/Fastfile` still gates English-name upload behind `ASC_UPLOAD_ENGLISH_NAME=1`
+    - `ResplitCore/Resources/Localizable.xcstrings` still shows `de/es/fr/ja/ko/pt-BR/zh-Hans/th = 442 translated / 131 missing`, `it = 0 / 573`
+    - `app-store-screenshots.plan.md` still says the next honest screenshot move is manual `ja` review plus mapping `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI`
+  - review / drift:
+    - `clipdiff HEAD~8..HEAD -- currscript.js tests/currscript.test.js .cursor/plans/resplit-nurse.log.md` -> recent repo delta is still bounded to the shipped FX generator/test slice plus nurse checkpoints
+    - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production` -> `resplit-currency-api` clean; `resplit-web` still reports separate cleanup candidates only
+    - the dirty-root people-search lane is still not safe to bless from this nurse pass: `git -C /Users/leokwan/Development/resplit-ios diff --stat -- ResplitCore/Managers/PersonSuggestionService.swift ResplitCore/UI/LiveSplit/PeoplePickerViewModel.swift ResplitCoreTests/PeoplePickerViewModelTests.swift ResplitCoreTests/PersonSuggestionServiceTests.swift` -> `4 files changed, 407 insertions(+), 54 deletions(-)`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (attached root is `ahead 559, behind 9` and broadly dirty; build `695` now has a Sentry release object, but direct issue/monitor truth is still blocked by `403` scopes)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless the publish/deploy/live FX truth turns red
+  - from one clean current-`master` `resplit-ios` lane, manually verify `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI` on TestFlight build `695` before opening another product lane
+  - in parallel to that clean native lane, resolve issue-readable Sentry / monitor access for build `695` and `RESPLIT-IOS-DB`; do not keep repeating the stale `No such release` story
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still miss `131` strings each in eight tracked locales and `573` in `it`
+  - `2 App Store Connect Feedback Triage`: `blocked`; open ASC rows still need either screenshot mapping or current-valid-build verification
+  - `3 Sentry + Seer Error Hunter`: `blocked`; build `695` now has a release object, but unresolved-issue and monitor reads still fail under the current scopes
+  - `4 UX Feedback Triage Lead`: `blocked`; screenshot/manual-review queue plus the large dirty-root people-search diff still outrank polish-only work
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; no new `resplit-currency-api` severity finding surfaced in the bounded recent delta
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; web deploy is current, but apex still `307` and the embedded web/native root remains dirty
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` stayed clean in the production sweep
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; attached `resplit-ios` root is ahead/behind and the hot people-search diff is not proof-complete
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot closeout still needs manual `ja` review and complaint-to-surface mapping
+  - `10 App Store SEO + Metadata God`: `blocked`; storefront still says `Resplit - Tip Calculator` `1.8.0`, and English-name upload remains explicitly gated
+
+## 2026-03-30 21:55 EDT
+
+- Launch stays `NO-GO` overall. No repo-owned code shipped in `resplit-currency-api`; this run was a fresh release-room proof sweep plus coordination checkpoint. `resplit-currency-api` remains `GO`.
+- Fresh proof this run:
+  - hygiene:
+    - `git worktree list` -> only the canonical `main` checkout
+    - `find /private/tmp -maxdepth 1 -type d -name 'resplit-*' -mtime +1` -> no stale temp roots
+    - `.agent-ledger/activity.jsonl` trimmed from `714` entries to `200`
+    - `git branch --merged main | rg '^codex/'` -> no merged `codex/*` branches to delete
+  - FX release-train:
+    - `npm run check` -> passed (`55/55` tests, `Snapshot window: 363 days (362 local, 0 network)`)
+    - `npm run smoke:deploy` -> passed (`date=2026-03-31`, `historyPoints=30`)
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` -> latest publish `23775122167` and downstream Pages deploy `23775151196` both `success`; only the redundant manual dispatch `23775152816` is `cancelled`
+    - live FX probes this run:
+      - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-31`, `166` rates
+      - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` -> `resolvedDate=2026-03-31`, `rate=0.27229318`, `resolutionKind=exact`
+      - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-31&days=30` -> `mismatchCount=0`
+    - local `snapshot-archive/2026-03-31.json` regenerated during `npm run check`, but hosted Pages was already on the same UTC date; treated as same-day upstream-rate noise per `release-train` guidance and not as a repo red
+  - web / App Store / iOS perimeter:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_6oJkrt1sPz6HEPdA7YNN4vFi4St4`, `Ready`, created `2026-03-30 21:46:16 EDT`, aliased to both `https://www.resplit.app` and `https://resplit.app`
+    - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 200`
+    - `curl -I -s https://www.resplit.app/join | head -n 1` -> `HTTP/2 200`
+    - `curl -I -s https://resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 307`
+    - `curl -I -s https://resplit.app/join | head -n 1` -> `HTTP/2 307`
+    - `/Users/leokwan/Development/resplit-ios` attached root is still not a safe ship surface: `master...origin/master [behind 136]` with broad native / screenshot / Fastlane / web edits
+    - `git -C /Users/leokwan/Development/resplit-ios rev-list --count 479ac1bc` and `git -C /Users/leokwan/Development/resplit-ios rev-list --count origin/master` -> both `695`; current upstream native trunk now includes `479ac1bc` (`fix: defer camera preview teardown off dismissal path`)
+    - direct ASC API-key query this run via `ruby -e 'require "spaceship"; Spaceship::ConnectAPI.token = ...; Spaceship::ConnectAPI::Build.all(...)'` -> newest valid build `695 | 2026-03-30T18:50:29-07:00 | VALID | false`
+    - `sentry-cli releases info 'resplit-ios@2.0.0+695'` -> `No such release`
+    - direct Sentry issues API for `release:resplit-ios@2.0.0+695` still returns `403`, so this client still cannot honestly clear unresolved issue groups on the newest build
+    - `curl -s 'https://itunes.apple.com/lookup?id=6466376742&country=us' | jq ...` -> storefront still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+    - `fastlane/metadata/en-US/name.txt` still says `Resplit`, but `fastlane/Fastfile` still gates English-name upload behind `ASC_UPLOAD_ENGLISH_NAME=1`
+    - `ResplitCore/Resources/Localizable.xcstrings` still shows `de/es/fr/ja/ko/pt-BR/zh-Hans/th = 442 translated / 131 missing`, `it = 0 / 573`
+    - `app-store-screenshots.plan.md` still says the next honest screenshot move is manual `ja` review plus mapping `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI`, not another blind rerun
+  - review / drift:
+    - `source ~/.zshrc >/dev/null 2>&1 && clipdiff HEAD~8..HEAD -- currscript.js tests/currscript.test.js .cursor/plans/resplit-nurse.log.md` -> current repo delta is checkpoint churn only under `.cursor`
+    - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production` -> `resplit-currency-api` clean; `resplit-web` still reports separate cleanup candidates only
+    - parallel read-only audit lanes flagged one dirty-root risk worth carrying forward, not shipping from this root: people search now appears capped to the recent-50 window in attached `resplit-ios` edits (`PersonSuggestionService` / `PeoplePickerViewModel`) without focused proof for older saved exact matches
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (latest valid build `695` exists and upstream trunk now carries the camera-preview teardown fix, but the attached root is dirty / behind, the newest build still has no Sentry release object, and direct unresolved-issue reads still fail `403`)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless the publish/deploy/live FX truth turns red
+  - from one clean current-`master` `resplit-ios` lane, verify build `695` against the camera-teardown fix boundary (`479ac1bc`) and only then decide whether a fresh `tuist build 'Resplit Release'` + `fastlane ios testflight_upload` is justified
+  - in parallel to that clean native lane, take the screenshot/manual-review queue exactly as planned: `ja` review first, then map `AGtLA-kgK8CVsi5rPzzHuAM`, then `AILgPoYq0feGqc4wPKfb8MI`
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still miss `131` strings each in eight tracked locales and `573` in `it`
+  - `2 App Store Connect Feedback Triage`: `blocked`; open ASC rows still need either screenshot mapping or current-valid-build verification
+  - `3 Sentry + Seer Error Hunter`: `blocked`; newest valid iOS build is `695`, but this client still cannot prove unresolved issue truth on that build (`No such release` + issues API `403`)
+  - `4 UX Feedback Triage Lead`: `blocked`; screenshot/manual-review queue plus dirty-root people-search risk still outrank polish-only work
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; current repo diff is checkpoint-only, and no new severity issue surfaced in `resplit-currency-api`
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; web deploy is current, but apex still `307` and the embedded web/native root remains dirty
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` stayed clean in the production sweep
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; attached `resplit-ios` root is not a disciplined build/upload surface, and dirty-root search changes are not proof-complete
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot closeout still needs manual `ja` review and complaint-to-surface mapping
+  - `10 App Store SEO + Metadata God`: `blocked`; storefront still says `Resplit - Tip Calculator` `1.8.0`, and English-name upload remains explicitly gated
+
 ## 2026-03-30 21:54 EDT
 
 - Launch stays `NO-GO`. No new repo-owned product fix shipped in `resplit-currency-api`; this run re-proved the FX train is green on current trunk and confirmed a newer production web deploy is already live. The remaining release hold is still external iOS/App Store health: `RESPLIT-IOS-F0` on current TestFlight build `679`, open ASC/screenshot/localization debt, and public storefront metadata drift.
