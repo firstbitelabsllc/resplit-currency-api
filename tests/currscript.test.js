@@ -1,9 +1,11 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('fs-extra')
+const os = require('os')
 const path = require('path')
 
 const {
+  bestEffortRemoveDir,
   buildArchiveManifest,
   buildArchiveYearPayloads,
   buildSnapshotWindow,
@@ -13,6 +15,7 @@ const {
   loadAllSnapshotsFromArchive,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
+  promoteBuildOutput,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
@@ -180,6 +183,82 @@ test('buildSnapshotWindow anchors history fetches to the provided publish date',
     snapshots.map((snapshot) => snapshot.date),
     ['2026-03-23', '2026-03-24', '2026-03-25']
   )
+})
+
+test('promoteBuildOutput swaps staged files into place', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-'))
+  const destinationRoot = path.join(tempRoot, 'package')
+  const backupRoot = path.join(tempRoot, 'package.backup')
+
+  t.after(() => {
+    fs.removeSync(tempRoot)
+  })
+
+  fs.mkdirpSync(destinationRoot)
+  fs.writeFileSync(path.join(destinationRoot, 'stale.txt'), 'stale')
+
+  promoteBuildOutput({
+    destinationRoot,
+    backupRoot,
+    build: (root) => {
+      fs.writeFileSync(path.join(root, 'fresh.txt'), 'fresh')
+    }
+  })
+
+  assert.equal(fs.readFileSync(path.join(destinationRoot, 'fresh.txt'), 'utf8'), 'fresh')
+  assert.equal(fs.existsSync(path.join(destinationRoot, 'stale.txt')), false)
+  assert.equal(fs.existsSync(backupRoot), false)
+})
+
+test('promoteBuildOutput restores the previous output when staging fails', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-fail-'))
+  const destinationRoot = path.join(tempRoot, 'package')
+  const backupRoot = path.join(tempRoot, 'package.backup')
+
+  t.after(() => {
+    fs.removeSync(tempRoot)
+  })
+
+  fs.mkdirpSync(destinationRoot)
+  fs.writeFileSync(path.join(destinationRoot, 'stale.txt'), 'stale')
+
+  assert.throws(() => {
+    promoteBuildOutput({
+      destinationRoot,
+      backupRoot,
+      build: (root) => {
+        fs.writeFileSync(path.join(root, 'partial.txt'), 'partial')
+        throw new Error('build failed')
+      }
+    })
+  }, /build failed/)
+
+  assert.equal(fs.readFileSync(path.join(destinationRoot, 'stale.txt'), 'utf8'), 'stale')
+  assert.equal(fs.existsSync(path.join(destinationRoot, 'partial.txt')), false)
+  assert.equal(fs.existsSync(backupRoot), false)
+})
+
+test('bestEffortRemoveDir tolerates transient cleanup failures', () => {
+  let attempts = 0
+  let exists = true
+
+  const removed = bestEffortRemoveDir({
+    dirPath: '/tmp/fake-dir',
+    pathExists: () => exists,
+    removeDir: () => {
+      attempts += 1
+      if (attempts < 3) {
+        const error = new Error('busy')
+        error.code = 'ENOTEMPTY'
+        throw error
+      }
+      exists = false
+    },
+    warn: () => {}
+  })
+
+  assert.equal(removed, true)
+  assert.equal(attempts, 3)
 })
 
 test('loadAllSnapshotsFromArchive returns sorted immutable archive snapshots', (t) => {

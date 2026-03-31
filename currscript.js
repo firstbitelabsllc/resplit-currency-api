@@ -61,21 +61,97 @@ async function main() {
     throw error
   }
 
-  fs.mkdirpSync(rootDir)
-  fs.emptyDirSync(rootDir)
-
-  writeArtifacts({
-    root: rootDir,
-    dateToday,
-    latestRates,
-    archiveSnapshots,
-    historySnapshots
+  promoteBuildOutput({
+    destinationRoot: rootDir,
+    backupRoot: path.join(__dirname, `.package-backup-${process.pid}-${Date.now()}`),
+    build: (root) => {
+      writeArtifacts({
+        root,
+        dateToday,
+        latestRates,
+        archiveSnapshots,
+        historySnapshots
+      })
+      writeRootPackageMetadata({ root, dateToday })
+      fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(root, 'country.json'))
+    }
   })
-  writeRootPackageMetadata({ root: rootDir, dateToday })
-
-  fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(rootDir, 'country.json'))
 
   console.log(`Generated unversioned files in ${rootDir}`)
+}
+
+function promoteBuildOutput({
+  destinationRoot,
+  backupRoot,
+  build,
+  pathExists = fs.existsSync,
+  ensureDir = fs.mkdirpSync,
+  moveDir = (source, destination) => fs.moveSync(source, destination, { overwrite: false }),
+  removeDir = fs.removeSync,
+  warn = console.warn
+}) {
+  let destinationBackedUp = false
+  let promoted = false
+
+  try {
+    if (pathExists(destinationRoot)) {
+      moveDir(destinationRoot, backupRoot)
+      destinationBackedUp = true
+    }
+
+    ensureDir(destinationRoot)
+    build(destinationRoot)
+    promoted = true
+  } catch (error) {
+    bestEffortRemoveDir({
+      dirPath: destinationRoot,
+      pathExists,
+      removeDir,
+      warn
+    })
+
+    if (destinationBackedUp && !pathExists(destinationRoot) && pathExists(backupRoot)) {
+      moveDir(backupRoot, destinationRoot)
+      destinationBackedUp = false
+    }
+    throw error
+  } finally {
+    if (promoted && destinationBackedUp) {
+      bestEffortRemoveDir({
+        dirPath: backupRoot,
+        pathExists,
+        removeDir,
+        warn
+      })
+    }
+  }
+}
+
+function bestEffortRemoveDir({
+  dirPath,
+  pathExists = fs.existsSync,
+  removeDir = fs.removeSync,
+  warn = console.warn,
+  attempts = 3
+}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (!pathExists(dirPath)) {
+      return true
+    }
+
+    try {
+      removeDir(dirPath)
+      return true
+    } catch (error) {
+      const isTransient = ['EBUSY', 'EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error?.code)
+      if (!isTransient || attempt === attempts) {
+        warn(`Skipped cleanup for ${dirPath}: ${error.message}`)
+        return false
+      }
+    }
+  }
+
+  return false
 }
 
 function writeRootPackageMetadata({ root, dateToday }) {
@@ -474,6 +550,7 @@ function buildArchiveManifest({ availableDates, latestRates, generatedAt }) {
 }
 
 module.exports = {
+  bestEffortRemoveDir,
   buildArchiveManifest,
   buildArchiveYearPayloads,
   buildSnapshotWindow,
@@ -483,6 +560,7 @@ module.exports = {
   listSnapshotArchiveDates,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
+  promoteBuildOutput,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
