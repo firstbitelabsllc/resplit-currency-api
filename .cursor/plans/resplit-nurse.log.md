@@ -1,5 +1,65 @@
 # Resplit Nurse Log
 
+## 2026-03-30 20:55 EDT
+
+- Launch stays `NO-GO` overall, but this repo did move one real release slice: the March 31 FX train is now current again on trunk and live surfaces after the scheduled publish completed during this run. The top blocker is still external iOS release health: `RESPLIT-IOS-F0` remains the only unresolved production issue tied to current TestFlight build `679`, while the attached `resplit-ios` / embedded `resplit-web` checkout is still dirty and `behind 132`.
+- Fresh proof this run:
+  - hygiene:
+    - `git worktree list` -> only the canonical `main` checkout
+    - `find /private/tmp -maxdepth 1 -type d -name 'resplit-*' -mtime +1` -> no stale temp roots
+    - `.agent-ledger/activity.jsonl` trimmed from `758` entries to `200`
+    - `git branch --merged origin/main | rg '^codex/'` -> no merged `codex/*` branches to delete
+  - FX release-train:
+    - `npm run check` -> passed (`55/55` tests, `Snapshot window: 363 days (362 local, 0 network)`); local regen proved `2026-03-31` data was available before the hosted train caught up
+    - `npm run smoke:deploy` -> passed before the rollover (`date=2026-03-30`, `historyPoints=30`)
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` first showed no March 31 publish yet, then during this run the scheduled publish `23775122167` completed `success` at `2026-03-31T00:53:16Z`
+    - downstream Pages deploy `23775151196` completed `success` at `2026-03-31T00:53:40Z`
+    - redundant manual dispatch `23775152816` was immediately canceled once the scheduled run had clearly taken ownership; final state `cancelled` at `2026-03-31T00:53:44Z`
+  - live FX probes after the March 31 deploy:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-03-31`, `166` rates
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-03-31`, `166` rates
+    - `https://2026-03-31.resplit-currency-api.pages.dev/snapshots/base-rates.json` -> `HTTP/2 200`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-03-31` -> `resolvedDate=2026-03-31`, `rate=0.27229318`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-03-31&days=30` -> `mismatchCount=0`
+  - code review / drift:
+    - `git log --oneline -n 8` + `git diff --stat HEAD~8..HEAD` -> only the shipped backfill fix (`currscript.js`, `tests/currscript.test.js`) plus nurse checkpoints
+    - `source ~/.zshrc; clipdiff HEAD~8..HEAD -- currscript.js tests/currscript.test.js` -> bounded two-file delta (`+27/-12`)
+    - `bash /Users/leokwan/Development/ai/skills/hooks/scripts/run_resplit_dead_code.sh --production` -> clean for `resplit-currency-api`; embedded web still reports cleanup candidates only
+  - iOS / ASC / screenshot / metadata truth:
+    - `/Users/leokwan/Development/resplit-ios` -> `master...origin/master [behind 132]` with broad native, screenshot, Fastlane, and embedded-web edits; not a safe ship surface
+    - `/Users/leokwan/Development/resplit-ios/.cursor/plans/sentry-dev-loop.plan.md` still pins `RESPLIT-IOS-F0` to `resplit-ios@2.0.0+679`, culprit `closure in RealCameraStrategy.removePreviewSurface`, last production event `2026-03-30T22:22:17Z`
+    - `/Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-feedback.plan.md` still carries `26` non-verified rows (`11 new`, `1 triaged`, `11 fixed`, `2 blocked`, `1 claimed`) plus `13` verified rows
+    - `/Users/leokwan/Development/resplit-ios/ResplitCore/Resources/Localizable.xcstrings` still shows `de/es/fr/ja/ko/pt-BR/zh-Hans = 442 translated / 131 missing`, `th = 442 / 131`, `it = 0 / 573`
+    - `ps -axo pid,etime,%cpu,%mem,state,command | rg 'tuist build|xcodebuild test|fastlane ios testflight_upload|capture-marketing-screenshots|Resplit Locale Snapshots' | rg -v 'rg '` -> no active build/upload/screenshot owners at check time
+    - `/Users/leokwan/Development/resplit-ios/fastlane/metadata/en-US/name.txt` still says `Resplit`, but `fastlane/Fastfile` keeps English-name upload gated behind `ASC_UPLOAD_ENGLISH_NAME=1`
+    - `https://itunes.apple.com/lookup?id=6466376742&country=us` still reports `trackName="Resplit - Tip Calculator"` and `version="1.8.0"`
+  - web parity / deploy truth:
+    - there is still no standalone `/Users/leokwan/Development/resplit-web` checkout; the canonical accessible web root remains `/Users/leokwan/Development/resplit-ios/resplit-web`
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_CAeRCs7MnHv7pFrFWiC2fCXQau7E`, `Ready`, created `2026-03-30 19:55:37 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 200`
+    - `https://www.resplit.app/join` -> `HTTP/2 200`
+    - `https://resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 307`
+    - `https://resplit.app/join` -> `HTTP/2 307`
+- Release execution status this run:
+  - `resplit-currency-api`: `kicked off` (scheduled publish `23775122167` + downstream Pages deploy `23775151196` both completed successfully during this run; redundant manual dispatch `23775152816` was canceled)
+  - `resplit-web`: `already current` (`dpl_CAeRCs7MnHv7pFrFWiC2fCXQau7E` is live on both `www` and apex aliases; no fresh deploy lane was needed from this repo)
+  - `resplit-ios`: `blocked` (`RESPLIT-IOS-F0` is still unresolved on `resplit-ios@2.0.0+679`, and the attached root is too dirty/stale for an honest `tuist build 'Resplit Release'` + `fastlane ios testflight_upload` lane)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless the fresh March 31 publish/deploy turns red or live FX truth drifts again
+  - from one clean current-`master` `resplit-ios` lane, reproduce or instrument `CameraView.swift` teardown around `strategy.cleanup()` / `removePreviewSurface()` for `RESPLIT-IOS-F0`, then either ship the smallest safe fix or record exonerating proof
+  - do not spend another nurse run on `AEmN9VGxamkiZSH6QEYpCck`; if the camera lane is owned elsewhere, take the screenshot/manual lane instead (`ja` review, then `AILgPoYq0feGqc4wPKfb8MI`, then `AGtLA-kgK8CVsi5rPzzHuAM`)
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still miss `131` strings each in seven launch locales and `573` in `it`
+  - `2 App Store Connect Feedback Triage`: `blocked`; the plan still has `26` non-verified rows and no new closeout proof from this repo
+  - `3 Sentry + Seer Error Hunter`: `blocked`; `RESPLIT-IOS-F0` remains the current-build release blocker on `679`, while `resplit-web` still shows no unresolved production issue in the plan truth
+  - `4 UX Feedback Triage Lead`: `blocked`; the camera-dismiss hang still outranks screenshot polish and metadata cleanup
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; recent repo-owned diffs remain bounded to the shipped FX backfill fix and checkpoint docs
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; web production is current, but apex still redirects and the embedded web surface is dirty / behind
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `resplit-currency-api` is clean in the production sweep, while web-only cleanup candidates remain external to this repo
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; the next honest native move is one clean camera lane, not a build/upload from the stale attached root
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; the room is clear again, but manual `ja` review and the `AILgPo...` / `AGtLA...` mapping lane still gate screenshot closeout
+  - `10 App Store SEO + Metadata God`: `blocked`; storefront naming/version drift is still live and English-name upload remains gated behind explicit ASC approval
+
 ## 2026-03-30 20:03 EDT
 
 - Launch stays `NO-GO` overall. No repo-owned product fix shipped in `resplit-currency-api`; current trunk re-proved `GO`. The top blocker is still external iOS release health: `RESPLIT-IOS-F0` remains the only unresolved production issue on current TestFlight build `679`, and the repeated `AEmN9VGxamkiZSH6QEYpCck` screenshot loop was intentionally not retried after appearing in the last 3 nurse memory entries.
