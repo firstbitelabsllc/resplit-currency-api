@@ -1,5 +1,53 @@
 # Resplit Nurse Log
 
+## 2026-03-31 20:48 EDT
+
+- Launch stays `NO-GO` overall, but this run shipped one real repo-owned release-train fix on `main`: `805e669f fix: let stale snapshot reruns finish deploy train`. The stale-dispatch guard no longer skips Cloudflare Pages, the FX Worker, GitHub Pages, and smoke proof just because a newer run already pushed the same daily snapshot commit.
+- Fresh proof this run:
+  - attached checkout remains unsafe for trunk proof: `main...origin/main [behind 17]` with local dirt in `.codex/hooks.json`, `.cursor/plans/resplit-nurse.log.md`, `currscript.js`, `tests/currscript.test.js`, and `.playwright-mcp/`
+  - clean trunk proof ran from `/private/tmp/resplit-currency-api-proof-20260331-204209` built from `origin/main`; `npm ci`, `npm run check`, and `npm run smoke:deploy` all passed there; local generate fetched `166` currencies for `2026-04-01`, and `64/64` tests passed
+  - workflow run `23826295135` completed `success` in `1m9s` at `2026-04-01T00:43:27Z`
+  - live FX probes after the rerun:
+    - `https://resplit-currency-api.pages.dev/latest/aed.json` -> `date=2026-04-01`
+    - `https://2026-04-01.resplit-currency-api.pages.dev/snapshots/base-rates.json` -> `date=2026-04-01`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-04-01`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-04-01` -> `resolvedDate=2026-04-01`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-04-01&days=30` -> `availableDays=30`, `missingDayCount=0`
+  - workflow race proof:
+    - `23826255883` was cancelled after the snapshot commit / Cloudflare leg, leaving GitHub Pages briefly stale on `2026-03-31`
+    - `23826262428` then fast-exited as stale because `main` already had `snapshot-archive/2026-04-01`
+    - commit `805e669f` removed the stale-run `if:` guards from downstream deploy/smoke steps so future reruns still finish the train with validated local artifacts
+  - web / metadata perimeter:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_47XdX5Zushf8hboG1oPyZGn1RXYM`, `Ready`, created `2026-03-31 12:50:48 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` and `/join` return `HTTP/2 200`; apex `https://resplit.app/...` still returns `HTTP/2 307`
+    - `curl -s 'https://itunes.apple.com/lookup?id=6466376742&country=us' | jq '.results[0] | {trackName, version, currentVersionReleaseDate}'` still reports `trackName="Resplit - Tip Calculator"`, `version="1.8.0"`, `currentVersionReleaseDate="2025-02-11T23:56:36Z"`
+  - iOS / ASC / localization / screenshot / observability perimeter:
+    - `/Users/leokwan/Development/resplit-ios/.cursor/plans/app-store-feedback.plan.md` now counts `51` open rows total: `20 new`, `4 triaged`, `13 fixed`, `13 verified`, `1 blocked`
+    - screenshot truth is still anti-looped on `ja` `03_Share`, and `AGtLA-kgK8CVsi5rPzzHuAM` plus `AILgPoYq0feGqc4wPKfb8MI` still require manual/device review instead of speculative code churn
+    - `Localizable.xcstrings` still counts `de/es/fr/ja/ko/pt-BR/th/zh-Hans = 442 translated / 111 missing`, `it = 0 / 553`
+    - latest issue-readable Sentry proof still leaves `RESPLIT-IOS-D7` and `RESPLIT-IOS-DD` unresolved on build `695`
+    - the older nurse-log blocker `Leo needs to choose a unique English App Store name before metadata can move` is now stale: the screenshot plan records a successful clean-trunk metadata-only upload with `Resplit: Receipt Splitter`, but the public store has not caught up yet
+- Release execution status this run:
+  - `resplit-currency-api`: `kicked off` and completed green (`23826295135`)
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (build `695` still needs manual/device proof, issue-level Sentry follow-through, and App Store / apex-host parity closeout)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless live FX truth regresses or another stale-dispatch edge shows up
+  - outside this repo, Leo needs one manual/device closeout on build `695` for `AGtLA...`, `AILgPo...`, and the `ja` share surface, plus one current issue-level Sentry read from an MCP-capable client if the environment changes
+  - monitor public App Store propagation from `Resplit - Tip Calculator` / `1.8.0` to the uploaded metadata before treating the naming lane as actually closed
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still miss `111` strings each in eight tracked locales and `553` in `it`
+  - `2 App Store Connect Feedback Triage`: `blocked`; the tracker jumped to `51` open rows and the newest screenshot complaints are still pending triage
+  - `3 Sentry + Seer Error Hunter`: `blocked`; `RESPLIT-IOS-D7` and `RESPLIT-IOS-DD` remain unresolved on build `695`
+  - `4 UX Feedback Triage Lead`: `blocked`; the highest-value visible debt is still screenshot/manual-review closeout on iOS
+  - `5 Code Review + Clipdiff Auditor`: `shipped`; found and landed the stale-dispatch workflow regression fix in `805e669f`
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is healthy, but apex still `307`s deep-link surfaces and storefront naming still drifts from web
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; no safe cleanup slice outranks the release blockers after the FX train recovery
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; clean FX proof passed, but the iOS build/upload lane is still not a disciplined clean-trunk surface from this room
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; `ja` `03_Share` remains anti-looped and `AGtLA...` / `AILgPo...` still need manual/device review
+  - `10 App Store SEO + Metadata God`: `blocked`; the public store is still on `Resplit - Tip Calculator` `1.8.0` even though the metadata-only upload lane already moved
+
+
 ## 2026-03-31 11:45 EDT
 
 - Launch stays `NO-GO` overall. No repo-owned fix shipped in `resplit-currency-api`; this run was a clean-trunk proof pass plus blocker refresh because FX is green, `www` is freshly deployed, and the remaining launch blockers are still iOS/manual-review/apex-parity owned.
