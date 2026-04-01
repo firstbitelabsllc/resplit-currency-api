@@ -3875,6 +3875,21 @@
 - Remaining blocker for overall Resplit 2.0 launch remains external to this repo: unresolved `resplit-ios` / App Store feedback work.
 - Exact next slice in this repo: fast-exit unless a future hosted publish/deploy run goes red, live Pages/Worker payloads drift away from `HEAD`, the team intentionally migrates Cloudflare Pages config into source control, or a dedicated currency-api Sentry project becomes a release requirement.
 
+## 2026-04-01 04:13 EDT
+
+- Launch remains `NO-GO` overall, but `resplit-currency-api` stays `GO` and this run kept the FX train fresh instead of reopening stale work.
+- Fresh proof this run:
+  - clean export `/private/tmp/resplit-currency-api-super-proof-20260401-16792` from `origin/main` `e2075819` (`fix: harden stale workflow rerun guard`)
+  - `npm run check` -> `71/71` green, including the stale-run deploy guard suite
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - bounded trunk diff `origin/main~6..origin/main` only touched `.github/workflows/run.yml`, `tests/workflow-stale-run-guards.test.js`, and nurse-log docs; `clipdiff` is unavailable on this host
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `owned elsewhere`; the active clean lane is archiving/exporting build `703` from `765408b7`, so this repo did not reopen a competing release/build path
+- Remaining blocker for overall Resplit 2.0 launch is still external to this repo: screenshot provenance/manual-device review plus the active iOS build `703` upload/distribution lane.
+- Exact next slice in this repo: fast-exit unless a hosted publish/deploy run goes red, live FX payloads drift away from `origin/main`, or the iOS room proves it needs a fresh currency-api contract change.
+
 ## 2026-03-31 05:01 EDT
 
 - Launch stays `NO-GO` overall. No repo-owned fix shipped in `resplit-currency-api`; this run was a fresh trunk-proof fast-exit because FX and web are current while the remaining launch blockers are still iOS/manual-review owned.
