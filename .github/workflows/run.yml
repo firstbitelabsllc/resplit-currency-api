@@ -83,7 +83,7 @@ jobs:
           remote_snapshot="$(mktemp)"
           if git show "origin/${branch_name}:snapshot-archive/${{ env.date_today }}.json" > "$remote_snapshot" 2>/dev/null \
             && cmp -s "$remote_snapshot" "snapshot-archive/${{ env.date_today }}.json"; then
-            deploy_drift="$(git diff --name-only HEAD..origin/${branch_name} -- currscript.js package.json package-lock.json scripts worker wrangler.jsonc snapshot-archive || true)"
+            deploy_drift="$(git diff --name-only HEAD..origin/${branch_name} -- country.json currscript.js package.json package-lock.json scripts skeleton-package.json worker wrangler.jsonc snapshot-archive || true)"
             if [ -z "$deploy_drift" ]; then
               echo "::notice::Remote ${branch_name} already has snapshot-archive/${{ env.date_today }}.json from a newer run, and deploy inputs still match. Continuing deploy steps with the validated local artifact output."
               echo "continue_stale_deploy=true" >> "$GITHUB_OUTPUT"

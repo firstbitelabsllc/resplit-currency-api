@@ -1,5 +1,42 @@
 # Resplit Nurse Log
 
+## 2026-04-01 02:43 EDT
+
+- Launch stays `NO-GO` overall, but this run shipped one repo-owned release-safety fix on clean `resplit-currency-api` trunk instead of padding another FX fast-exit.
+- What shipped:
+  - hardened the stale-rerun deploy guard in `.github/workflows/run.yml` so a cancelled/losing dispatch now treats `country.json` and `skeleton-package.json` as deploy inputs alongside the existing generator/runtime surfaces
+  - updated `tests/workflow-stale-run-guards.test.js` so the guard contract fails closed if those generator inputs are omitted again
+- Fresh proof this run:
+  - clean lane `/private/tmp/resplit-currency-api-proof-20260401-023916` from `origin/main` `bdc045b7`
+  - `node --test tests/workflow-stale-run-guards.test.js` -> `7/7` passing
+  - `npm run check` -> `71/71` passing, `Fetched 166 currencies for 2026-04-01`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5` still shows scheduled publish `23829231425` and downstream Pages deploy `23829278310` as `success`
+  - live perimeter still matches the external blocker set: `https://www.resplit.app/.well-known/apple-app-site-association` and `/join` return `HTTP/2 200`, bare apex still `307`s both routes, and the public App Store lookup still reports `Resplit - Tip Calculator` `1.8.0`
+  - fresher `resplit-ios` repo truth has advanced beyond this repo’s older breadcrumb: build `700` is now the current manual/device verification boundary for `AJL5zdhVQuidwrAQWvQhqA8`, `AHvj42ztnb0ONkxEocozVI0`, `AH6YfriaM1853KhXLPEgqkg`, `AGtLA-kgK8CVsi5rPzzHuAM`, and `AILgPoYq0feGqc4wPKfb8MI`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`; live FX surfaces were green before and after the fix, so no redundant publish/deploy was kicked off for this workflow-only safety patch
+  - `resplit-web`: `already current`; live production is up, but apex-host AASA parity is still blocked outside this repo
+  - `resplit-ios`: `already current`; TestFlight has moved on to build `700`, and the next honest move is manual/device verification rather than another upload
+- Blockers:
+  - build `700` manual/device verification still owns the five highest-value ASC rows: `AJL5...`, `AHvj...`, `AH6...`, `AGtLA...`, `AILg...`
+  - screenshot/localization/metadata provenance is still dirty in the attached iOS root
+  - apex-host universal-link parity and live App Store naming still drift from the current web/product story
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+  - outside this repo, verify the five build-`700` ASC rows on device/TestFlight, then fix apex AASA redirect parity or remove the apex entitlement if `www` is the only supported host
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; screenshot/localization provenance and live App Store copy still drift, with build `700` now the honest verification boundary
+  - `2 App Store Connect Feedback Triage`: `blocked`; five open current-build rows still need manual/device proof on build `700`
+  - `3 Sentry + Seer Error Hunter`: `no-op with proof`; current repo truth shows no new repo-owned production issue, but fresh build-`700` release visibility is still blocked
+  - `4 UX Feedback Triage Lead`: `blocked`; highest-value visible complaints are still iOS summary/merge/share/manual-review surfaces, not a new FX/web product bug
+  - `5 Code Review + Clipdiff Auditor`: `shipped`; fixed the stale-rerun deploy drift gap, and `clipdiff` itself was unavailable locally
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is healthy, but apex AASA redirect and storefront naming still break canonical parity
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `knip` stayed clean and no safe dead-code slice outranked the release blocker set
+  - `8 Architecture + Test Discipline Guardian`: `shipped`; the repo-owned fix carried a focused guard test plus full `check`/`smoke` proof, while the dirty native root still blocks a separate iOS build lane
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot provenance is still dirty and the mapped screenshot rows now ride build `700`
+  - `10 App Store SEO + Metadata God`: `blocked`; live App Store title/version still drift from current web naming
+
 ## 2026-04-01 02:18 EDT
 
 - Launch stays `NO-GO`. No repo-owned FX/web code shipped because those trunks are still current; this pass moved the cross-repo release truth instead of fabricating a currency patch.
