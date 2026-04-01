@@ -73,6 +73,7 @@ jobs:
 
           if git push; then
             echo "stale_run=false" >> "$GITHUB_OUTPUT"
+            echo "continue_stale_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -82,16 +83,26 @@ jobs:
           remote_snapshot="$(mktemp)"
           if git show "origin/${branch_name}:snapshot-archive/${{ env.date_today }}.json" > "$remote_snapshot" 2>/dev/null \
             && cmp -s "$remote_snapshot" "snapshot-archive/${{ env.date_today }}.json"; then
-            echo "::notice::Remote ${branch_name} already has snapshot-archive/${{ env.date_today }}.json from a newer run. Continuing deploy steps with the validated local artifact output."
+            deploy_drift="$(git diff --name-only HEAD..origin/${branch_name} -- currscript.js package.json package-lock.json scripts worker wrangler.jsonc snapshot-archive || true)"
+            if [ -z "$deploy_drift" ]; then
+              echo "::notice::Remote ${branch_name} already has snapshot-archive/${{ env.date_today }}.json from a newer run, and deploy inputs still match. Continuing deploy steps with the validated local artifact output."
+              echo "continue_stale_deploy=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::notice::Remote ${branch_name} already has snapshot-archive/${{ env.date_today }}.json from a newer run, but deploy inputs drifted on trunk. Skipping deploy steps for this stale dispatch."
+              printf 'stale_deploy_drift<<EOF\n%s\nEOF\n' "$deploy_drift" >> "$GITHUB_OUTPUT"
+              echo "continue_stale_deploy=false" >> "$GITHUB_OUTPUT"
+            fi
             echo "stale_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "stale_run=false" >> "$GITHUB_OUTPUT"
+          echo "continue_stale_deploy=false" >> "$GITHUB_OUTPUT"
           echo "::error::Snapshot push failed and remote snapshot does not match local output."
           exit 1
 
       - name: Validate deploy secrets
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -100,6 +111,7 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" && exit 1)
 
       - name: Sync FX Worker runtime secrets
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -123,6 +135,7 @@ jobs:
 
       - name: Deploy to Cloudflare Pages
         id: deploy_cloudflare
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -132,26 +145,28 @@ jobs:
           npx wrangler pages deploy --project-name=resplit-currency-api --branch=${{ env.date_today }} package
 
       - name: Report Cloudflare deploy failure to Sentry
-        if: ${{ failure() && steps.deploy_cloudflare.outcome == 'failure' }}
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.deploy_cloudflare.outcome == 'failure' }}
         env:
           STEP_NAME: deploy_cloudflare
         run: node scripts/sentry-checkin.js issue cloudflare_deploy_failure "Cloudflare Pages deploy failed"
 
       - name: Deploy FX Worker
         id: deploy_fx_worker
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.jsonc
 
       - name: Report FX Worker deploy failure to Sentry
-        if: ${{ failure() && steps.deploy_fx_worker.outcome == 'failure' }}
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.deploy_fx_worker.outcome == 'failure' }}
         env:
           STEP_NAME: deploy_fx_worker
         run: node scripts/sentry-checkin.js issue fx_worker_deploy_failure "Cloudflare Worker deploy failed"
 
       - name: Deploy to GitHub Pages
         id: deploy_github_pages
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -171,13 +186,14 @@ jobs:
           git push --force origin gh-pages
 
       - name: Report GitHub Pages deploy failure to Sentry
-        if: ${{ failure() && steps.deploy_github_pages.outcome == 'failure' }}
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.deploy_github_pages.outcome == 'failure' }}
         env:
           STEP_NAME: deploy_github_pages
         run: node scripts/sentry-checkin.js issue github_pages_deploy_failure "GitHub Pages deploy failed"
 
       - name: Smoke check deployed endpoints
         id: smoke_check
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
           EXPECTED_DATE: ${{ env.date_today }}
         run: node scripts/smoke-check-deploy.js
