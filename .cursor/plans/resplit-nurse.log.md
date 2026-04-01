@@ -1,5 +1,44 @@
 # Resplit Nurse Log
 
+## 2026-03-31 21:43 EDT
+
+- Launch stays `NO-GO` overall. No new repo-owned fix shipped in `resplit-currency-api`; this was a clean-trunk proof pass after `805e669f`, and the April 1 FX train is still green end to end.
+- Fresh proof this run:
+  - attached checkout is still unsafe for any workflow edit: `main...origin/main [behind 18]` with local dirt in `.codex/hooks.json`, `.cursor/plans/resplit-nurse.log.md`, `currscript.js`, `tests/currscript.test.js`, and `.playwright-mcp/`; the local `.github/workflows/run.yml` would regress the stale-rerun fix if anyone shipped from here
+  - clean proof lane `/private/tmp/resplit-currency-api-proof-20260331-214127` was cut from `origin/main` `7dd68f7c`; `npm ci`, `npm run check`, and `npm run smoke:deploy` all passed there, with `64/64` tests green and `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` still shows the April 1 publish train completed successfully where it mattered: `Update Currency Rates` `23826295135` `success` and downstream `pages build and deployment` `23826323603` `success`; the later dispatches `23826333267` and `23826351245` ended `cancelled` without regressing the live surfaces
+  - live FX probes this run:
+    - `https://resplit-currency-api.pages.dev/meta.json` -> `latestDate=2026-04-01`
+    - `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` -> `date=2026-04-01`
+    - `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-04-01` -> `resolvedDate=2026-04-01`, `resolutionKind=exact`
+    - `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-04-01&days=30` -> `availableDays=30`, `missingDayCount=0`, `mismatchCount=0`
+  - web / metadata perimeter:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_DxVTQFbiCARF7YB3FABCt8WFCXAC`, `Ready`, created `2026-03-31 20:51:10 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` and `/join` still return `HTTP/2 200`; apex `https://resplit.app/...` still returns `HTTP/2 307`
+    - public App Store metadata still drifts: `trackName="Resplit - Tip Calculator"`, `version="1.8.0"`
+  - iOS / screenshot / observability perimeter:
+    - screenshot + TestFlight upload remain anti-looped on this host: `tuist auth whoami` still reports `You are not logged in`, `fastlane ios testflight_upload` still depends on Tuist generation, and the attached iOS root remains dirty / diverged
+    - manual/device proof is still missing for `AGtLA-kgK8CVsi5rPzzHuAM` and `AILgPoYq0feGqc4wPKfb8MI`
+    - current Sentry blocker set on build `695` is now `RESPLIT-IOS-A0`, `RESPLIT-IOS-D7`, and `RESPLIT-IOS-DD`, with `5` production error events in the last `24h`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` (Tuist auth missing, build `695` still needs manual/device proof, and issue-level Sentry follow-through is still unresolved)
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless the hosted FX train regresses again
+  - outside this repo, restore Tuist auth and then reopen the clean-trunk `tuist build 'Resplit Release'` / `fastlane ios testflight_upload` path, or get manual/device proof on build `695` for `AGtLA...` and `AILgPo...`
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; localization debt is still owned by `resplit-ios`, not this repo
+  - `2 App Store Connect Feedback Triage`: `blocked`; ASC/manual-review ownership remains in `resplit-ios`
+  - `3 Sentry + Seer Error Hunter`: `blocked`; iOS build `695` still has unresolved `A0`, `D7`, and `DD`
+  - `4 UX Feedback Triage Lead`: `blocked`; highest-value visible work is still the iOS/manual-review queue
+  - `5 Code Review + Clipdiff Auditor`: `blocked`; the attached checkout is stale enough to reintroduce the already-fixed workflow bug, so no safe edit lane exists here
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is current, but apex-host parity and App Store naming still drift
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; no safe cleanup slice outranks the current external blockers
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; the iOS build/upload lane still lacks a clean authenticated trunk surface
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot trust remains anti-looped on this host
+  - `10 App Store SEO + Metadata God`: `blocked`; public store metadata is still on the old name/version
+
 ## 2026-03-31 20:48 EDT
 
 - Launch stays `NO-GO` overall, but this run shipped one real repo-owned release-train fix on `main`: `805e669f fix: let stale snapshot reruns finish deploy train`. The stale-dispatch guard no longer skips Cloudflare Pages, the FX Worker, GitHub Pages, and smoke proof just because a newer run already pushed the same daily snapshot commit.
