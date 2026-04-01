@@ -1,5 +1,27 @@
 # Resplit Nurse Log
 
+## 2026-04-01 20:00 EDT
+
+- Launch stays `NO-GO` overall, and this repo remains `GO`. No new FX code shipped from this lane because current trunk already carries the bounded publish-path fix `3d238c5c`; the useful release move in this run was to prove that trunk cleanly and kick the real publish/deploy train on it.
+- Fresh proof this run:
+  - clean lane `/private/tmp/resplit-currency-api-proof-20260401-195631` from `origin/main` `3d238c5c` (`fix: preserve promotion cause on restore failure`)
+  - `npm ci`
+  - `npm run check` -> `Fetched 166 currencies for 2026-04-01`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`, `72/72` passing
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run view 23876748497 --json status,headSha,jobs` -> manual `Update Currency Rates` run is `in_progress` on head SHA `3d238c5c`, completed through `Sync FX Worker runtime secrets`, and is already in `Deploy to Cloudflare Pages`
+  - prior live perimeter stayed green before the rerun: scheduled publish `23829231425` `success`, Pages deploy `23829278310` `success`, Cloudflare Pages/GitHub fallback/worker endpoints all still return `date=2026-04-01`, and `fx.resplit.app` still resolves `AED->USD` with `resolutionKind=exact`
+  - Sentry MCP now gives a clean current-build read instead of stale tracker inference: `search_issues(firstbite-labs/resplit-ios, 'unresolved production issues for release 2.0.0+700 in the last 7 days')` -> no matches; `search_events(firstbite-labs/resplit-ios, 'count of production errors for release 2.0.0+700 in the last 24 hours')` -> `count() = 0`
+- Release execution status this run:
+  - `resplit-currency-api`: `kicked off`; manual workflow `23876748497` is running on proved trunk `3d238c5c`
+  - `resplit-web`: `already current`; production deploy `dpl_7FtQyKDc59mDSUwoapRACxu9NxqG` is `Ready`, `www` AASA + `/join` are `HTTP/2 200`, and apex `resplit.app` still `307`s both paths
+  - `resplit-ios`: `already current`; build `700` is the settled verification boundary from this lane's fresh plan/Sentry truth, and no new upload ran because no safe native slice landed here while the attached iOS roots remain hot/divergent
+- Blockers:
+  - overall launch blockers remain outside this repo: current-build manual/device ASC verification, screenshot/localization provenance, apex-host universal-link parity, and live App Store title drift (`Resplit - Tip Calculator` `1.8.0`)
+  - the attached `resplit-currency-api` root is stale (`e390f7af` vs `origin/main` `3d238c5c`) and locally dirty, so do not ship from it
+- Exact next slice:
+  - let workflow `23876748497` finish; only reopen this repo if that run fails or live FX truth turns red again
+  - otherwise take the next honest clean iOS/manual-review slice on build `700` instead of fabricating another FX/web patch
+
 ## 2026-04-01 19:54 EDT
 
 - Launch stays `NO-GO`, and this repo is still `GO`, but this run shipped one bounded repo-owned release-safety fix instead of another proof-only fast-exit.
