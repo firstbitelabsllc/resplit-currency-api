@@ -1,5 +1,39 @@
 # Resplit Nurse Log
 
+## 2026-04-01 02:18 EDT
+
+- Launch stays `NO-GO`. No repo-owned FX/web code shipped because those trunks are still current; this pass moved the cross-repo release truth instead of fabricating a currency patch.
+- Fresh proof this run:
+  - `resplit-currency-api` remains `already current`; the attached checkout is still dirty/behind, but no fresh FX failure surfaced above `origin/main`
+  - `resplit-ios` current trunk is now `origin/master` `5578fc6d` (`docs: checkpoint build 700 release truth`), and the add-existing receipt navigation fix `112edf37` (`fix: open imported trip receipts in detail`) is already on trunk after build `700`, so the next honest native move is a clean build `701` rather than another speculative code lane
+  - `tuist auth whoami` from a clean iOS worktree returned `firstbitelabs`
+  - fresh Sentry truth still does not beat manual review: release lookup for `resplit-ios@2.0.0+699` returned no release row, `search_issues(...699...)` returned no unresolved production issues, and `search_events(...699...)` returned `count() = 0`
+  - the native build room never opened for this pass because the screenshot owner stayed live throughout: `xcodebuild test -workspace Resplit.xcworkspace -scheme 'Resplit Locale Snapshots' ... -testLanguage de -testRegion DE` remained active for the whole run
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `blocked` on serialized build ownership plus current-build manual/screenshot review; no new upload ran in this pass
+- Blockers:
+  - screenshot room still owns the native build lane; do not start a second `xcodebuild` / `tuist build` / `fastlane ios testflight_upload` while that owner is active
+  - build `700` remains the manual/device review boundary for `AJL5zdhVQuidwrAQWvQhqA8`, `AHvj42ztnb0ONkxEocozVI0`, `AH6YfriaM1853KhXLPEgqkg`, `AGtLA-kgK8CVsi5rPzzHuAM`, and `AILgPoYq0feGqc4wPKfb8MI`
+  - screenshot provenance and western-locale localization coverage remain the honest launch blocker after the in-flight screenshot capture clears
+  - `resplit.app` apex deep-link/AASA parity and the public App Store live title still lag current trunk
+- Exact next slice:
+  - once the screenshot `xcodebuild` owner clears, cut clean-trunk iOS build `701` from current `origin/master` so TestFlight actually carries `112edf37`
+  - after that upload, device-verify `ALW5rTTLOqNjOGkKh7DOYAU` and re-triage the build-`700/701` summary/merge rows (`AH6...`, `AHvj...`, `AJL5...`, `AGtLA...`, `AILg...`) before taking any new native code slice
+  - keep `resplit-currency-api` on fast-exit until a hosted publish/deploy/live FX surface turns red again
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; screenshot/upload provenance and western-locale catalog coverage remain unresolved
+  - `2 App Store Connect Feedback Triage`: `blocked`; build `700` is still the manual-review boundary, and `ALW5...` now needs the next shipped build rather than another code patch
+  - `3 Sentry + Seer Error Hunter`: `no-op`; no actionable unresolved production issue mapped to `699`
+  - `4 UX Feedback Triage Lead`: `blocked`; the next honest UX move is shipping `112edf37` in build `701`, not stacking speculative code
+  - `5 Code Review + Clipdiff Auditor`: `no-op`; stale summary branches were not promotable, and `clipdiff` was not needed to prove that
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; apex-host and storefront drift still sit outside a safe repo patch
+  - `7 Dead Code + Drift Analyzer`: `no-op`; no hotter dead-code slice beat the release-room blockers
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; a fresh clean-trunk replay was possible, but the serialized native proof lane never opened
+  - `9 Screenshot + Snapshot + UI Proof Lead`: `blocked`; the screenshot room remained the live owner for the whole pass
+  - `10 App Store SEO + Metadata Lead`: `blocked`; live App Store title drift still stands
+
 ## 2026-04-01 01:47 EDT
 
 - Launch stays `NO-GO`. No new repo-owned product fix shipped from `resplit-currency-api` because fresh proof says FX and live web are already current, and the honest next native move is current-build manual/device verification on TestFlight build `699`, not another speculative code push.
