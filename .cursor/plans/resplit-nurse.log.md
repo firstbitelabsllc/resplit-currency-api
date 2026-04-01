@@ -1,5 +1,37 @@
 # Resplit Nurse Log
 
+## 2026-04-01 04:48 EDT
+
+- Launch stays `NO-GO`, and this repo is still `GO`. No new FX/web code shipped because clean trunk is green and the remaining release blockers are current-build iOS/manual-review + ASC visibility issues, not `resplit-currency-api`.
+- Fresh proof this run:
+  - clean lane `/private/tmp/resplit-currency-api-proof-20260401-044227` from `origin/main` `7e22c97d`
+  - `npm ci`
+  - `npx knip --reporter compact` -> clean
+  - `npm run check` -> `71/71` passing, `Fetched 166 currencies for 2026-04-01`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5` -> scheduled publish `23829231425` `success`, downstream Pages deploy `23829278310` `success`
+  - `cd /Users/leokwan/Development/resplit-website && npx vercel inspect https://www.resplit.app` -> production deploy `dpl_Ea8KDHJcRfT5v1F1Z3s2zDr1eY4S`, `Ready`
+  - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 200`
+  - `curl -I -s https://www.resplit.app/join | head -n 1` -> `HTTP/2 200`
+  - `curl -I -s https://resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 307`
+  - `curl -I -s https://resplit.app/join | head -n 1` -> `HTTP/2 307`
+  - direct ASC API-key query from `/Users/leokwan/Development/resplit-ios` now shows build `704 | 2026-04-01T01:31:35-07:00 | VALID | false`, ahead of `703`, `702`, `701`, and `700`
+  - `sentry-cli info` on `/Users/leokwan/Development/resplit-ios` still exposes only `project:read` + `project:write`; `sentry-cli releases info 'resplit-ios@2.0.0+704'` -> `No such release`, and direct unresolved-issue REST for `release:resplit-ios@2.0.0+704` still returns `HTTP 403`
+  - iTunes lookup still reports live storefront title/version `Resplit - Tip Calculator` `1.8.0`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `already current` at build boundary `704`; no fresh upload ran from this lane because no new safe unowned iOS fix shipped in this run
+- Blockers:
+  - current-build manual/device verification must now use build `704` for `AJL5zdhVQuidwrAQWvQhqA8`, `AHvj42ztnb0ONkxEocozVI0`, `AH6YfriaM1853KhXLPEgqkg`, `AGtLA-kgK8CVsi5rPzzHuAM`, and `AILgPoYq0feGqc4wPKfb8MI`
+  - the iOS screenshot plan still lags at build `703`, but that file is currently a hot surface owned by the prior screenshot-refresh lane; do not collide with it from this repo room
+  - observability is not release-clean at the new boundary yet: build `704` is `VALID`, but this client still cannot read a matching Sentry release/issues view for `resplit-ios@2.0.0+704`
+  - apex-host universal-link parity and the live App Store title remain external/platform blockers
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+  - let the active iOS tracker owner update screenshot/nurse plan text from `703` to `704`, then take the first manual/device verification pass on build `704`
+  - only rerun `bundle exec fastlane ios upload_screenshots` if App Store Connect failed to retain the already-uploaded screenshot set after the earlier processing `500`s
+
 ## 2026-04-01 04:16 EDT
 
 - Launch stays `NO-GO`, and this repo is still `GO`. This run did not mint another FX/web patch because the only remaining product slices were either already merged, already owned by active iOS lanes, or outside `resplit-currency-api`.
