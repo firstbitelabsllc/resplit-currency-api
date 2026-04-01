@@ -1,5 +1,41 @@
 # Resplit Nurse Log
 
+## 2026-04-01 04:15 EDT
+
+- Launch stays `NO-GO`. No new product code shipped from this room because FX + web are already current, `resplit-ios` is already ahead at build `702`, and the serialized native upload lane plus hot summary-focus worktree are owned elsewhere.
+- Fresh proof this run:
+  - attached `resplit-currency-api` root is still coordination-only (`main...origin/main [behind 27]` with local dirt), so repo writes stayed on clean worktree `/private/tmp/resplit-currency-api-super-nurse-20260401` from `origin/main`
+  - live FX remains green from this run: `https://resplit-currency-api.pages.dev/latest/aed.json` -> `2026-04-01`, `166` rates; `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-04-01` -> `resolvedDate=2026-04-01`, `resolutionKind=exact`; worker coverage -> `mismatchCount=0`, `availableDays=30`; `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3` still shows publish `23829231425` and Pages deploy `23829278310` as `success`
+  - web is already current on production deploy `dpl_9sfmwRXupfWWYHK2AcGcnb5XfprY` created `2026-04-01 04:05 EDT`; `https://www.resplit.app/.well-known/apple-app-site-association` and `/join` both return `HTTP/2 200`, while bare `https://resplit.app/.well-known/apple-app-site-association` and `/join` still `307`
+  - direct ASC API-key proof from this run moved the current iOS boundary again: newest valid TestFlight build is `702 | 2026-04-01T01:02:35-07:00 | VALID | false`, ahead of `701`, `700`, and `699`
+  - current iOS screenshot truth is now split cleanly: `origin/master` already carries `08f540ae` (`fix: fast-path screenshot asset refresh`), and `.agent-ledger/hot-files.md` records that the refreshed 54-image upload reached deletion + reupload before App Store Connect processing started returning `500`s
+  - current ASC feedback sync is externally blocked, not locally unauthenticated: `ruby scripts/asc_beta_feedback.rb sync-plan --plan .cursor/plans/app-store-feedback.plan.md` now fails with `[asc-beta-feedback] ASC request failed (HTTP 500)`
+  - the tracker is stale versus current build truth: `.cursor/plans/app-store-feedback.plan.md` still assigns `AJL5...`, `AHvj...`, `AH6...`, `AGtLA...`, and `AILg...` to the `current build 700 verification owner`
+  - serialized build-room check still showed a live `fastlane ios testflight_upload` owner, and `/Users/leokwan/Development/resplit-ios/.worktrees/mayor-ai3-warning-focus-20260401` is still dirty/hot (`ahead 10, behind 2` plus six modified files), so this run did not take over those lanes
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`
+  - `resplit-ios`: `already current`; build `702` is the current manual-review boundary, and this room did not mint build `703`
+- Blockers:
+  - App Store Connect feedback sync is currently unstable (`HTTP 500`), so the repo-local feedback tracker cannot be truthfully refreshed from ASC right now
+  - the highest-value manual/device ASC rows are still assigned to build `700` in repo state even though build `702` is already valid
+  - screenshot processing remains externally blocked in ASC after the refreshed upload, not by missing local assets
+  - apex-host deep-link/AASA parity and the public App Store title still drift from the current web/product story
+- Exact next slice:
+  - once ASC stops returning `500`, rerun `ruby scripts/asc_beta_feedback.rb sync-plan --plan .cursor/plans/app-store-feedback.plan.md`, refresh the five current-build rows onto build `702`, and verify `AJL5...`, `AHvj...`, `AH6...`, `AGtLA...`, and `AILg...` there before opening any new product-code lane
+  - keep `resplit-currency-api` and web on fast-exit unless live FX or production web truth turns red again
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; screenshot locale truth is still coupled to ASC processing recovery, not a new repo-owned code slice
+  - `2 App Store Connect Feedback Triage`: `blocked`; current repo state is stale to build `700` while ASC already shows build `702`, and sync-plan is failing with `HTTP 500`
+  - `3 Sentry + Seer Error Hunter`: `blocked`; this run did not have fresh readable current-build issue truth for `702`
+  - `4 UX Feedback Triage Lead`: `blocked`; the top visible complaints are still iOS manual-review rows, not an FX/web runtime defect
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; the repo-owned workflow guard is already landed on trunk and `clipdiff` remains unavailable locally
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is healthy, but apex-host AASA and `/join` still redirect
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; no safe repo-owned dead-code slice outranked the active release blockers
+  - `8 Architecture + Test Discipline Guardian`: `blocked`; the serialized build/upload lane is occupied and the AI3WR clean worktree is still hot/dirty
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot asset refresh already shipped, but ASC processing is still failing after upload
+  - `10 App Store SEO + Metadata God`: `blocked`; the live App Store title still shows the old storefront name
+
 ## 2026-04-01 03:44 EDT
 
 - Launch stays `NO-GO` overall, but this run shipped one repo-owned release-safety hardening fix on clean `resplit-currency-api` trunk instead of padding another proof-only FX pass.
