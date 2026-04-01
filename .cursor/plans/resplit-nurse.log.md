@@ -1,5 +1,37 @@
 # Resplit Nurse Log
 
+## 2026-04-01 04:57 EDT
+
+- Launch stays `NO-GO`, and this repo is still `GO`. No new FX/web code shipped because clean trunk remains healthy and there is no honest unowned product-red slice left in this room while `resplit-ios` is actively promoting `AI3` elsewhere.
+- Fresh proof this run:
+  - clean lane `/private/tmp/resplit-currency-api-mayor-truth-20260401-045605` from `origin/main` `a771d097`
+  - `npm ci`
+  - `npm run check` -> `71/71` passing, `Fetched 166 currencies for 2026-04-01`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5` -> scheduled publish `23829231425` `success`, downstream Pages deploy `23829278310` `success`
+  - `curl -s https://resplit-currency-api.pages.dev/latest/aed.json | head -c 120` and `curl -s https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json | head -c 120` both still show `date=2026-04-01`
+  - `curl -s https://resplit-currency-api.pages.dev/history/30d/aed.json | head -c 120` still returns the expected 30-day window payload
+  - `curl -s 'https://fx.resplit.app/quote?from=AED&to=USD&date=2026-04-01' | head -c 200` -> `resolvedDate=2026-04-01`, `resolutionKind=exact`
+  - `curl -s 'https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-04-01&days=30' | head -c 220` still returns current-day coverage payload
+  - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` and `/join` -> both `HTTP/2 200`; bare `https://resplit.app/.well-known/apple-app-site-association` and `/join` still `HTTP/2 307`
+  - `curl -fsSL https://apps.apple.com/us/app/id6466376742 | rg -o '<title>[^<]+' | sed -n '1p'` -> `<title>‎Resplit - Tip Calculator App - App Store`
+  - Sentry MCP now resolves the old build-`704` observability ambiguity directly instead of failing on release lookup: `search_issues(firstbite-labs/resplit-ios, 'unresolved production issues in the last 7 days for release resplit-ios@2.0.0+704')` -> no matches, and `search_events(firstbite-labs/resplit-ios, 'count of production error events in the last 24 hours for release resplit-ios@2.0.0+704')` -> `count() = 0`
+  - `get_sentry_resource(firstbite-labs, RESPLIT-IOS-D7)` now shows `Status: resolved`; the latest event was `2026-04-01T08:28:15.759Z` on `environment=development`, `release=resplit-ios@2.0.0+1`, and `monitoring.signal=livesplit_create_blocked`, so `D7` is not the current production-finalize blocker on build `704`
+  - current `resplit-ios` ledger + worktree truth show the only active product-red lane is `AI3WR...`: branch `codex/summary-warning-followup-20260401` is already being promoted from clean trunk, and the active release room is deciding whether to push that replay/highlight fix and start a `705` upload
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current` on the public perimeter checked from this lane; separate clean-lane web copy/canary work is active elsewhere, so do not duplicate it here
+  - `resplit-ios`: latest directly queried `VALID` boundary in this repo remains build `704`, but an active clean-trunk `AI3` promotion/upload lane may supersede that once it finishes
+- Blockers:
+  - current-build manual/device verification still owns the open ASC rows; until the active `AI3` promotion/upload lane settles, the honest verification boundary remains build `704`
+  - `AI3WRy1q6Xl5lQHo64Zeyao` is actively owned on clean trunk right now; do not reopen that receipt-detail replay/highlight surface from this repo room
+  - the screenshot plan and root iOS tracker files are still hot surfaces in the dirty attached `resplit-ios` root; keep this repo on breadcrumb/proof duty only
+  - apex-host universal-link parity and the live App Store title remain external/platform blockers
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+  - let the active `resplit-ios` `AI3` lane either ship or report its exact blocker; then re-query ASC for the newest `VALID` build and take the first manual/device verification pass on that settled boundary
+  - do not reopen `RESPLIT-IOS-D7` from this room unless production Sentry reopens it on a current TestFlight build; this run proved it is resolved/stale relative to the active launch boundary
+
 ## 2026-04-01 04:48 EDT
 
 - Launch stays `NO-GO`, and this repo is still `GO`. No new FX/web code shipped because clean trunk is green and the remaining release blockers are current-build iOS/manual-review + ASC visibility issues, not `resplit-currency-api`.
