@@ -14,7 +14,7 @@ test('workflow records whether a stale rerun can safely continue deploy steps', 
   assert.match(workflow, /deploy inputs drifted on trunk\. Skipping deploy steps for this stale dispatch\./)
   assert.match(
     workflow,
-    /git diff --name-only HEAD\.\.origin\/\$\{branch_name\} -- country\.json currscript\.js package\.json package-lock\.json scripts skeleton-package\.json worker wrangler\.jsonc snapshot-archive/
+    /git diff --name-only HEAD\.\.origin\/\$\{branch_name\} -- \.github\/workflows\/run\.yml country\.json currscript\.js package\.json package-lock\.json scripts skeleton-package\.json worker wrangler\.jsonc snapshot-archive/
   )
 })
 

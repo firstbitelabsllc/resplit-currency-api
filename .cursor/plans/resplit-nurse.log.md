@@ -1,5 +1,45 @@
 # Resplit Nurse Log
 
+## 2026-04-01 03:44 EDT
+
+- Launch stays `NO-GO` overall, but this run shipped one repo-owned release-safety hardening fix on clean `resplit-currency-api` trunk instead of padding another proof-only FX pass.
+- What shipped:
+  - hardened `.github/workflows/run.yml` so a stale rerun now treats changes to the workflow definition itself as deploy-input drift before it reuses a newer run's snapshot artifact
+  - updated `tests/workflow-stale-run-guards.test.js` so the stale-run contract fails closed if `.github/workflows/run.yml` drops out of the guarded diff set again
+- Fresh proof this run:
+  - clean lane `/private/tmp/resplit-currency-api-nurse-20260401-033921` from `origin/main` `1d940cd2`
+  - `node --test tests/workflow-stale-run-guards.test.js` -> `7/7` passing
+  - `npm ci`
+  - `npm run check` -> `71/71` passing, `Fetched 166 currencies for 2026-04-01`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3` -> scheduled publish `23829231425` `success`, downstream Pages deploy `23829278310` `success`
+  - `cd /Users/leokwan/Development/resplit-ios/resplit-web && npx vercel inspect https://www.resplit.app` -> production deploy `dpl_Sq6TTmHZUCXokqwzVqXpknYaL8t1`, `Ready`
+  - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` -> `HTTP/2 200`; bare apex still redirects the same route with `HTTP/2 307`
+  - canonical `resplit-ios` tracker truth now says build `701` is the current TestFlight/manual-review boundary, while screenshot-plan sections still lag on `700/699/695`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`; this was a workflow-only safety patch, so no redundant publish/deploy rerun was needed after smoke passed
+  - `resplit-web`: `already current`; production is live on `dpl_Sq6TTmHZUCXokqwzVqXpknYaL8t1`, but apex-host AASA parity is still blocked outside this repo
+  - `resplit-ios`: `already current`; canonical repo truth puts current verification on build `701`, and the next honest move is manual/device review rather than another upload from this repo room
+- Blockers:
+  - build `701` manual/device verification still owns the highest-value ASC rows (`AJL5...`, `AHvj...`, `AH6...`, `AGtLA...`, `AILg...`)
+  - screenshot provenance is still split: canonical trunk proves snapshot references, but upload-ready `fastlane/screenshots` exports remain ignored local artifacts
+  - localization remains red on clean iOS trunk (`487 translated / 131 missing` in each launch locale except `it`, which is empty), and the screenshot plan still carries stale `0/618` locale claims
+  - apex-host universal-link parity and live App Store naming still drift from the current web/product story
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+  - outside this repo, normalize the stale screenshot-plan boundary/copy to build `701` + real locale counts, then finish one manual/device verification pass on the five open current-build ASC rows
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; clean-trunk iOS locales still miss `131` keys per launch locale and the screenshot plan’s locale counts are stale
+  - `2 App Store Connect Feedback Triage`: `blocked`; canonical feedback rows already ride build `701`, but manual/device proof is still missing
+  - `3 Sentry + Seer Error Hunter`: `blocked`; this client could not reopen readable current-build issue truth beyond the older boundary, and no FX/web issue mapped back to this repo
+  - `4 UX Feedback Triage Lead`: `blocked`; the highest-value visible work is still iOS manual-review closure, not a new FX/web product patch
+  - `5 Code Review + Clipdiff Auditor`: `shipped`; fixed the stale-rerun workflow drift gap, and `clipdiff` itself was unavailable locally
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; `www` is healthy, but apex AASA redirect and storefront naming still break canonical parity
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; `knip` stayed clean and no repo-owned dead-code slice beat the launch blockers
+  - `8 Architecture + Test Discipline Guardian`: `shipped`; the repo-owned fix carried a focused guard test plus full `check`/`smoke` proof
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; canonical snapshot references exist, but upload-ready screenshots remain non-canonical local artifacts
+  - `10 App Store SEO + Metadata God`: `blocked`; live App Store naming still drifts, even though current web support/metadata surfaces are healthy
+
 ## 2026-04-01 02:43 EDT
 
 - Launch stays `NO-GO` overall, but this run shipped one repo-owned release-safety fix on clean `resplit-currency-api` trunk instead of padding another FX fast-exit.
