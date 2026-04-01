@@ -1,5 +1,53 @@
 # Resplit Nurse Log
 
+## 2026-04-01 01:47 EDT
+
+- Launch stays `NO-GO`. No new repo-owned product fix shipped from `resplit-currency-api` because fresh proof says FX and live web are already current, and the honest next native move is current-build manual/device verification on TestFlight build `699`, not another speculative code push.
+- Fresh proof this run:
+  - hygiene:
+    - removed stale detached worktree `/private/tmp/resplit-currency-api-nurse-20260401-004001`
+    - trimmed `.agent-ledger/activity.jsonl` from `1097` rows to `200`
+    - attached checkout remains coordination-only: `main...origin/main [behind 23]` with local dirt in `.codex/hooks.json`, `.cursor/plans/resplit-nurse.log.md`, `currscript.js`, `tests/currscript.test.js`, and `.playwright-mcp/`
+    - `origin/main` is now `716a9a44` (`docs: checkpoint release room 0047`)
+  - FX release-train:
+    - clean trunk proof ran from `/private/tmp/resplit-currency-api-proof-20260401-014052` at `origin/main` `716a9a44`
+    - `npm ci`
+    - `npm run check` -> passed with `71/71` tests, publish date `2026-04-01`, `Snapshot window: 363 days (362 local, 0 network)`
+    - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+    - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5` still shows scheduled publish `23829231425` `success` and downstream Pages deploy `23829278310` `success`
+  - web / metadata perimeter:
+    - `npx vercel inspect https://www.resplit.app` -> production deploy `dpl_GCeN49tjBw7dcH9Lmt5CH2Ja6izr`, `Ready`, created `2026-04-01 01:31:45 EDT`
+    - `https://www.resplit.app/.well-known/apple-app-site-association` and `/join` return `HTTP/2 200`
+    - apex `https://resplit.app/.well-known/apple-app-site-association` and `/join` still return `HTTP/2 307`
+    - public App Store title is still stale: `<title>‎Resplit - Tip Calculator App - App Store`
+  - iOS / ASC / localization / screenshot / observability perimeter:
+    - `tuist auth whoami` on clean release lane `/private/tmp/resplit-release-current-20260401` -> `firstbitelabs`
+    - current native nurse truth now says the clean-trunk release boundary is build `699`, already processed/distributed to Friends & Family from `/private/tmp/resplit-release-current-20260401`; build `698` is superseded
+    - App Store feedback tracker now carries `38` open rows on the current boundary: `21 triaged`, `14 fixed`, `3 blocked`
+    - highest-value current-build rows remain `AJL5zdhVQuidwrAQWvQhqA8`, `AHvj42ztnb0ONkxEocozVI0`, `AH6YfriaM1853KhXLPEgqkg`, `AGtLA-kgK8CVsi5rPzzHuAM`, and `AILgPoYq0feGqc4wPKfb8MI`
+    - localization remains a launch blocker in current repo truth: `de-DE`, `en-US`, `es-ES`, and `fr-FR` are still `0/573`; `ja`, `ko`, `pt-BR`, `th`, and `zh-Hans` are `481/573`
+    - screenshot provenance is still blocked in the native screenshot plan, and one unmerged summary side-lane remains parked at `2da0ab44` (`fix: keep summary detail actions available`) without current-build device proof
+    - Sentry is still blocked from this client: no MCP surface in this thread, CLI issues query remains `403`, and repo-owned issue truth is still anchored on build `695` until build `699` generates readable traffic
+- Release execution status this run:
+  - `resplit-currency-api`: `already current` (clean-trunk gates passed and the scheduled April 1 publish/deploy train is green)
+  - `resplit-web`: `already current` (production deploy `dpl_GCeN49tjBw7dcH9Lmt5CH2Ja6izr` is ready; `www` AASA + `/join` are `200`)
+  - `resplit-ios`: `already current` (clean-trunk release lane already shipped TestFlight build `699`; the blocker is verification/screenshot/Sentry truth, not upload ability)
+- Exact next slice:
+  - manual/device verify build `699` for the summary/merge/screenshot queue, starting with `AJL5...` as fixed-until-verified and `AH6...` as the best remaining summary correctness row
+  - if `AH6...` still reproduces on build `699`, promote `2da0ab44` (or an equivalent same-surface summary fix) from a clean `origin/master` lane and then rerun the serialized native release path for the next build
+  - keep `resplit-currency-api` on fast-exit until a hosted publish/deploy/live FX surface turns red again
+- Role coverage summary:
+  - `1 Localization + Copy Sentinel`: `blocked`; launch locales still include four `0/573` catalogs and screenshot locale proof is still untrusted
+  - `2 App Store Connect Feedback Triage`: `blocked`; `38` open rows remain and the active boundary is now build `699`
+  - `3 Sentry + Seer Error Hunter`: `blocked`; this client still lacks issue-readable Sentry scope and build-`699` traffic truth
+  - `4 UX Feedback Triage Lead`: `blocked`; the highest-value visible next slice is build-`699` summary verification (`AH6...` / `AJL5...`)
+  - `5 Code Review + Clipdiff Auditor`: `no-op with proof`; the landed stale-rerun workflow guard is coherent and no fresh severity diff emerged
+  - `6 UX Uniformity + Canonical Surface Mayor`: `blocked`; live `www` is current, but apex-host parity and screenshot provenance still drift
+  - `7 Dead Code + Drift Analyzer`: `no-op with proof`; local `currscript` dirt already matches `origin/main` and no dead release slice outranked blockers
+  - `8 Architecture + Test Discipline Guardian`: `no-op with proof`; the clean native release lane already proved it can build and upload through build `699`
+  - `9 Screenshot + Snapshot + UI Test Sheriff`: `blocked`; screenshot provenance/manual review is still the hard blocker
+  - `10 App Store SEO + Metadata God`: `blocked`; live App Store naming is still stale and apex-host deep-link parity is still unresolved
+
 ## 2026-04-01 00:47 EDT
 
 - Launch stays `NO-GO` overall. No new repo-owned fix shipped in `resplit-currency-api`; FX and web are already current on fresh proof. The important blocker correction this run is native execution: `tuist` auth and signing are restored on this machine, so the old auth blocker is stale, but a fresh iOS upload is still blocked by the dirty/divergent native root, active build churn, unresolved build-`695` issues, and the open manual-review/screenshot queue.
