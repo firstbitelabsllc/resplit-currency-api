@@ -139,8 +139,17 @@ function promoteBuildOutput({
       }
 
       if (pathExists(backupRoot)) {
-        moveDir(backupRoot, destinationRoot)
-        destinationBackedUp = false
+        try {
+          moveDir(backupRoot, destinationRoot)
+          destinationBackedUp = false
+        } catch (error) {
+          const restoreError = new Error(
+            `Failed to restore ${destinationRoot} after promotion error (${promotionError.message}): ${error.message}`
+          )
+          restoreError.cause = promotionError
+          restoreError.restoreFailure = error
+          throw restoreError
+        }
       }
     }
 

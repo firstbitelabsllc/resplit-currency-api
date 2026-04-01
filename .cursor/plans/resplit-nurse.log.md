@@ -1,5 +1,28 @@
 # Resplit Nurse Log
 
+## 2026-04-01 19:54 EDT
+
+- Launch stays `NO-GO`, and this repo is still `GO`, but this run shipped one bounded repo-owned release-safety fix instead of another proof-only fast-exit.
+- What shipped:
+  - hardened `promoteBuildOutput` so a backup-restore failure no longer masks the original promotion failure
+  - added a regression test that proves the thrown restore error keeps the promotion failure on `cause` while still exposing the restore failure details
+- Fresh proof this run:
+  - clean lane `/Users/leokwan/Development/resplit-currency-api/.worktrees/mayor-restore-cause-20260401` from `origin/main` `e3b3b51e`
+  - `npm test` -> `72/72` passing
+  - `npm run check` -> `Fetched 166 currencies for 2026-04-01`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`, `72/72` passing
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `git diff --check` -> clean
+- Release execution status this run:
+  - `resplit-currency-api`: `shipped`; the publish/rollback path is now safer to debug if backup restoration fails mid-promote
+  - `resplit-web`: `already current`
+  - `resplit-ios`: still the release blocker; this lane intentionally stayed out of the dirty native roots and current ASC/manual-review ownership
+- Blockers:
+  - current launch blockers are still outside this repo: settled-build manual/device verification, screenshot provenance, apex-host universal-link parity, and live App Store metadata drift
+  - this repo now has no higher-priority unblocked launch-readiness slice than keeping the FX publish/train green on trunk
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+  - otherwise take the next honest launch slice in the clean iOS release room once the active build boundary and ownership settle
+
 ## 2026-04-01 04:57 EDT
 
 - Launch stays `NO-GO`, and this repo is still `GO`. No new FX/web code shipped because clean trunk remains healthy and there is no honest unowned product-red slice left in this room while `resplit-ios` is actively promoting `AI3` elsewhere.

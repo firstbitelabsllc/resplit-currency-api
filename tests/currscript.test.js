@@ -323,6 +323,61 @@ test('promoteBuildOutput restores the backup after partial promotion cleanup', (
   assert.equal(fs.existsSync(stagingRoot), false)
 })
 
+test('promoteBuildOutput preserves the promotion error when backup restore throws', (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-restore-fail-'))
+  const destinationRoot = path.join(tempRoot, 'package')
+  const backupRoot = path.join(tempRoot, 'package.backup')
+  const stagingRoot = path.join(tempRoot, 'package.staging')
+
+  t.after(() => {
+    fs.removeSync(tempRoot)
+  })
+
+  fs.mkdirpSync(destinationRoot)
+  fs.writeFileSync(path.join(destinationRoot, 'stale.txt'), 'stale')
+
+  assert.throws(
+    () => {
+      promoteBuildOutput({
+        destinationRoot,
+        backupRoot,
+        stagingRoot,
+        build: (root) => {
+          fs.writeFileSync(path.join(root, 'fresh.txt'), 'fresh')
+        },
+        moveDir: (source, destination) => {
+          if (source === stagingRoot && destination === destinationRoot) {
+            fs.mkdirpSync(destinationRoot)
+            fs.writeFileSync(path.join(destinationRoot, 'partial.txt'), 'partial')
+            throw new Error('promotion failed')
+          }
+
+          if (source === backupRoot && destination === destinationRoot) {
+            throw new Error('restore failed')
+          }
+
+          fs.moveSync(source, destination, { overwrite: false })
+        },
+        warn: () => {}
+      })
+    },
+    (error) => {
+      assert.match(
+        error.message,
+        /Failed to restore .* after promotion error \(promotion failed\): restore failed/
+      )
+      assert.equal(error.cause.message, 'promotion failed')
+      assert.equal(error.restoreFailure.message, 'restore failed')
+      return true
+    }
+  )
+
+  assert.equal(fs.existsSync(path.join(destinationRoot, 'partial.txt')), false)
+  assert.equal(fs.existsSync(path.join(destinationRoot, 'stale.txt')), false)
+  assert.equal(fs.existsSync(backupRoot), true)
+  assert.equal(fs.existsSync(stagingRoot), false)
+})
+
 test('bestEffortRemoveDir tolerates transient cleanup failures', () => {
   let attempts = 0
   let exists = true
