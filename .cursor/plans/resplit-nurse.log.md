@@ -1,5 +1,25 @@
 # Resplit Nurse Log
 
+## 2026-04-02 01:50 EDT
+
+- Launch stays `NO-GO` overall, but the brief web trust regression is already resolved. No new repo-owned FX code shipped from this room; the useful change in this pass is correcting the just-landed blocker map now that `origin/master` restored the production `/support` route and live web is back to green.
+- Fresh proof this run:
+  - parallel iOS/web trunk moved again while this pass was open: `git fetch origin --prune` now shows `origin/master` at `5becf327` (`fix: restore web support route`)
+  - `git ls-tree -r origin/master --name-only | rg 'resplit-web/app/support/page.tsx'` now returns the support page again, and `git show origin/master:resplit-web/lib/siteMetadata.ts | rg '/support'` confirms `/support` is back in the sitemap/static route set
+  - live web perimeter recheck after that push: `https://www.resplit.app/support` -> `HTTP/2 200`, `https://www.resplit.app/.well-known/apple-app-site-association` -> `HTTP/2 200`, `https://www.resplit.app/join` -> `HTTP/2 200`
+  - current iOS release truth remains healthy: direct ASC proof still shows build `706` is `VALID`, `sentry-cli releases info resplit-ios@2.0.0+706` resolves, `search_issues(... release resplit-ios@2.0.0+706 ...)` still returns none, and `search_events(... count of production errors ... 24 hours)` is still `0`
+  - FX remains current from the earlier `01:35 EDT` proof: `npm run smoke:deploy` passed on `2026-04-02`, and live Pages + Worker probes stayed green
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `already current`; `/support` is restored live after `origin/master` `5becf327`
+  - `resplit-ios`: `already current`; build `706` is valid and quiet, with launch still gated by manual/device and screenshot review rather than upload plumbing
+- Blockers:
+  - overall launch blockers remain build-`706` manual/device verification, screenshot/manual framing review, apex-host universal-link parity, and the stale live App Store title
+  - the attached `resplit-currency-api` root is still stale/dirty versus `origin/main`; keep shipping from clean worktrees only
+- Exact next slice:
+  - take the first honest build-`706` manual/device verification or ASC screenshot-state pass from the clean iOS room
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+
 ## 2026-04-02 01:35 EDT
 
 - Launch stays `NO-GO` overall. No new repo-owned code shipped from this room because FX is still healthy on trunk, iOS release auth + ASC + Sentry truth are now cleanly open on build `706`, and the highest-value new regression is a production web `/support` `404` that is already claimed in a dedicated hot worktree rather than safe to duplicate here.
