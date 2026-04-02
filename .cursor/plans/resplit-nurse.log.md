@@ -1,5 +1,27 @@
 # Resplit Nurse Log
 
+## 2026-04-02 01:35 EDT
+
+- Launch stays `NO-GO` overall. No new repo-owned code shipped from this room because FX is still healthy on trunk, iOS release auth + ASC + Sentry truth are now cleanly open on build `706`, and the highest-value new regression is a production web `/support` `404` that is already claimed in a dedicated hot worktree rather than safe to duplicate here.
+- Fresh proof this run:
+  - hygiene: removed the detached proof worktree `/private/tmp/resplit-currency-api-proof-20260401-205402`, removed `.worktrees/mayor-proof-20260401-205449`, and deleted merged branch `codex/mayor-proof-20260401-205449`; disk still has `248Gi` free
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-02, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - live FX perimeter on the new day boundary: `https://resplit-currency-api.pages.dev/latest/aed.json` now returns `date=2026-04-02`, `166` rates; `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-04-02` resolves `exact`; `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-04-02&days=30` returns `mismatchCount=0`
+  - iOS environment truth visibly changed versus the last blocked passes: `tuist auth whoami` now returns `firstbitelabs`, direct ASC JWT proof shows build `706 | 2026-04-01T02:02:21-07:00 | VALID | false` as the current boundary, `sentry-cli releases info resplit-ios@2.0.0+706` resolves, `search_issues(firstbite-labs/resplit-ios, 'unresolved production issues in release resplit-ios@2.0.0+706 from the last 7 days')` returns none, and `search_events(... 'count of production errors for release resplit-ios@2.0.0+706 in the last 24 hours')` returns `count() = 0`
+  - production web trust regressed from the last checkpoint: `https://www.resplit.app/support` now returns `HTTP/2 404` while `https://www.resplit.app/.well-known/apple-app-site-association` and `/join` still return `HTTP/2 200`; bare `https://resplit.app/.well-known/apple-app-site-association` and `/join` still `307`
+  - the exact `/support` surface is already owned elsewhere: `/private/tmp/resplit-support-fix-20260402` contains a minimal pending fix re-adding `resplit-web/app/support/page.tsx`, restoring `/support` to `resplit-web/lib/siteMetadata.ts` + `resplit-web/lib/siteMetadata.test.ts`, and linking `/support` in `resplit-web/src/components/marketing/Footer.tsx`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`; smoke and live FX probes are green on `2026-04-02`
+  - `resplit-web`: `blocked`; production `www` `/support` is `404`, and the exact fix surface is already claimed in `/private/tmp/resplit-support-fix-20260402`
+  - `resplit-ios`: `already current`; build `706` is valid and observability-clean from this lane's proof, but manual/device verification and screenshot/manual-review closure still gate launch
+- Blockers:
+  - the current user-visible blocker is the claimed production web `/support` regression; do not open a second overlapping web edit lane while `/private/tmp/resplit-support-fix-20260402` is hot
+  - overall launch blockers outside this repo remain build-`706` manual/device verification, screenshot/manual framing review, apex-host universal-link parity, and the stale live App Store title
+  - the attached `resplit-currency-api` root is still stale/dirty versus `origin/main`; keep shipping from clean worktrees only
+- Exact next slice:
+  - promote or finish the existing `/support` fix from `/private/tmp/resplit-support-fix-20260402`, because it is now the top trust regression on live web
+  - once `/support` is restored, resume the first honest build-`706` manual/device or ASC screenshot-state pass; keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red
+
 ## 2026-04-01 20:57 EDT
 
 - Launch stays `NO-GO` overall, and this repo remains `GO`. No new repo-owned FX patch was warranted because clean trunk stayed green and the automated daily publish finished successfully on the just-proved head; the useful move in this run was refreshing the central checkpoint onto the new `2026-04-02` archive boundary.
