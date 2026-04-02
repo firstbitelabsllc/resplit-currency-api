@@ -3,7 +3,7 @@
 ## 2026-04-02 16:04 EDT
 
 - Launch stays `NO-GO` overall, but `resplit-currency-api` is `GO/current` and no repo-owned code shipped.
-- Shipped delta: repo checkpoint only. Fresh disposable worktree `/private/tmp/resplit-currency-api-worktrees/codex/vidux-20260402-160245-fx-proof` on branch `codex/vidux-20260402-160245-fx-proof` re-proved `origin/main` at `c44c8dca` (`docs: checkpoint fx external blocker`) and landed this updated one-screen checkpoint on `main` as `f471f280` (`docs: checkpoint fx fast-exit 2026-04-02 1604 edt`).
+- Shipped delta: repo checkpoint only. Fresh disposable worktree `/private/tmp/resplit-currency-api-worktrees/codex/vidux-20260402-160245-fx-proof` on branch `codex/vidux-20260402-160245-fx-proof` re-proved `origin/main` at `c44c8dca` (`docs: checkpoint fx external blocker`) and replayed the updated one-screen checkpoint back onto `main` in this run.
 - Fresh proof:
   - `npm ci`
   - `npm run check` -> `72/72` tests green, generated package clean, `snapshot-archive/` stayed clean
