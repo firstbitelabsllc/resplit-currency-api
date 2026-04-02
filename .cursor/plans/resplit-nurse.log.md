@@ -1,18 +1,17 @@
 # Resplit Nurse Log
 
-## 2026-04-02 05:04 EDT
+## 2026-04-02 06:03 EDT
 
-- `NO-GO`. No repo-owned product/runtime delta shipped because the fresh `resplit-currency-api` runtime boundary stayed green/current under this checkpoint: the last non-log trunk commit is `6f236f90`, and the launch hold remains external in `resplit-ios` build-`733` screenshot/manual-review/device lanes.
-- Shipped delta: checkpoint-only proof from disposable worktree `/private/tmp/codex-vidux-20260402-050224-fx-proof` on branch `codex/vidux-20260402-050224-fx-proof`, replayed to `origin/main` as a docs-only checkpoint; no FX patch was needed.
-- Current build boundary: last non-log trunk boundary `6f236f90`; GitHub Actions `Update Currency Rates` `23880635613` and downstream `pages build and deployment` `23880665138` are both `success`, with Pages latest, dated snapshot, GitHub Pages fallback, and Worker all serving `2026-04-02`.
-- Fresh proof:
+- `NO-GO` overall. `resplit-currency-api` is still `GO` on a fresh clean-trunk proof lane, so no repo-owned product/runtime code shipped and the launch hold remains external in `resplit-ios` build-`733` screenshot/manual-review/device work.
+- Shipped delta: none in product/runtime. This run only refreshed the repo checkpoint from disposable worktree `/private/tmp/codex-vidux-20260402-060143-fx-proof` on branch `codex/vidux-20260402-060143-fx-proof`.
+- Current build boundary: `origin/main` `d6ba6284` is still green. GitHub Actions `Update Currency Rates` `23880635613` and downstream `pages build and deployment` `23880665138` are both `success`, and Pages latest, the dated `2026-04-02` snapshot, GitHub Pages fallback, and the canonical Worker all serve `2026-04-02`.
+- Proof:
   - `npm ci`
   - `npm run check` -> `72/72` tests green; `Fetched 166 currencies for 2026-04-02`; `Snapshot window: 363 days`
   - `npm run smoke:deploy` -> `OK (date=2026-04-02, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
-  - live probes matched deploy truth: latest `aed.json`, history `30` points, dated `2026-04-02` snapshot, GitHub Pages fallback, Worker quote `AED -> USD` exact for `2026-04-02`, Worker coverage `availableDays=30`, `missingDayCount=0`, `archiveGapCount=0`
-- Known work: repo fast-exit is still honest; nothing inside `resplit-currency-api` outranks the external iOS launch blockers.
-- Unknown work surfaced: none repo-owned; latest workflow/runbook/CDN/Worker truth all stayed green from the clean lane.
-- Forgotten work surfaced: process-only drift remains local, not shippable product work. The attached and sibling Codex worktrees still sit at `89554aed`, and `.agent-ledger/` is still absent locally, so future FX passes must fetch before quoting trunk and keep using this log plus workflow/runbook truth as the queue.
-- Blocker: external only — `resplit-ios` screenshot provenance/manual review, western-locale scope, and build-`733` device verification.
-- Exact next slice: keep `resplit-currency-api` on fast-exit unless workflow/runbook truth turns red; next meaningful shipper owner belongs on current-build/manual verification in `resplit-ios`.
-- Latency: `hygiene` 1m; `discovery` 3m; `implementation` 0m; `proof/wait` 4m.
+  - live probes -> Pages latest `2026-04-02`; dated snapshot `2026-04-02` with `166` rates; GitHub fallback `2026-04-02`; Worker quote `2026-04-02 exact`; Worker coverage `availableDays=30`, `missingDayCount=0`, `archiveGapCount=0`
+- Known work: keep FX on fast-exit unless publish/runbook/live truth turns red.
+- Unknown work surfaced: none repo-owned. The clean lane stayed green and left no diff after regeneration.
+- Forgotten work surfaced: process-only debt remains. The attached checkout is still detached/stale at `89554aed`, and `.agent-ledger/` is still absent despite `AGENTS.md` / `RALPH.md` pointing at it, so future FX passes must keep trusting fresh fetch + worktree proof over local-root state.
+- Exact next slice: return shipper pressure to `resplit-ios` build-`733` manual/device verification. Only reopen `resplit-currency-api` if the next workflow run, live CDN probe, or Worker coverage check turns red.
+- Latency: `hygiene` 1m; `discovery` 4m; `implementation` 0m; `proof/wait` 4m.
