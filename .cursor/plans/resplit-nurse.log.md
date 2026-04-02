@@ -1,5 +1,29 @@
 # Resplit Nurse Log
 
+## 2026-04-01 20:07 EDT
+
+- Launch stays `NO-GO` overall, and this repo remains `GO`. No new FX code shipped from this lane because current trunk already carries the bounded publish-path fix `3d238c5c`, and the useful move in this run was correcting the cross-repo release boundary here from stale build `700` truth to the actual current `706` manual-review boundary.
+- Fresh proof this run:
+  - clean lane `/Users/leokwan/Development/resplit-currency-api/.worktrees/mayor-restore-cause-20260401` on `origin/main` `3d238c5c`
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 5 --json ...` -> latest manual publish `23876748497` finished `success` on head `3d238c5c`, and downstream Pages deploy `23876781437` also finished `success`
+  - `curl -s 'https://fx.resplit.app/quote?from=AED&to=USD&date=2026-04-01' | python3 ...` -> `{requestedDate: 2026-04-01, resolvedDate: 2026-04-01, resolutionKind: exact}`
+  - `tuist auth whoami` -> `firstbitelabs`
+  - direct ASC API-key proof -> newest build `706 | 2026-04-01T02:02:21-07:00 | VALID | false`, ahead of `705` and `704`
+  - `sentry-cli releases info 'resplit-ios@2.0.0+706'` -> release row exists (`Date created | 2026-04-01 14:10:38.353878 UTC`)
+  - `cd /Users/leokwan/Development/resplit-ios/resplit-web && npx vercel inspect https://www.resplit.app` -> production deploy `dpl_8WtTWgw5cnuhuaAe2om1qQmAVZ3W`, `Ready`
+  - `curl -I -s https://www.resplit.app/.well-known/apple-app-site-association | head -n 1` and `https://www.resplit.app/join` -> `HTTP/2 200`; bare `https://resplit.app/.well-known/apple-app-site-association` and `https://resplit.app/join` still `HTTP/2 307`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`; latest manual publish + Pages deploy both completed successfully on `3d238c5c`
+  - `resplit-web`: `already current`; production is `dpl_8WtTWgw5cnuhuaAe2om1qQmAVZ3W`, while apex-host AASA and `/join` still redirect
+  - `resplit-ios`: `already current`; build `706` is the active manual-review boundary from this lane's direct ASC proof, and no new upload ran here because the safe product fixes were already on trunk or actively owned elsewhere
+- Blockers:
+  - overall launch blockers remain outside this repo: build-`706` manual/device verification, screenshot/manual framing review, apex-host universal-link parity, and the stale live App Store title
+  - the attached `resplit-currency-api` root is still stale/dirty versus `origin/main`; keep shipping from clean worktrees only
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+  - otherwise take the first honest build-`706` manual/device verification pass or ASC screenshot-state check from the clean iOS room instead of fabricating another FX/web patch
+
 ## 2026-04-01 20:00 EDT
 
 - Launch stays `NO-GO` overall, and this repo remains `GO`. No new FX code shipped from this lane because current trunk already carries the bounded publish-path fix `3d238c5c`; the useful release move in this run was to prove that trunk cleanly and kick the real publish/deploy train on it.
