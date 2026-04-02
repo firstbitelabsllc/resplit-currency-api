@@ -1,5 +1,27 @@
 # Resplit Nurse Log
 
+## 2026-04-01 20:57 EDT
+
+- Launch stays `NO-GO` overall, and this repo remains `GO`. No new repo-owned FX patch was warranted because clean trunk stayed green and the automated daily publish finished successfully on the just-proved head; the useful move in this run was refreshing the central checkpoint onto the new `2026-04-02` archive boundary.
+- Fresh proof this run:
+  - clean lane `/Users/leokwan/Development/resplit-currency-api/.worktrees/mayor-proof-20260401-205449`; it proved `origin/main` `76ef07d6`, then fast-forwarded to `a8bab9e5` after GitHub Actions committed `chore: archive daily snapshot 2026-04-02`
+  - `npm ci`
+  - `npm run check` on `76ef07d6` -> `Fetched 166 currencies for 2026-04-02`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`, `72/72` passing
+  - `npm run smoke:deploy` before the fresh publish completed -> `smoke-check-deploy: OK (date=2026-04-01, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `gh run view 23878320429 --json status,conclusion,jobs` -> manual `Update Currency Rates` run finished `success` on head `76ef07d6`, with deploy + smoke steps all green through `Finish Sentry publish check-in`
+  - downstream `pages build and deployment` run `23878354496` also finished `success`
+  - live perimeter after the workflow closed: both `https://resplit-currency-api.pages.dev/latest/aed.json` and `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` now return `date=2026-04-02`, `fx.resplit.app/quote?from=AED&to=USD&date=2026-04-01` still resolves `exact`, and `fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-04-01&days=30` reports `availableDays=30`, `archiveLatestDate=2026-04-02`, `mismatchCount=0`
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`; the daily publish completed successfully, and `origin/main` is now `a8bab9e5`
+  - `resplit-web`: `not reopened`; the prior `20:07 EDT` proof still stands, and apex-host AASA + `/join` remain external/platform blockers
+  - `resplit-ios`: `not reopened`; build-`706` manual/device verification plus screenshot/manual framing review remain the actual launch blockers outside this repo
+- Blockers:
+  - overall launch blockers remain outside this repo: build-`706` manual/device verification, screenshot/manual framing review, apex-host universal-link parity, and the stale live App Store title
+  - the attached `resplit-currency-api` root is still stale/dirty versus `origin/main`; keep shipping from clean worktrees only
+- Exact next slice:
+  - keep `resplit-currency-api` on fast-exit unless publish/smoke/live FX truth turns red again
+  - otherwise take the first honest clean iOS build-`706` manual/device or ASC screenshot-state pass instead of fabricating another FX/web patch
+
 ## 2026-04-01 20:07 EDT
 
 - Launch stays `NO-GO` overall, and this repo remains `GO`. No new FX code shipped from this lane because current trunk already carries the bounded publish-path fix `3d238c5c`, and the useful move in this run was correcting the cross-repo release boundary here from stale build `700` truth to the actual current `706` manual-review boundary.
