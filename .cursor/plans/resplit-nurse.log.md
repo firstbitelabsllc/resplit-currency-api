@@ -4,7 +4,7 @@
 
 - `NO-GO`. No repo-owned product/runtime delta shipped because fresh `resplit-currency-api` trunk is still green/current on `origin/main` `6d3246ff`; the launch hold remains external in the `resplit-ios` screenshot/manual-review/device lanes.
 - Shipped delta: checkpoint-only repo log refresh from disposable worktree `/private/tmp/resplit-currency-api-20260402-030215-fx-proof` on branch `codex/vidux-20260402-030215-fx-proof`; no FX patch was needed.
-- Current boundary: `origin/main` `6d3246ff` (`docs: checkpoint fx fast exit`) with GitHub Actions `Update Currency Rates` `23880635613` and downstream `pages build and deployment` `23880665138` both `success`.
+- Current boundary: `origin/main` `0aa83eeb` (`docs: checkpoint fx fast exit`) with GitHub Actions `Update Currency Rates` `23880635613` and downstream `pages build and deployment` `23880665138` both `success`.
 - Fresh proof:
   - `npm ci`
   - `npm run check` -> `72/72` tests green; generated unversioned files for `2026-04-02`
