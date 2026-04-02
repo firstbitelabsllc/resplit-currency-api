@@ -1,5 +1,35 @@
 # Resplit Nurse Log
 
+## 2026-04-01 22:09 EDT
+
+- Launch stays `NO-GO` overall, and this repo remains `GO`. No new repo-owned FX or web code shipped because clean `origin/main` is still green/current; the honest move in this pass is a discovery-backed checkpoint that updates the blocker map after App Store feedback and current-build Sentry truth moved again outside this repo.
+- Discovery report before queue choice:
+  - `RALPH.md` remains correct: `resplit-currency-api` is still a fast-exit surface when local proof is green and the launch hold lives in `resplit-ios`.
+  - `ruby scripts/asc_beta_feedback.rb sync-plan --plan .cursor/plans/app-store-feedback.plan.md` in `/Users/leokwan/Development/resplit-ios` moved the tracker from `Open: 38` to `Open: 43`; four new screenshot IDs landed in this refresh (`AO0gJGF6eCDA2xxzpbXqpWU`, `AFbKS_qdnjRqC6_CmAQT4Io`, `AOzHk1mzhUbrOmllKhPELls`, `APYfLzWXBYHH_i1e7rdbpLw`) and are still `pending triage`.
+  - Sentry release truth is now ahead of the iOS plans: `find_releases(firstbite-labs/resplit-ios, query '2.0.0+')` shows releases through `resplit-ios@2.0.0+732`, created `2026-04-02T01:55:28Z`, while the screenshot and feedback plans are still anchored on build `706`.
+  - Current-build health is not actually quiet: `search_issues(firstbite-labs/resplit-ios, 'unresolved production issues in the last 7 days for release resplit-ios@2.0.0+706')` now returns `RESPLIT-IOS-D8`, and `search_events(... 'count of production errors in the last 24 hours for release resplit-ios@2.0.0+706')` returns `count() = 1`.
+  - `get_sentry_resource(RESPLIT-IOS-D8)` shows `ResplitCore.FXRateError: currencyNotFound("AUD")`, `monitoring.signal=fx_historical_lookup_exhausted`, `88` events across `3` users, last seen `2026-04-02T01:59:58Z`, so the release-room assumption that build `706` is observability-clean is now stale.
+  - Localization is still materially incomplete: `/Users/leokwan/Development/resplit-ios/ResplitCore/Resources/Localizable.xcstrings` remains `0 translated / 573 missing` for `de-DE`, `en-US`, `es-ES`, `fr-FR`, and `it`; `ja`, `ko`, `pt-BR`, `th`, and `zh-Hans` are still only `481 translated / 92 missing`.
+  - Warm-palette parity is still open on web: `/Users/leokwan/Development/resplit-ios/resplit-web/src/styles/tokens.css` continues to define colder blues (`#f5f8ff`, `#0a69aa`, `#556ccd`, etc.) rather than the Resplit 2.0 warm palette contract.
+  - `@Observable` surfaces without `@MainActor` are still present in the iOS tree, including `ResplitCore/UI/ToastModifier.swift`, `ResplitCore/Camera + Photos/OverlayPresenter.swift`, `ResplitCore/Camera + Photos/FullScreenImageView.swift`, `ResplitCore/Persistence+CloudKit/CloudKitManager.swift`, `ResplitCore/Receipt List Container/ReceiptRowView.swift`, and `ResplitCore/Walkthroughs/WalkthroughManager.swift`.
+- Fresh proof this run:
+  - clean worktree `/private/tmp/resplit-vidux-1775095753` on `origin/main` `83888797`
+  - `npm ci`
+  - `npm run check` -> `Fetched 166 currencies for 2026-04-02`, `validate-package: OK (166 currencies, history points=30, sample=usd->eur)`, `72/72` passing
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-02, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `npx --yes knip@latest --no-progress --reporter compact` -> clean/no issues
+- Release execution status this run:
+  - `resplit-currency-api`: `already current`
+  - `resplit-web`: `not reopened`; the newly surfaced color/spacing debt is real, but it lives on the iOS/web release board rather than in a repo-owned FX runtime slice
+  - `resplit-ios`: `blocked external from this repo`; the release board needs one serialized owner to reconcile the build boundary and triage `RESPLIT-IOS-D8` plus the four new ASC screenshot rows before another native code lane is honest
+- Blockers:
+  - current launch truth is stale across iOS plans: build-`706` manual-review language no longer matches the newer Sentry release surface
+  - unresolved `RESPLIT-IOS-D8` plus four new screenshot feedback rows mean "manual/device only" is no longer the full blocker story
+  - localization and warm-palette parity remain materially incomplete
+- Exact next slice:
+  - one clean iOS plan owner should refresh the release boundary, triage the four new ASC IDs plus `RESPLIT-IOS-D8`, and then choose exactly one concrete native or web fix lane from that refreshed board
+  - keep `resplit-currency-api` on fast-exit unless publish, smoke, or live FX endpoints turn red again
+
 ## 2026-04-02 01:50 EDT
 
 - Launch stays `NO-GO` overall, but the brief web trust regression is already resolved. No new repo-owned FX code shipped from this room; the useful change in this pass is correcting the just-landed blocker map now that `origin/master` restored the production `/support` route and live web is back to green.
