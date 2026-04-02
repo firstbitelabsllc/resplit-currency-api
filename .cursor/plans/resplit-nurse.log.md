@@ -2,9 +2,9 @@
 
 ## 2026-04-02 05:04 EDT
 
-- `NO-GO`. No repo-owned product/runtime delta shipped because fresh `resplit-currency-api` trunk is still green/current on `origin/main` `6f236f90`; the launch hold remains external in `resplit-ios` build-`733` screenshot/manual-review/device lanes.
-- Shipped delta: checkpoint-only proof from disposable worktree `/private/tmp/codex-vidux-20260402-050224-fx-proof` on branch `codex/vidux-20260402-050224-fx-proof`; no FX patch was needed.
-- Current build boundary: `origin/main` `6f236f90`; GitHub Actions `Update Currency Rates` `23880635613` and downstream `pages build and deployment` `23880665138` are both `success`, with Pages latest, dated snapshot, GitHub Pages fallback, and Worker all serving `2026-04-02`.
+- `NO-GO`. No repo-owned product/runtime delta shipped because the fresh `resplit-currency-api` runtime boundary stayed green/current under this checkpoint: the last non-log trunk commit is `6f236f90`, and the launch hold remains external in `resplit-ios` build-`733` screenshot/manual-review/device lanes.
+- Shipped delta: checkpoint-only proof from disposable worktree `/private/tmp/codex-vidux-20260402-050224-fx-proof` on branch `codex/vidux-20260402-050224-fx-proof`, landed on `origin/main` as `32fb4098`; no FX patch was needed.
+- Current build boundary: last non-log trunk boundary `6f236f90`; GitHub Actions `Update Currency Rates` `23880635613` and downstream `pages build and deployment` `23880665138` are both `success`, with Pages latest, dated snapshot, GitHub Pages fallback, and Worker all serving `2026-04-02`.
 - Fresh proof:
   - `npm ci`
   - `npm run check` -> `72/72` tests green; `Fetched 166 currencies for 2026-04-02`; `Snapshot window: 363 days`
