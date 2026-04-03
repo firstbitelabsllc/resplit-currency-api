@@ -1,5 +1,26 @@
 # Resplit Nurse Log
 
+## 2026-04-02 20:06 EDT
+
+- Launch stays `NO-GO` overall, but `resplit-currency-api` is `GO/current` again after this run repaired the UTC rollover publish gap from a fresh clean worktree.
+- Shipped delta: clean disposable lane `/private/tmp/codex-vidux-20260402-200212-fx-proof` on branch `codex/vidux-20260402-200212-fx-proof` re-proved trunk, detected that local `npm run check` could already generate `2026-04-03` while live Pages, GitHub Pages, and `https://fx.resplit.app` were still on `2026-04-02`, then dispatched `gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api`. That workflow landed `9f47cd52` (`chore: archive daily snapshot 2026-04-03`) on `origin/main`, downstream Pages deploy `23927685528` finished green, and this checkpoint is the only follow-up repo edit.
+- Fresh proof:
+  - `npm ci`
+  - `npm run check` -> `72/72` tests green; local archive rotated cleanly to `2026-04-03`
+  - `npm run smoke:deploy` -> `OK (date=2026-04-02, historyPoints=30, cf=https://resplit-currency-api.pages.dev)` before the rerun, proving the prior-day train was otherwise healthy
+  - `gh run watch 23927654991 --repo firstbitelabsllc/resplit-currency-api --exit-status` -> `success`
+  - `gh run watch 23927685528 --repo firstbitelabsllc/resplit-currency-api --exit-status` -> `success`
+  - post-publish live probes now agree on `2026-04-03`: `https://resplit-currency-api.pages.dev/latest/aed.json`, `https://2026-04-03.resplit-currency-api.pages.dev/snapshots/base-rates.json`, and `https://firstbitelabsllc.github.io/resplit-currency-api/latest/aed.json` all serve current data; `https://fx.resplit.app/quote?from=AED&to=USD&date=2026-04-03` resolves `exact`; `https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-04-03&days=30` also reports exact current-day coverage
+- Unknown / forgotten work surfaced:
+  - forgotten process gap: a new UTC day can be locally generatable before GitHub cron fires; when no active run exists, the safe recovery is a manual `gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api` plus full end-to-end re-proof, not a fast-exit
+  - non-blocking debt: downstream `pages-build-deployment` still emits Node 20 deprecation annotations for `actions/checkout@v4`, `actions/upload-artifact@v4`, and `actions/deploy-pages@v4`; queue a workflow-action bump before GitHub forces Node 24 on June 2, 2026
+- Blocker: external only — `resplit-ios` Task 9 manual/TestFlight verification on build `876`
+- Exact next slice: keep `resplit-currency-api` on fast-exit unless the UTC-day publish train lags again or workflow/live health turns red; otherwise keep shipper pressure on `resplit-ios`
+- Current build boundary: FX publish date `2026-04-03`; latest green workflow `23927654991`; downstream Pages deploy `23927685528`; trunk snapshot commit `9f47cd52`
+- Latency: `hygiene` `1m`, `discovery` `7m`, `implementation` `1m`, `proof/wait` `4m`
+
+<promise>COMPLETE</promise>
+
 ## 2026-04-02 17:05 EDT
 
 - Launch stays `NO-GO` overall, but `resplit-currency-api` is still `GO/current` and no repo-owned product code shipped.
