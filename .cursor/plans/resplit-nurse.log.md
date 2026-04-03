@@ -1,5 +1,24 @@
 # Resplit Nurse Log
 
+## 2026-04-02 22:09 EDT
+
+- Launch stays `NO-GO` overall, but `resplit-currency-api` is `GO/current` with no repo-owned product regression on trunk.
+- Shipped delta: docs checkpoint only from fresh disposable worktree `/private/tmp/codex-vidux-20260402-220226-fx-fast-exit-proof` on branch `codex/vidux-20260402-220226-fx-fast-exit-proof`; no runtime code changes were needed.
+- Fresh proof:
+  - `npm ci`
+  - `npm run check` -> `72/72` tests green; local package generation and validation stayed clean for UTC `2026-04-03`
+  - `npm run smoke:deploy` -> `OK (date=2026-04-03, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - runbook live probes with explicit `User-Agent` confirm current-day publish surfaces: Pages latest/history/manifest, dated snapshot host, GitHub Pages fallback, Worker quote (`resolvedDate=2026-04-03`, `resolutionKind=exact`), and Worker coverage (`availableDays=30`, `missingDayCount=0`, `mismatchCount=0`)
+- Unknown / forgotten work surfaced:
+  - unknown harness drift: this detached Codex worktree does not carry the local `.agent-ledger/` folder; canonical ledger truth still lives in `/Users/leokwan/Development/resplit-currency-api/.agent-ledger/`, so that path must stay the coordination source for nurse runs
+  - forgotten probe caveat: plain `python urllib` reads can return `403` here while `curl` + smoke script remain green; keep `npm run smoke:deploy` plus runbook curl probes as release truth before calling FX red
+- Blocker: external only — `resplit-ios` Task 9 manual/TestFlight verification on build `876`, plus triage/mapping for new screenshot rows `ADimVsuZxBw80Qv2HwQjqDU`, `AGBiutZBM9PlNsQOpAPCI1s`, and `ALrqt6_vQbochwnlU2kI53U`
+- Exact next slice: keep `resplit-currency-api` on fast-exit unless workflow/runbook truth turns red; otherwise keep shipper pressure on `resplit-ios` current-build verification and screenshot mapping
+- Current build boundary: trunk `origin/main` `ba1b0536`; FX publish date `2026-04-03`; live Worker coverage green at `days=30`
+- Latency: `hygiene` `2m`, `discovery` `11m`, `implementation` `2m`, `proof/wait` `7m`
+
+<promise>SKIP: external blocker</promise>
+
 ## 2026-04-02 20:06 EDT
 
 - Launch stays `NO-GO` overall, but `resplit-currency-api` is `GO/current` again after this run repaired the UTC rollover publish gap from a fresh clean worktree.
