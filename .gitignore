@@ -3,4 +3,7 @@ links.ini
 node_modules/
 package/
 .env.local
-.agent-ledger/
+.agent-ledger/*
+!.agent-ledger/
+!.agent-ledger/activity.jsonl
+!.agent-ledger/hot-files.md

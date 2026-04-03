@@ -1,5 +1,25 @@
 # Resplit Nurse Log
 
+## 2026-04-03 03:36 EDT
+
+- `NO-GO` overall launch; `GO/current` for `resplit-currency-api`.
+- Shipped delta: process-hardening slice landed from clean lane `/Users/leokwan/Development/resplit-currency-api-worktrees/codex/vidux-20260403-033344-fx-proof` (`codex/vidux-20260403-033344-fx-proof`) to make repo-local coordination durable: `.agent-ledger/activity.jsonl` + `.agent-ledger/hot-files.md` now exist on trunk and `.gitignore` now tracks those two ledger files while still ignoring other `.agent-ledger/*` noise.
+- Fresh proof:
+  - `npm ci`
+  - `npm run check` -> `72/72` tests green (rerun after ledger-file edits).
+  - `npm run smoke:deploy` -> `OK (date=2026-04-03, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - Runbook probes (explicit `User-Agent`) still resolve `2026-04-03` across Cloudflare latest, dated snapshot host, GitHub Pages fallback, Worker quote (`resolvedDate=2026-04-03`), and Worker coverage (`historyCoverage.availableDays=30`, `missingDayCount=0`, `archiveGapCount=0`).
+  - GitHub Actions head remains green for FX publish/deploy: `23930995489` (`Update Currency Rates`) and `23931026119` (`pages build and deployment`).
+- Known / unknown / forgotten work surfaced:
+  - known: external blocker unchanged — `resplit-ios` Task 9 manual/TestFlight verification on build `876`, plus mapped current-build rows in `.cursor/plans/app-store-feedback.plan.md`.
+  - unknown: the new repo-local ledger scaffold is now versioned, but cross-agent stop-hook adoption in this repo is still unproven until fresh entries appear in `.agent-ledger/activity.jsonl`.
+  - forgotten: closed recurring coordination debt where AGENTS/RALPH required `.agent-ledger/*` but trunk ignored the directory entirely, causing every nurse preflight read to fail.
+- Exact next slice: keep `resplit-currency-api` on fast-exit unless workflow/runbook truth turns red; if no FX regressions appear, maintain pressure on `resplit-ios` build-`876` manual/TestFlight verification and ASC row closure.
+- Current build boundary: trunk `origin/main` `97f596de` before this slice; FX publish date `2026-04-03`; Worker 30-day coverage green.
+- Latency: `hygiene` `10m`, `discovery` `18m`, `implementation` `11m`, `proof/wait` `14m`.
+
+<promise>COMPLETE</promise>
+
 ## 2026-04-03 02:36 EDT
 
 - `NO-GO` overall launch; `GO/current` for `resplit-currency-api`.
