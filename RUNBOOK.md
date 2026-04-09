@@ -53,6 +53,60 @@ What to inspect:
   checks against the requested anchor date.
 - `signals` should stay empty on healthy current-day runs; non-empty means fallback or gaps were used.
 
+## Authoritative Cross-Repo Proof Set
+
+Use this sequence when you need one fresh proof bundle that the publisher, Worker, web mirror,
+and iOS consumer still agree on the live contract.
+
+### 1. Publisher + CDN
+
+```bash
+gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3
+cd /Users/leokwan/Development/resplit-currency-api
+npm run smoke:deploy
+```
+
+Pass criteria:
+- the latest `Update Currency Rates` run is `success`
+- `npm run smoke:deploy` ends with `smoke-check-deploy: OK (...)`
+- the smoke output reports today's `date` plus a non-empty 30-day history payload
+
+### 2. Worker + web mirror parity
+
+```bash
+anchor=$(date -u +%Y-%m-%d)
+start=$(date -u -v-7d +%Y-%m-%d)
+
+curl -fsSL "https://fx.resplit.app/quote?from=USD&to=EUR&date=$anchor" | python3 -m json.tool
+curl -fsSL "https://www.resplit.app/api/fx/quote?from=USD&to=EUR&date=$anchor" | python3 -m json.tool
+
+curl -fsSL "https://fx.resplit.app/history?from=USD&to=EUR&start=$start&end=$anchor" | python3 -m json.tool
+curl -fsSL "https://www.resplit.app/api/fx/history?from=USD&to=EUR&start=$start&end=$anchor" | python3 -m json.tool
+
+curl -fsSL "https://fx.resplit.app/coverage?from=USD&to=EUR&anchorDate=$anchor&days=7" | python3 -m json.tool
+```
+
+Pass criteria:
+- Worker + web mirror quotes match on `requestedDate`, `resolvedDate`, `rate`, and `resolutionKind`
+- both history endpoints return full coverage (`requestedDays == availableDays`)
+- Worker `/coverage` reports `mismatchCount = 0`, empty `signals`, and zero lag days
+
+### 3. iOS consumer gate
+
+```bash
+cd /Users/leokwan/Development/resplit-ios
+tuist generate --no-open
+tuist test "ResplitCore Unit Tests" --no-selective-testing -- \
+  -only-testing:ResplitCoreTests/FXRateProviderTests
+tuist xcodebuild build -scheme 'Resplit Debug' \
+  -derivedDataPath /tmp/resplit-dd-resplit-currency-fx-ops
+```
+
+Pass criteria:
+- `FXRateProviderTests` stays green on the Worker-first fallback chain
+- the generated `Resplit Debug` build succeeds after `tuist generate --no-open`
+- if `tuist xcodebuild build` fails before generation, treat it as repo-shape drift rather than an FX outage
+
 ## Failure Scenarios
 
 ### 1. Pipeline failed (GitHub Actions red)
