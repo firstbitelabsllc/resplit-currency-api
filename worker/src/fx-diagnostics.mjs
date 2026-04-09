@@ -56,7 +56,8 @@ export async function buildFxCoverageReport({
     }),
   ])
 
-  const signals = collectSignals(quote, history)
+  const freshness = buildFreshness(normalizedAnchorDate, quote, history)
+  const signals = collectSignals(quote, history, freshness)
 
   return {
     checkedAt: new Date().toISOString(),
@@ -66,7 +67,8 @@ export async function buildFxCoverageReport({
     requestedDays,
     quote,
     historyCoverage: history.coverage,
-    mismatchCount: computeMismatchCount(quote, history),
+    freshness,
+    mismatchCount: computeMismatchCount(quote, history, freshness),
     signals,
   }
 }
@@ -82,14 +84,16 @@ export function summarizeFxCoverageReport(report) {
     `requestedDays=${report.requestedDays}`,
     `quoteResolution=${report.quote.resolutionKind}`,
     `quoteResolvedDate=${report.quote.resolvedDate}`,
+    `quoteResolvedLagDays=${report.freshness.quoteResolvedLagDays}`,
     `availableDays=${report.historyCoverage.availableDays}`,
     `missingDayCount=${report.historyCoverage.missingDayCount}`,
     `archiveGapCount=${report.historyCoverage.archiveGapCount}`,
+    `archiveLatestLagDays=${report.freshness.archiveLatestLagDays}`,
     `signals=${report.signals.length > 0 ? report.signals.join(',') : 'none'}`,
   ].join(' ')
 }
 
-function collectSignals(quote, history) {
+function collectSignals(quote, history, freshness) {
   const signals = new Set()
 
   if (quote.resolutionKind === 'prior_day_fallback') {
@@ -108,15 +112,53 @@ function collectSignals(quote, history) {
     signals.add('archive_gap_detected')
   }
 
+  if (freshness.quoteResolvedLagDays > 0) {
+    signals.add('quote_anchor_stale')
+  }
+
+  if (freshness.archiveLatestLagDays > 0) {
+    signals.add('archive_anchor_stale')
+  }
+
   return [...signals]
 }
 
-function computeMismatchCount(quote, history) {
+function computeMismatchCount(quote, history, freshness) {
   let mismatchCount = history.coverage.missingDayCount + history.coverage.archiveGapCount
   if (quote.resolutionKind !== 'exact') {
     mismatchCount += 1
   }
+  if (freshness.archiveLatestLagDays > 0) {
+    mismatchCount += 1
+  }
   return mismatchCount
+}
+
+function buildFreshness(anchorDate, quote, history) {
+  const quoteResolvedLagDays = lagDays(anchorDate, quote.resolvedDate)
+  const archiveLatestLagDays = lagDays(anchorDate, history.coverage.archiveLatestDate)
+
+  return {
+    quoteResolvedLagDays,
+    archiveLatestLagDays,
+    staleAgainstAnchor: quoteResolvedLagDays > 0 || archiveLatestLagDays > 0,
+  }
+}
+
+function lagDays(anchorDate, candidateDate) {
+  if (!candidateDate) {
+    return 0
+  }
+
+  const normalizedAnchorDate = normalizeISODate(anchorDate, 'anchorDate')
+  const normalizedCandidateDate = normalizeISODate(candidateDate, 'candidateDate')
+  if (normalizedCandidateDate >= normalizedAnchorDate) {
+    return 0
+  }
+
+  const anchorTime = Date.parse(`${normalizedAnchorDate}T00:00:00Z`)
+  const candidateTime = Date.parse(`${normalizedCandidateDate}T00:00:00Z`)
+  return Math.round((anchorTime - candidateTime) / 86_400_000)
 }
 
 function normalizeCurrencyCode(value) {

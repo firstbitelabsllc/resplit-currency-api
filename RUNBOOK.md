@@ -22,8 +22,36 @@ Also verify the canonical Worker host (`https://fx.resplit.app`) unless you expl
 ```bash
 FX_WORKER_BASE_URL="${FX_WORKER_BASE_URL:-https://fx.resplit.app}"
 curl -s "$FX_WORKER_BASE_URL/quote?from=AED&to=USD&date=$(date -u +%Y-%m-%d)" | head -c 160
+curl -s "$FX_WORKER_BASE_URL/history?from=AED&to=USD&start=$(date -u -v-7d +%Y-%m-%d)&end=$(date -u +%Y-%m-%d)" | head -c 200
 curl -s "$FX_WORKER_BASE_URL/coverage?from=AED&to=USD&anchorDate=$(date -u +%Y-%m-%d)&days=30" | head -c 160
 ```
+
+The production mirror should speak the same contract:
+```bash
+FX_WEB_BASE_URL="${FX_WEB_BASE_URL:-https://www.resplit.app/api/fx}"
+curl -s "$FX_WEB_BASE_URL/quote?from=AED&to=USD&date=$(date -u +%Y-%m-%d)" | head -c 160
+```
+
+## Canonical Contract Probe
+
+Use these probes when you need to prove the Worker and `/api/fx` mirrors still match:
+
+```bash
+FX_WORKER_BASE_URL="${FX_WORKER_BASE_URL:-https://fx.resplit.app}"
+FX_WEB_BASE_URL="${FX_WEB_BASE_URL:-https://www.resplit.app/api/fx}"
+
+curl -s "$FX_WORKER_BASE_URL/quote?from=USD&to=EUR&date=$(date -u +%Y-%m-%d)" | python3 -m json.tool
+curl -s "$FX_WORKER_BASE_URL/history?from=USD&to=EUR&start=$(date -u -v-7d +%Y-%m-%d)&end=$(date -u +%Y-%m-%d)" | python3 -m json.tool
+curl -s "$FX_WORKER_BASE_URL/coverage?from=USD&to=EUR&anchorDate=$(date -u +%Y-%m-%d)&days=7" | python3 -m json.tool
+curl -s "$FX_WEB_BASE_URL/quote?from=USD&to=EUR&date=$(date -u +%Y-%m-%d)" | python3 -m json.tool
+```
+
+What to inspect:
+- `quote.resolvedDate == requestedDate` means the quote is exact for the anchor date.
+- `historyCoverage.archiveLatestDate` tells you the freshest retained day available to the route.
+- `freshness.quoteResolvedLagDays` and `freshness.archiveLatestLagDays` are the explicit stale-data
+  checks against the requested anchor date.
+- `signals` should stay empty on healthy current-day runs; non-empty means fallback or gaps were used.
 
 ## Failure Scenarios
 
@@ -62,6 +90,10 @@ gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api
 # Check what date the API is serving
 curl -s https://resplit-currency-api.pages.dev/latest/usd.json | python3 -c "import json,sys; print(json.load(sys.stdin)['date'])"
 
+# Check the canonical Worker freshness view
+curl -s "https://fx.resplit.app/coverage?from=USD&to=EUR&anchorDate=$(date -u +%Y-%m-%d)&days=7" | \
+  python3 -c "import json,sys; d=json.load(sys.stdin); print({'resolvedDate': d['quote']['resolvedDate'], 'archiveLatestDate': d['historyCoverage']['archiveLatestDate'], 'freshness': d['freshness'], 'signals': d['signals']})"
+
 # Check if cron is actually running
 gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 ```
@@ -71,6 +103,7 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 |-------|-----|
 | Cron didn't fire | GitHub Actions cron can be delayed or skipped on inactive repos. Push a no-op commit or trigger manually. |
 | Source API returning yesterday's data | `open.er-api.com` updates at different times. Usually resolves by ~02:00 UTC. |
+| Worker/Web route serving fallback data | Inspect `freshness.*LagDays` and `signals` from `/coverage`; if lag is non-zero after the publish window, treat it as a real stale-data incident. |
 
 ### 3. iOS app shows "rate unavailable"
 
@@ -81,12 +114,17 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
    ```bash
    curl -s https://resplit-currency-api.pages.dev/latest/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('from') == 'aed' and 'usd' in d.get('rates',{}))"
    ```
-2. Check if the historical date snapshot exists:
+2. Check whether the canonical Worker and web mirror both resolve the pair:
+   ```bash
+   curl -s "https://fx.resplit.app/quote?from=AED&to=USD&date=$(date -u +%Y-%m-%d)" | python3 -m json.tool
+   curl -s "https://www.resplit.app/api/fx/quote?from=AED&to=USD&date=$(date -u +%Y-%m-%d)" | python3 -m json.tool
+   ```
+3. Check if the historical date snapshot exists:
    ```bash
    curl -sI https://2026-01-15.resplit-currency-api.pages.dev/snapshots/base-rates.json | head -1
    ```
-3. If 404 — that date is outside retained history or there is an archive gap. The app can still use a saved per-receipt conversion snapshot if one exists.
-4. Validate fast-path artifacts:
+4. If 404 — that date is outside retained history or there is an archive gap. The app can still use a saved per-receipt conversion snapshot if one exists.
+5. Validate fast-path artifacts:
    ```bash
    curl -s https://resplit-currency-api.pages.dev/latest/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('from'), 'usd' in d.get('rates',{}))"
    curl -s https://resplit-currency-api.pages.dev/history/30d/aed.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('points', len(d.get('points',[])))"
@@ -97,8 +135,9 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 |-------|-----|
 | Currency not in `open.er-api.com` | Check their supported list. Add a supplementary source if needed. |
 | Historical date predates our pipeline | Fallback: the iOS app's `FXRateCache` serves previously fetched data. For dates before pipeline launch, rates will be unavailable. |
-| Cloudflare Pages down | iOS `ResplitCurrencyProvider` auto-falls back to GitHub Pages URL. |
-| Both CDNs down | iOS app uses cached data from `FXRateCache`. Stale but functional. |
+| Worker down | iOS `ResplitCurrencyProvider` falls back to `https://www.resplit.app/api/fx`, then `https://staging.resplit.app/api/fx`. |
+| Worker + web mirrors down | iOS falls through to Cloudflare Pages, then GitHub Pages. |
+| Worker + CDNs down | iOS app uses cached data from `FXRateCache`. Stale but functional. |
 
 ### 4. Cloudflare token expired or revoked
 

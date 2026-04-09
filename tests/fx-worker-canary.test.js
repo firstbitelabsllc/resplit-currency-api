@@ -36,6 +36,11 @@ test('runFxCanary checks the retention-safe default anchors', async () => {
           missingDayCount: 0,
           archiveGapCount: 0,
         },
+        freshness: {
+          quoteResolvedLagDays: 0,
+          archiveLatestLagDays: 0,
+          staleAgainstAnchor: false,
+        },
         signals: [],
       }
     },

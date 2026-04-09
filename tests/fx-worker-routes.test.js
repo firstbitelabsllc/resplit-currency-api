@@ -224,9 +224,47 @@ test('worker coverage route returns request id and no-store diagnostics payload'
     assert.equal(body.requestedDays, 30)
     assert.equal(body.mismatchCount, 0)
     assert.deepEqual(body.signals, [])
+    assert.deepEqual(body.freshness, {
+      quoteResolvedLagDays: 0,
+      archiveLatestLagDays: 0,
+      staleAgainstAnchor: false,
+    })
     assert.equal(body.quote.resolutionKind, 'exact')
     assert.equal(body.historyCoverage.availableDays, 30)
     assert.equal(body.historyCoverage.missingDayCount, 0)
+  })
+})
+
+test('worker coverage route surfaces explicit anchor staleness when the archive lags behind the request date', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const availableDates = ['2026-03-23']
+
+  await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=2', {
+        headers: { 'x-request-id': 'req-coverage-stale' },
+      }),
+      {
+        ASSET_BASE_URL: 'https://example-assets.dev',
+      }
+    )
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.mismatchCount, 3)
+    assert.equal(body.quote.resolutionKind, 'prior_day_fallback')
+    assert.equal(body.quote.resolvedDate, '2026-03-23')
+    assert.deepEqual(body.freshness, {
+      quoteResolvedLagDays: 1,
+      archiveLatestLagDays: 1,
+      staleAgainstAnchor: true,
+    })
+    assert.deepEqual(body.signals, [
+      'prior_day_fallback_used',
+      'history_range_incomplete',
+      'quote_anchor_stale',
+      'archive_anchor_stale',
+    ])
   })
 })
 

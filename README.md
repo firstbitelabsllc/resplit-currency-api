@@ -41,10 +41,87 @@ https://fx.resplit.app/history?from=AED&to=USD&start=2026-02-18&end=2026-02-27
 https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-02-27&days=30
 ```
 
+**contract mirrors (same response shape, fallback hosts):**
+```
+https://www.resplit.app/api/fx/quote?from=AED&to=USD&date=2026-02-27
+https://www.resplit.app/api/fx/history?from=AED&to=USD&start=2026-02-18&end=2026-02-27
+https://www.resplit.app/api/fx/coverage?from=AED&to=USD&anchorDate=2026-02-27&days=30
+
+https://staging.resplit.app/api/fx/quote?from=AED&to=USD&date=2026-02-27
+```
+
 **GitHub Pages fallback:**
 ```
 https://firstbitelabsllc.github.io/resplit-currency-api/latest/{code}.json
 ```
+
+## Canonical contract
+
+The canonical FX contract is host-agnostic:
+
+- Primary: `https://fx.resplit.app/{quote|history|coverage}`
+- Production mirror: `https://www.resplit.app/api/fx/{quote|history|coverage}`
+- Staging mirror: `https://staging.resplit.app/api/fx/{quote|history|coverage}`
+
+The Worker is the operational primary. The Vercel routes mirror the same contract so iOS can fall
+back without changing request semantics. Static Pages/GitHub artifacts are data sources and
+last-resort fallbacks, not the client-facing contract.
+
+### `GET /quote`
+
+Query:
+`from={CCY}&to={CCY}&date={YYYY-MM-DD}`
+
+Response:
+- `from`, `to`
+- `requestedDate`
+- `resolvedDate`
+- `rate`
+- `resolutionKind`: `exact` | `prior_day_fallback` | `today_fallback`
+- `warning`
+
+Headers:
+- `Cache-Control: public, s-maxage=3600, stale-while-revalidate=86400`
+- `x-request-id`
+
+### `GET /history`
+
+Query:
+`from={CCY}&to={CCY}&start={YYYY-MM-DD}&end={YYYY-MM-DD}`
+
+Response:
+- `from`, `to`, `start`, `end`
+- `points[]`: `{ date, rate }`
+- `coverage`: `requestedDays`, `availableDays`, `missingDayCount`, `returnedRange`,
+  `archiveLatestDate`, `archiveGapCount`
+
+Headers:
+- `Cache-Control: public, s-maxage=3600, stale-while-revalidate=86400`
+- `x-request-id`
+
+### `GET /coverage`
+
+Query:
+`from={CCY}&to={CCY}&anchorDate={YYYY-MM-DD}&days={N}`
+
+Response:
+- `quote` and `historyCoverage` snapshots for the requested window
+- `freshness`: lag-versus-anchor fields used to detect stale Worker/CDN data
+- `mismatchCount`
+- `signals`
+
+Headers:
+- `Cache-Control: no-store`
+- `x-request-id`
+
+### `GET /cron/fx-canary`
+
+Auth:
+- `Authorization: Bearer $CRON_SECRET`
+
+Purpose:
+- runs representative `quote` + `history` + `coverage` probes against the retained archive window
+- emits Sentry check-ins/incidents for scheduler-driven health monitoring
 
 ## Examples
 
