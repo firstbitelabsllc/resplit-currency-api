@@ -8,5 +8,33 @@
   "vars": {
     "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
     "SENTRY_ENVIRONMENT": "production"
+  },
+  "env": {
+    "staging": {
+      "name": "resplit-fx-staging",
+      "vars": {
+        "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
+        "SENTRY_ENVIRONMENT": "staging"
+      },
+      "r2_buckets": [
+        {
+          "binding": "SIDELOAD_R2",
+          "bucket_name": "resplit-sideload-staging"
+        }
+      ]
+    },
+    "production": {
+      "name": "resplit-fx",
+      "vars": {
+        "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
+        "SENTRY_ENVIRONMENT": "production"
+      },
+      "r2_buckets": [
+        {
+          "binding": "SIDELOAD_R2",
+          "bucket_name": "resplit-sideload-prod"
+        }
+      ]
+    }
   }
 }
