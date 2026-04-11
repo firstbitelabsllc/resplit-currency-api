@@ -26,6 +26,7 @@ import {
   startFxCanaryCheckIn,
 } from './monitoring.mjs'
 import { resolveRequestId } from './request-id.mjs'
+import { handleSideload } from './sideload/router.mjs'
 
 const ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
 const QUOTE_HISTORY_CACHE_CONTROL = 'public, s-maxage=3600, stale-while-revalidate=86400'
@@ -50,6 +51,10 @@ export default Sentry.withSentry(getSentryWorkerOptions, handler)
  */
 export async function handleRequest(request, env) {
   const url = new URL(request.url)
+
+  if (url.pathname.startsWith('/sideload/')) {
+    return handleSideload(request, env)
+  }
 
   switch (url.pathname) {
   case '/quote':
