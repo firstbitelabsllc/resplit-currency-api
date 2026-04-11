@@ -58,7 +58,7 @@ test('FX /quote route is not swallowed by the sideload dispatch', async () => {
   assert.equal(body.error, 'INVALID_QUERY')
 })
 
-test('sideload with valid whitelisted token reaches the NOT_FOUND stub', async () => {
+test('sideload with valid whitelisted token reaches the handleGet stub (501)', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   const { _resetJwkCacheForTests } = await import('../worker/src/sideload/auth.mjs')
   _resetJwkCacheForTests()
@@ -81,10 +81,180 @@ test('sideload with valid whitelisted token reaches the NOT_FOUND stub', async (
       { SIWA_EXPECTED_AUDIENCE: EXPECTED_AUDIENCE }
     )
 
+    assert.equal(response.status, 501)
+    const body = await response.json()
+    assert.equal(body.error, 'NOT_IMPLEMENTED')
+    assert.match(body.message, /handleGet/)
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('sideload OPTIONS preflight returns 204 without requiring auth', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/sideload/photos', {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://resplit.app',
+        'access-control-request-method': 'GET',
+        'x-request-id': 'req-sideload-preflight',
+      },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('x-request-id'), 'req-sideload-preflight')
+  assert.equal(
+    response.headers.get('access-control-allow-methods'),
+    'GET, POST, DELETE, OPTIONS'
+  )
+})
+
+test('GET /sideload/photos dispatches to handleList stub (501)', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const { _resetJwkCacheForTests } = await import('../worker/src/sideload/auth.mjs')
+  _resetJwkCacheForTests()
+
+  const { privateKey, kid, jwks } = await getFixture()
+  const restoreFetch = stubJwksFetch(jwks)
+  try {
+    const token = await signJwt({ privateKey, kid, payload: defaultClaims() })
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/sideload/photos', {
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-request-id': 'req-list-stub',
+        },
+      }),
+      { SIWA_EXPECTED_AUDIENCE: EXPECTED_AUDIENCE }
+    )
+
+    assert.equal(response.status, 501)
+    const body = await response.json()
+    assert.equal(body.error, 'NOT_IMPLEMENTED')
+    assert.match(body.message, /handleList/)
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('POST /sideload/photos/upload dispatches to handleUploadInit stub (501)', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const { _resetJwkCacheForTests } = await import('../worker/src/sideload/auth.mjs')
+  _resetJwkCacheForTests()
+
+  const { privateKey, kid, jwks } = await getFixture()
+  const restoreFetch = stubJwksFetch(jwks)
+  try {
+    const token = await signJwt({ privateKey, kid, payload: defaultClaims() })
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/sideload/photos/upload', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'x-request-id': 'req-upload-init-stub',
+        },
+        body: JSON.stringify({ contentType: 'image/jpeg' }),
+      }),
+      { SIWA_EXPECTED_AUDIENCE: EXPECTED_AUDIENCE }
+    )
+
+    assert.equal(response.status, 501)
+    const body = await response.json()
+    assert.equal(body.error, 'NOT_IMPLEMENTED')
+    assert.match(body.message, /handleUploadInit/)
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('DELETE /sideload/photos/:id dispatches to handleDelete stub (501)', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const { _resetJwkCacheForTests } = await import('../worker/src/sideload/auth.mjs')
+  _resetJwkCacheForTests()
+
+  const { privateKey, kid, jwks } = await getFixture()
+  const restoreFetch = stubJwksFetch(jwks)
+  try {
+    const token = await signJwt({ privateKey, kid, payload: defaultClaims() })
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/sideload/photos/abc123', {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-request-id': 'req-delete-stub',
+        },
+      }),
+      { SIWA_EXPECTED_AUDIENCE: EXPECTED_AUDIENCE }
+    )
+
+    assert.equal(response.status, 501)
+    const body = await response.json()
+    assert.equal(body.error, 'NOT_IMPLEMENTED')
+    assert.match(body.message, /handleDelete/)
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('POST /sideload/photos/:id/labels dispatches to handleSetLabels stub (501)', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const { _resetJwkCacheForTests } = await import('../worker/src/sideload/auth.mjs')
+  _resetJwkCacheForTests()
+
+  const { privateKey, kid, jwks } = await getFixture()
+  const restoreFetch = stubJwksFetch(jwks)
+  try {
+    const token = await signJwt({ privateKey, kid, payload: defaultClaims() })
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/sideload/photos/abc123/labels', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'x-request-id': 'req-set-labels-stub',
+        },
+        body: JSON.stringify({ labels: { merchant: 'Starbucks' } }),
+      }),
+      { SIWA_EXPECTED_AUDIENCE: EXPECTED_AUDIENCE }
+    )
+
+    assert.equal(response.status, 501)
+    const body = await response.json()
+    assert.equal(body.error, 'NOT_IMPLEMENTED')
+    assert.match(body.message, /handleSetLabels/)
+  } finally {
+    restoreFetch()
+  }
+})
+
+test('PUT /sideload/photos/abc (unsupported method) returns 404 NOT_FOUND', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const { _resetJwkCacheForTests } = await import('../worker/src/sideload/auth.mjs')
+  _resetJwkCacheForTests()
+
+  const { privateKey, kid, jwks } = await getFixture()
+  const restoreFetch = stubJwksFetch(jwks)
+  try {
+    const token = await signJwt({ privateKey, kid, payload: defaultClaims() })
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/sideload/photos/abc', {
+        method: 'PUT',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-request-id': 'req-unsupported-method',
+        },
+      }),
+      { SIWA_EXPECTED_AUDIENCE: EXPECTED_AUDIENCE }
+    )
+
     assert.equal(response.status, 404)
     const body = await response.json()
     assert.equal(body.error, 'NOT_FOUND')
-    assert.equal(body.message, 'Sideload route not found')
   } finally {
     restoreFetch()
   }
