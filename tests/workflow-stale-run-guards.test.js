@@ -8,6 +8,10 @@ const workflow = fs.readFileSync(workflowPath, 'utf8')
 const continueGuard =
   "steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true'"
 
+test('workflow keeps both the midnight publish pass and the 03:00 UTC refresh schedule', () => {
+  assert.match(workflow, /schedule:\s*\n\s*-\s*cron:\s*'0 0 \* \* \*'\s*\n\s*-\s*cron:\s*'0 3 \* \* \*'/)
+})
+
 test('workflow records whether a stale rerun can safely continue deploy steps', () => {
   assert.match(workflow, /echo "continue_stale_deploy=false" >> "\$GITHUB_OUTPUT"/)
   assert.match(workflow, /echo "continue_stale_deploy=true" >> "\$GITHUB_OUTPUT"/)

@@ -6,7 +6,7 @@
 open.er-api.com (free, 160+ currencies)
         │
         ▼
-GitHub Actions (daily cron @ 00:00 UTC)
+GitHub Actions (cron @ 00:00 UTC + 03:00 UTC refresh)
         │
         ├──► snapshot-archive/ (committed to repo, local-first history)
         │

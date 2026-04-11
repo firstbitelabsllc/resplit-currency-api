@@ -3,6 +3,7 @@ name: Update Currency Rates
 on:
   schedule:
     - cron: '0 0 * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 permissions:

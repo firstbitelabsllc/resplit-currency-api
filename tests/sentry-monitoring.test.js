@@ -17,8 +17,11 @@ function createSentryMock() {
     init(options) {
       this.initCalls.push(options)
     },
-    captureCheckIn(payload) {
-      this.captureCheckInCalls.push(payload)
+    captureCheckIn(payload, monitorConfig) {
+      this.captureCheckInCalls.push({
+        payload,
+        monitorConfig,
+      })
       return 'mock-checkin-id'
     },
     flush(timeout) {
@@ -110,8 +113,21 @@ test('startWorkflowCheckIn prefers SENTRY_CURRENCY_API_DSN when SENTRY_DSN is un
     assert.equal(sentryMock.initCalls[0].dsn, 'https://currency@example.ingest.sentry.io/1')
     assert.deepEqual(sentryMock.captureCheckInCalls, [
       {
-        monitorSlug: 'resplit-currency-api-daily-publish',
-        status: 'in_progress',
+        payload: {
+          monitorSlug: 'resplit-currency-api-daily-publish',
+          status: 'in_progress',
+        },
+        monitorConfig: {
+          schedule: {
+            type: 'crontab',
+            value: '0 0,3 * * *',
+          },
+          checkinMargin: 240,
+          maxRuntime: 15,
+          timezone: 'UTC',
+          failureIssueThreshold: 1,
+          recoveryThreshold: 1,
+        },
       },
     ])
   })
@@ -142,10 +158,11 @@ test('finishWorkflowCheckIn completes successfully with the dedicated DSN path',
 
     assert.equal(result, true)
     assert.equal(sentryMock.captureCheckInCalls.length, 1)
-    assert.equal(sentryMock.captureCheckInCalls[0].checkInId, 'mock-checkin-id')
-    assert.equal(sentryMock.captureCheckInCalls[0].monitorSlug, 'resplit-currency-api-daily-publish')
-    assert.equal(sentryMock.captureCheckInCalls[0].status, 'ok')
-    assert.equal(typeof sentryMock.captureCheckInCalls[0].duration, 'number')
+    assert.equal(sentryMock.captureCheckInCalls[0].payload.checkInId, 'mock-checkin-id')
+    assert.equal(sentryMock.captureCheckInCalls[0].payload.monitorSlug, 'resplit-currency-api-daily-publish')
+    assert.equal(sentryMock.captureCheckInCalls[0].payload.status, 'ok')
+    assert.equal(typeof sentryMock.captureCheckInCalls[0].payload.duration, 'number')
+    assert.equal(sentryMock.captureCheckInCalls[0].monitorConfig, undefined)
     assert.equal(sentryMock.flushCalls.length, 1)
     assert.equal(sentryMock.flushCalls[0], 2000)
   })

@@ -6,7 +6,7 @@ Forked from [fawazahmed0/exchange-api](https://github.com/fawazahmed0/exchange-a
 
 ## How it works
 
-1. GitHub Actions runs daily at midnight UTC
+1. GitHub Actions runs twice per UTC day: once at 00:00 UTC and again at 03:00 UTC after the upstream usually settles
 2. Fetches latest rates from [open.er-api.com](https://open.er-api.com) (free, no API key)
 3. Saves today's snapshot to `snapshot-archive/` (committed to repo for durability)
 4. Reads historical snapshots from local archive first, network fallback only if missing

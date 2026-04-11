@@ -6,11 +6,11 @@ const DAILY_PUBLISH_MONITOR_SLUG = 'resplit-currency-api-daily-publish'
 const DAILY_PUBLISH_MONITOR_CONFIG = {
   schedule: {
     type: 'crontab',
-    value: '0 0 * * *'
+    value: '0 0,3 * * *'
   },
   // GitHub Actions scheduled workflows routinely start 2h+ after the nominal cron time.
-  // Keep the expected schedule at midnight UTC, but allow a wider margin so Sentry
-  // doesn't fire false missed-check-in incidents before GitHub dispatches the job.
+  // Track the midnight pass plus the 03:00 UTC refresh that picks up rates after the
+  // upstream usually settles, while still allowing for GitHub's delayed dispatches.
   checkinMargin: 240,
   maxRuntime: 15,
   timezone: 'UTC',

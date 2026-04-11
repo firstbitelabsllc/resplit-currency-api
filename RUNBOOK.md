@@ -269,7 +269,7 @@ Note: this repo exposes `/cron/fx-canary` and reports Sentry canary check-ins wh
 
 Current monitor + signal model:
 - Cron monitor slug: `resplit-currency-api-daily-publish`
-- Schedule: `0 0 * * *` UTC
+- Schedule: `0 0,3 * * *` UTC (midnight publish pass plus 03:00 UTC refresh)
 - Scope: scheduled GitHub Actions runs only; `workflow_dispatch` reruns still log/report issues but skip cron check-ins so they cannot falsely fail the daily monitor
 - Workflow tag: `daily_publish`
 - Public `/coverage` route mismatches stay as structured warning logs only; Sentry issue creation is reserved for the cron canary so expected pre-publish fallback diagnostics do not open false production issues.
@@ -318,7 +318,7 @@ Set up UptimeRobot to check:
 ## Architecture Recap
 
 ```
-open.er-api.com ──► GitHub Actions (daily 00:00 UTC, ~40s)
+open.er-api.com ──► GitHub Actions (00:00 UTC publish pass + 03:00 UTC refresh, ~40s/run)
                          │
                     ┌────┴──────────────────────────────────────┐
                     ▼                               ▼
