@@ -78,42 +78,42 @@ test('derivePrefix rejects empty email with AUTH_INVALID', async () => {
   }
 })
 
-test('verifySIWAToken rejects missing Authorization header with AUTH_MISSING', async () => {
-  const { verifySIWAToken, AUTH_MISSING } = await import('../worker/src/sideload/auth.mjs')
+test('readCFAccessIdentity returns email from Cf-Access-Authenticated-User-Email header', async () => {
+  const { readCFAccessIdentity } = await import('../worker/src/sideload/auth.mjs')
+  const request = new Request('https://example.workers.dev/sideload/photos', {
+    headers: { 'Cf-Access-Authenticated-User-Email': 'leojkwan@gmail.com' },
+  })
+  const identity = readCFAccessIdentity(request)
+  assert.equal(identity.email, 'leojkwan@gmail.com')
+})
+
+test('readCFAccessIdentity normalizes email to lowercase and trims whitespace', async () => {
+  const { readCFAccessIdentity } = await import('../worker/src/sideload/auth.mjs')
+  const request = new Request('https://example.workers.dev/sideload/photos', {
+    headers: { 'Cf-Access-Authenticated-User-Email': '  LeoJKwan@Gmail.com  ' },
+  })
+  const identity = readCFAccessIdentity(request)
+  assert.equal(identity.email, 'leojkwan@gmail.com')
+})
+
+test('readCFAccessIdentity rejects missing header with AUTH_MISSING', async () => {
+  const { readCFAccessIdentity, AUTH_MISSING } = await import('../worker/src/sideload/auth.mjs')
   try {
-    await verifySIWAToken(new Request('https://example.workers.dev/sideload/photos'), { SIWA_EXPECTED_AUDIENCE: 'com.leokwan.resplit' })
+    readCFAccessIdentity(new Request('https://example.workers.dev/sideload/photos'))
     assert.fail('should have thrown')
   } catch (error) {
     assert.equal(error.code, AUTH_MISSING)
   }
 })
 
-test('verifySIWAToken rejects empty bearer with AUTH_MISSING', async () => {
-  const { verifySIWAToken, AUTH_MISSING } = await import('../worker/src/sideload/auth.mjs')
+test('readCFAccessIdentity rejects empty header with AUTH_MISSING', async () => {
+  const { readCFAccessIdentity, AUTH_MISSING } = await import('../worker/src/sideload/auth.mjs')
   try {
-    await verifySIWAToken(
-      new Request('https://example.workers.dev/sideload/photos', {
-        headers: { authorization: 'Bearer ' },
-      }),
-      { SIWA_EXPECTED_AUDIENCE: 'com.leokwan.resplit' },
-    )
+    readCFAccessIdentity(new Request('https://example.workers.dev/sideload/photos', {
+      headers: { 'Cf-Access-Authenticated-User-Email': '   ' },
+    }))
     assert.fail('should have thrown')
   } catch (error) {
     assert.equal(error.code, AUTH_MISSING)
-  }
-})
-
-test('verifySIWAToken rejects malformed JWT with AUTH_INVALID', async () => {
-  const { verifySIWAToken, AUTH_INVALID } = await import('../worker/src/sideload/auth.mjs')
-  try {
-    await verifySIWAToken(
-      new Request('https://example.workers.dev/sideload/photos', {
-        headers: { authorization: 'Bearer not.a.jwt' },
-      }),
-      { SIWA_EXPECTED_AUDIENCE: 'com.leokwan.resplit' },
-    )
-    assert.fail('should have thrown')
-  } catch (error) {
-    assert.equal(error.code, AUTH_INVALID)
   }
 })

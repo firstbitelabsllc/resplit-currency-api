@@ -5,15 +5,12 @@ import {
   logFxMonitoringEvent,
 } from '../monitoring.mjs'
 import {
-  verifySIWAToken,
+  readCFAccessIdentity,
   enforceWhitelist,
   derivePrefix,
   AuthError,
   AUTH_MISSING,
   AUTH_INVALID,
-  AUTH_EXPIRED,
-  AUTH_AUDIENCE,
-  AUTH_ISSUER,
   FORBIDDEN_NOT_WHITELISTED,
 } from './auth.mjs'
 
@@ -22,9 +19,6 @@ const NO_STORE = { 'Cache-Control': 'no-store' }
 const AUTH_STATUS_BY_CODE = {
   [AUTH_MISSING]: 401,
   [AUTH_INVALID]: 401,
-  [AUTH_EXPIRED]: 401,
-  [AUTH_AUDIENCE]: 401,
-  [AUTH_ISSUER]: 401,
   [FORBIDDEN_NOT_WHITELISTED]: 403,
 }
 
@@ -42,7 +36,7 @@ const PREFLIGHT_HEADERS = {
  *   1. Resolve requestId
  *   2. Log entry
  *   3. OPTIONS preflight short-circuit (no auth)
- *   4. SIWA verify
+ *   4. CF Access identity (header-based, edge-validated)
  *   5. Whitelist enforce
  *   6. Derive per-user R2 prefix
  *   7. Method+path match → named handler stub (Tasks 5/6 fill these in)
@@ -75,7 +69,7 @@ export async function handleSideload(request, env, _ctx) {
 
   let claims
   try {
-    claims = await verifySIWAToken(request, env)
+    claims = readCFAccessIdentity(request)
   } catch (error) {
     if (error instanceof AuthError) {
       return errorResponse(
