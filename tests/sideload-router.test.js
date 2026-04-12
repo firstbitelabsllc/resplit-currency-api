@@ -112,27 +112,60 @@ test('GET /sideload/photos dispatches to handleList stub (501)', async () => {
   assert.match(body.message, /handleList/)
 })
 
-test('POST /sideload/photos/upload dispatches to handleUploadInit stub (501)', async () => {
+test('POST /sideload/photos/upload validates missing required fields', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 
   const response = await handleRequest(
     cfAccessRequest('https://example.workers.dev/sideload/photos/upload', {
       method: 'POST',
-      requestId: 'req-upload-init-stub',
       headers: {
         'Cf-Access-Authenticated-User-Email': 'leojkwan@gmail.com',
         'content-type': 'application/json',
-        'x-request-id': 'req-upload-init-stub',
+        'x-request-id': 'req-upload-validate',
       },
       body: JSON.stringify({ contentType: 'image/jpeg' }),
     }),
     {}
   )
 
-  assert.equal(response.status, 501)
+  assert.equal(response.status, 400)
   const body = await response.json()
-  assert.equal(body.error, 'NOT_IMPLEMENTED')
-  assert.match(body.message, /handleUploadInit/)
+  assert.equal(body.error, 'INVALID_SIZE')
+})
+
+test('POST /sideload/photos/upload returns photoId and uploadUrl on valid input', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const mockR2 = {
+    put: async () => ({ etag: 'mock-etag' }),
+    get: async () => null,
+    delete: async () => {},
+    list: async () => ({ objects: [], truncated: false }),
+  }
+
+  const response = await handleRequest(
+    cfAccessRequest('https://example.workers.dev/sideload/photos/upload', {
+      method: 'POST',
+      headers: {
+        'Cf-Access-Authenticated-User-Email': 'leojkwan@gmail.com',
+        'content-type': 'application/json',
+        'x-request-id': 'req-upload-init-ok',
+      },
+      body: JSON.stringify({
+        contentType: 'image/jpeg',
+        size: 1024,
+        sha256: 'a'.repeat(64),
+        capturedAt: '2026-04-12T00:00:00Z',
+        originalFilename: 'test.jpg',
+      }),
+    }),
+    { SIDELOAD_R2: mockR2 }
+  )
+
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.ok(body.photoId, 'should return a photoId')
+  assert.match(body.uploadUrl, /\/sideload\/photos\/.*\/_bytes/)
 })
 
 test('DELETE /sideload/photos/:id dispatches to handleDelete stub (501)', async () => {

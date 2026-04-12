@@ -1,4 +1,4 @@
-import { errorResponse } from '../http.mjs'
+import { errorResponse, jsonResponse } from '../http.mjs'
 import { resolveRequestId } from '../request-id.mjs'
 import {
   captureFxRouteFailure,
@@ -184,10 +184,18 @@ function matchRoute(method, pathname) {
   return null
 }
 
+const MAX_PHOTO_BYTES = 25 * 1024 * 1024
+const ALLOWED_CONTENT_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/heic',
+  'image/webp',
+])
+
 function notImplemented(ctx, name) {
   return errorResponse(
     'NOT_IMPLEMENTED',
-    `${name} handler pending Task 5/6`,
+    `${name} handler pending Task 6`,
     501,
     ctx.requestId,
     NO_STORE,
@@ -195,11 +203,150 @@ function notImplemented(ctx, name) {
 }
 
 async function handleUploadInit(ctx, _params) {
-  return notImplemented(ctx, 'handleUploadInit')
+  let body
+  try {
+    body = await ctx.request.json()
+  } catch {
+    return errorResponse('BAD_REQUEST', 'Invalid JSON body', 400, ctx.requestId, NO_STORE)
+  }
+
+  const { contentType, size, sha256, capturedAt, originalFilename } = body
+
+  if (!contentType || !ALLOWED_CONTENT_TYPES.has(contentType)) {
+    return errorResponse(
+      'INVALID_CONTENT_TYPE',
+      `Content type must be one of: ${[...ALLOWED_CONTENT_TYPES].join(', ')}`,
+      400,
+      ctx.requestId,
+      NO_STORE,
+    )
+  }
+
+  if (typeof size !== 'number' || size <= 0 || size > MAX_PHOTO_BYTES) {
+    return errorResponse(
+      'INVALID_SIZE',
+      `Size must be between 1 and ${MAX_PHOTO_BYTES} bytes`,
+      400,
+      ctx.requestId,
+      NO_STORE,
+    )
+  }
+
+  if (typeof sha256 !== 'string' || sha256.length !== 64) {
+    return errorResponse(
+      'INVALID_HASH',
+      'sha256 must be a 64-character hex string',
+      400,
+      ctx.requestId,
+      NO_STORE,
+    )
+  }
+
+  const photoId = crypto.randomUUID()
+  const now = new Date().toISOString()
+
+  const pending = {
+    photoId,
+    contentType,
+    size,
+    sha256,
+    capturedAt: capturedAt || now,
+    originalFilename: originalFilename || null,
+    createdAt: now,
+  }
+
+  const pendingKey = `${ctx.prefix}/${photoId}/pending.json`
+  await ctx.env.SIDELOAD_R2.put(pendingKey, JSON.stringify(pending), {
+    httpMetadata: { contentType: 'application/json' },
+  })
+
+  const uploadUrl = `/sideload/photos/${photoId}/_bytes`
+
+  return jsonResponse(
+    { photoId, uploadUrl },
+    { status: 200, requestId: ctx.requestId, headers: NO_STORE },
+  )
 }
 
-async function handleUploadBytes(ctx, _params) {
-  return notImplemented(ctx, 'handleUploadBytes')
+async function handleUploadBytes(ctx, params) {
+  const { id: photoId } = params
+  const pendingKey = `${ctx.prefix}/${photoId}/pending.json`
+  const pendingObj = await ctx.env.SIDELOAD_R2.get(pendingKey)
+
+  if (!pendingObj) {
+    return errorResponse(
+      'NOT_FOUND',
+      'No pending upload found — call POST /sideload/photos/upload first',
+      404,
+      ctx.requestId,
+      NO_STORE,
+    )
+  }
+
+  const pending = await pendingObj.json()
+  const bodyBuffer = await ctx.request.arrayBuffer()
+
+  if (bodyBuffer.byteLength !== pending.size) {
+    return errorResponse(
+      'SIZE_MISMATCH',
+      `Expected ${pending.size} bytes, received ${bodyBuffer.byteLength}`,
+      400,
+      ctx.requestId,
+      NO_STORE,
+    )
+  }
+
+  const digest = await crypto.subtle.digest('SHA-256', bodyBuffer)
+  const actualHash = Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+
+  if (actualHash !== pending.sha256.toLowerCase()) {
+    await ctx.env.SIDELOAD_R2.delete(pendingKey)
+    return errorResponse(
+      'HASH_MISMATCH',
+      `SHA-256 mismatch: expected ${pending.sha256}, got ${actualHash}`,
+      409,
+      ctx.requestId,
+      NO_STORE,
+    )
+  }
+
+  const objectKey = `${ctx.prefix}/${photoId}/original`
+  const now = new Date().toISOString()
+
+  const r2Obj = await ctx.env.SIDELOAD_R2.put(objectKey, bodyBuffer, {
+    httpMetadata: { contentType: pending.contentType },
+    customMetadata: {
+      originalFilename: pending.originalFilename || '',
+      capturedAt: pending.capturedAt,
+      sha256: pending.sha256,
+      uploadedAt: now,
+    },
+  })
+
+  const meta = {
+    photoId,
+    contentType: pending.contentType,
+    size: bodyBuffer.byteLength,
+    sha256: pending.sha256,
+    capturedAt: pending.capturedAt,
+    originalFilename: pending.originalFilename,
+    uploadedAt: now,
+    version: 1,
+  }
+
+  const metaKey = `${ctx.prefix}/${photoId}/meta.json`
+  await ctx.env.SIDELOAD_R2.put(metaKey, JSON.stringify(meta), {
+    httpMetadata: { contentType: 'application/json' },
+  })
+
+  await ctx.env.SIDELOAD_R2.delete(pendingKey)
+
+  return jsonResponse(
+    { photoId, etag: r2Obj.etag, size: bodyBuffer.byteLength },
+    { status: 200, requestId: ctx.requestId, headers: NO_STORE },
+  )
 }
 
 async function handleList(ctx, _params) {
