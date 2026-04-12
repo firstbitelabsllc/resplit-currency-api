@@ -350,21 +350,127 @@ async function handleUploadBytes(ctx, params) {
 }
 
 async function handleList(ctx, _params) {
-  return notImplemented(ctx, 'handleList')
+  const limit = Math.min(Math.max(parseInt(ctx.url.searchParams.get('limit') || '50', 10) || 50, 1), 200)
+  const cursor = ctx.url.searchParams.get('cursor') || undefined
+
+  const listed = await ctx.env.SIDELOAD_R2.list({
+    prefix: `${ctx.prefix}/`,
+    delimiter: '/',
+    limit,
+    cursor,
+  })
+
+  const photoIds = (listed.delimitedPrefixes || [])
+    .map(p => p.replace(`${ctx.prefix}/`, '').replace(/\/$/, ''))
+    .filter(id => id.length > 0)
+
+  const photos = await Promise.all(
+    photoIds.map(async (id) => {
+      const metaObj = await ctx.env.SIDELOAD_R2.get(`${ctx.prefix}/${id}/meta.json`)
+      if (!metaObj) return null
+      return metaObj.json()
+    })
+  )
+
+  const result = { photos: photos.filter(Boolean) }
+  if (listed.truncated && listed.cursor) {
+    result.nextCursor = listed.cursor
+  }
+
+  return jsonResponse(result, { status: 200, requestId: ctx.requestId, headers: NO_STORE })
 }
 
-async function handleGet(ctx, _params) {
-  return notImplemented(ctx, 'handleGet')
+async function handleGet(ctx, params) {
+  const { id: photoId } = params
+  const mode = ctx.url.searchParams.get('mode') || 'meta'
+
+  if (mode === 'download') {
+    const obj = await ctx.env.SIDELOAD_R2.get(`${ctx.prefix}/${photoId}/original`)
+    if (!obj) {
+      return errorResponse('NOT_FOUND', 'Photo not found', 404, ctx.requestId, NO_STORE)
+    }
+    return new Response(obj.body, {
+      status: 200,
+      headers: {
+        'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
+        'Content-Length': String(obj.size),
+        'x-request-id': ctx.requestId,
+        ...NO_STORE,
+      },
+    })
+  }
+
+  const metaObj = await ctx.env.SIDELOAD_R2.get(`${ctx.prefix}/${photoId}/meta.json`)
+  if (!metaObj) {
+    return errorResponse('NOT_FOUND', 'Photo not found', 404, ctx.requestId, NO_STORE)
+  }
+
+  return jsonResponse(await metaObj.json(), { status: 200, requestId: ctx.requestId, headers: NO_STORE })
 }
 
-async function handleDelete(ctx, _params) {
-  return notImplemented(ctx, 'handleDelete')
+async function handleDelete(ctx, params) {
+  const { id: photoId } = params
+  const prefix = `${ctx.prefix}/${photoId}`
+
+  await ctx.env.SIDELOAD_R2.delete([
+    `${prefix}/original`,
+    `${prefix}/meta.json`,
+    `${prefix}/labels.json`,
+    `${prefix}/pending.json`,
+  ])
+
+  return new Response(null, {
+    status: 204,
+    headers: { 'x-request-id': ctx.requestId, ...NO_STORE },
+  })
 }
 
-async function handleSetLabels(ctx, _params) {
-  return notImplemented(ctx, 'handleSetLabels')
+async function handleSetLabels(ctx, params) {
+  const { id: photoId } = params
+
+  const original = await ctx.env.SIDELOAD_R2.head(`${ctx.prefix}/${photoId}/original`)
+  if (!original) {
+    return errorResponse('PHOTO_NOT_FOUND', 'Photo must exist before setting labels', 404, ctx.requestId, NO_STORE)
+  }
+
+  let body
+  try {
+    body = await ctx.request.json()
+  } catch {
+    return errorResponse('BAD_REQUEST', 'Invalid JSON body', 400, ctx.requestId, NO_STORE)
+  }
+
+  if (!body.labels || typeof body.labels !== 'object') {
+    return errorResponse('BAD_REQUEST', 'Body must contain a labels object', 400, ctx.requestId, NO_STORE)
+  }
+
+  const serialized = JSON.stringify(body.labels)
+  if (serialized.length > 16384) {
+    return errorResponse('PAYLOAD_TOO_LARGE', 'Labels must be under 16KB serialized', 413, ctx.requestId, NO_STORE)
+  }
+
+  const now = new Date().toISOString()
+  const labelsDoc = { labels: body.labels, updatedAt: now }
+
+  await ctx.env.SIDELOAD_R2.put(
+    `${ctx.prefix}/${photoId}/labels.json`,
+    JSON.stringify(labelsDoc),
+    {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { schemaVersion: '1' },
+    }
+  )
+
+  return jsonResponse(labelsDoc, { status: 200, requestId: ctx.requestId, headers: NO_STORE })
 }
 
-async function handleGetLabels(ctx, _params) {
-  return notImplemented(ctx, 'handleGetLabels')
+async function handleGetLabels(ctx, params) {
+  const { id: photoId } = params
+
+  const labelsObj = await ctx.env.SIDELOAD_R2.get(`${ctx.prefix}/${photoId}/labels.json`)
+  if (!labelsObj) {
+    return errorResponse('NOT_FOUND', 'No labels set for this photo', 404, ctx.requestId, NO_STORE)
+  }
+
+  return jsonResponse(await labelsObj.json(), { status: 200, requestId: ctx.requestId, headers: NO_STORE })
 }

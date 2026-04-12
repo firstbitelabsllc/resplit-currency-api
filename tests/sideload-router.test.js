@@ -57,20 +57,27 @@ test('FX /quote route is not swallowed by the sideload dispatch', async () => {
   assert.equal(body.error, 'INVALID_QUERY')
 })
 
-test('sideload with valid whitelisted CF Access header reaches handleGet stub (501)', async () => {
+test('GET /sideload/photos/:id returns 404 when photo does not exist', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const mockR2 = {
+    get: async () => null,
+    put: async () => ({}),
+    delete: async () => {},
+    list: async () => ({ delimitedPrefixes: [], truncated: false }),
+    head: async () => null,
+  }
 
   const response = await handleRequest(
     cfAccessRequest('https://example.workers.dev/sideload/photos/abc', {
-      requestId: 'req-sideload-auth-ok',
+      requestId: 'req-sideload-get-404',
     }),
-    {}
+    { SIDELOAD_R2: mockR2 }
   )
 
-  assert.equal(response.status, 501)
+  assert.equal(response.status, 404)
   const body = await response.json()
-  assert.equal(body.error, 'NOT_IMPLEMENTED')
-  assert.match(body.message, /handleGet/)
+  assert.equal(body.error, 'NOT_FOUND')
 })
 
 test('sideload OPTIONS preflight returns 204 without requiring auth', async () => {
@@ -96,20 +103,27 @@ test('sideload OPTIONS preflight returns 204 without requiring auth', async () =
   )
 })
 
-test('GET /sideload/photos dispatches to handleList stub (501)', async () => {
+test('GET /sideload/photos returns empty list when no photos exist', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const mockR2 = {
+    list: async () => ({ delimitedPrefixes: [], truncated: false }),
+    get: async () => null,
+    put: async () => ({}),
+    delete: async () => {},
+    head: async () => null,
+  }
 
   const response = await handleRequest(
     cfAccessRequest('https://example.workers.dev/sideload/photos', {
-      requestId: 'req-list-stub',
+      requestId: 'req-list-empty',
     }),
-    {}
+    { SIDELOAD_R2: mockR2 }
   )
 
-  assert.equal(response.status, 501)
+  assert.equal(response.status, 200)
   const body = await response.json()
-  assert.equal(body.error, 'NOT_IMPLEMENTED')
-  assert.match(body.message, /handleList/)
+  assert.deepEqual(body.photos, [])
 })
 
 test('POST /sideload/photos/upload validates missing required fields', async () => {
@@ -168,25 +182,39 @@ test('POST /sideload/photos/upload returns photoId and uploadUrl on valid input'
   assert.match(body.uploadUrl, /\/sideload\/photos\/.*\/_bytes/)
 })
 
-test('DELETE /sideload/photos/:id dispatches to handleDelete stub (501)', async () => {
+test('DELETE /sideload/photos/:id returns 204 (idempotent)', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const mockR2 = {
+    delete: async () => {},
+    put: async () => ({}),
+    get: async () => null,
+    list: async () => ({ delimitedPrefixes: [], truncated: false }),
+    head: async () => null,
+  }
 
   const response = await handleRequest(
     cfAccessRequest('https://example.workers.dev/sideload/photos/abc123', {
       method: 'DELETE',
-      requestId: 'req-delete-stub',
+      requestId: 'req-delete-ok',
     }),
-    {}
+    { SIDELOAD_R2: mockR2 }
   )
 
-  assert.equal(response.status, 501)
-  const body = await response.json()
-  assert.equal(body.error, 'NOT_IMPLEMENTED')
-  assert.match(body.message, /handleDelete/)
+  assert.equal(response.status, 204)
 })
 
-test('POST /sideload/photos/:id/labels dispatches to handleSetLabels stub (501)', async () => {
+test('POST /sideload/photos/:id/labels sets labels when photo exists', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
+
+  let writtenKey = null
+  const mockR2 = {
+    head: async () => ({ size: 1024 }),
+    put: async (key, body) => { writtenKey = key; return {} },
+    get: async () => null,
+    delete: async () => {},
+    list: async () => ({ delimitedPrefixes: [], truncated: false }),
+  }
 
   const response = await handleRequest(
     cfAccessRequest('https://example.workers.dev/sideload/photos/abc123/labels', {
@@ -194,17 +222,18 @@ test('POST /sideload/photos/:id/labels dispatches to handleSetLabels stub (501)'
       headers: {
         'Cf-Access-Authenticated-User-Email': 'leojkwan@gmail.com',
         'content-type': 'application/json',
-        'x-request-id': 'req-set-labels-stub',
+        'x-request-id': 'req-set-labels-ok',
       },
       body: JSON.stringify({ labels: { merchant: 'Starbucks' } }),
     }),
-    {}
+    { SIDELOAD_R2: mockR2 }
   )
 
-  assert.equal(response.status, 501)
+  assert.equal(response.status, 200)
   const body = await response.json()
-  assert.equal(body.error, 'NOT_IMPLEMENTED')
-  assert.match(body.message, /handleSetLabels/)
+  assert.deepEqual(body.labels, { merchant: 'Starbucks' })
+  assert.ok(body.updatedAt)
+  assert.ok(writtenKey && writtenKey.endsWith('/labels.json'))
 })
 
 test('PUT /sideload/photos/abc (unsupported method) returns 404 NOT_FOUND', async () => {
