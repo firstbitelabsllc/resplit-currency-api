@@ -13,20 +13,14 @@ import {
   AUTH_INVALID,
   FORBIDDEN_NOT_WHITELISTED,
 } from './auth.mjs'
+import { CORS_HEADERS, handlePreflight } from './cors.mjs'
 
-const NO_STORE = { 'Cache-Control': 'no-store' }
+const RESPONSE_HEADERS = { ...CORS_HEADERS, 'Cache-Control': 'no-store' }
 
 const AUTH_STATUS_BY_CODE = {
   [AUTH_MISSING]: 401,
   [AUTH_INVALID]: 401,
   [FORBIDDEN_NOT_WHITELISTED]: 403,
-}
-
-const PREFLIGHT_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, x-request-id',
-  'Access-Control-Max-Age': '600',
 }
 
 /**
@@ -53,10 +47,7 @@ export async function handleSideload(request, env, _ctx) {
   const method = request.method
 
   if (method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: { ...PREFLIGHT_HEADERS, 'x-request-id': requestId },
-    })
+    return handlePreflight(request, requestId)
   }
 
   logFxMonitoringEvent('info', {
@@ -77,7 +68,7 @@ export async function handleSideload(request, env, _ctx) {
         error.message,
         AUTH_STATUS_BY_CODE[error.code] ?? 401,
         requestId,
-        NO_STORE,
+        RESPONSE_HEADERS,
       )
     }
     throw error
@@ -92,7 +83,7 @@ export async function handleSideload(request, env, _ctx) {
         error.message,
         AUTH_STATUS_BY_CODE[error.code] ?? 403,
         requestId,
-        NO_STORE,
+        RESPONSE_HEADERS,
       )
     }
     throw error
@@ -108,7 +99,7 @@ export async function handleSideload(request, env, _ctx) {
       'Sideload route not found',
       404,
       requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 
@@ -127,7 +118,7 @@ export async function handleSideload(request, env, _ctx) {
       error instanceof Error ? error.message : String(error),
       502,
       requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 }
@@ -198,7 +189,7 @@ function notImplemented(ctx, name) {
     `${name} handler pending Task 6`,
     501,
     ctx.requestId,
-    NO_STORE,
+    RESPONSE_HEADERS,
   )
 }
 
@@ -207,7 +198,7 @@ async function handleUploadInit(ctx, _params) {
   try {
     body = await ctx.request.json()
   } catch {
-    return errorResponse('BAD_REQUEST', 'Invalid JSON body', 400, ctx.requestId, NO_STORE)
+    return errorResponse('BAD_REQUEST', 'Invalid JSON body', 400, ctx.requestId, RESPONSE_HEADERS)
   }
 
   const { contentType, size, sha256, capturedAt, originalFilename } = body
@@ -218,7 +209,7 @@ async function handleUploadInit(ctx, _params) {
       `Content type must be one of: ${[...ALLOWED_CONTENT_TYPES].join(', ')}`,
       400,
       ctx.requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 
@@ -228,7 +219,7 @@ async function handleUploadInit(ctx, _params) {
       `Size must be between 1 and ${MAX_PHOTO_BYTES} bytes`,
       400,
       ctx.requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 
@@ -238,7 +229,7 @@ async function handleUploadInit(ctx, _params) {
       'sha256 must be a 64-character hex string',
       400,
       ctx.requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 
@@ -264,7 +255,7 @@ async function handleUploadInit(ctx, _params) {
 
   return jsonResponse(
     { photoId, uploadUrl },
-    { status: 200, requestId: ctx.requestId, headers: NO_STORE },
+    { status: 200, requestId: ctx.requestId, headers: RESPONSE_HEADERS },
   )
 }
 
@@ -279,7 +270,7 @@ async function handleUploadBytes(ctx, params) {
       'No pending upload found — call POST /sideload/photos/upload first',
       404,
       ctx.requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 
@@ -292,7 +283,7 @@ async function handleUploadBytes(ctx, params) {
       `Expected ${pending.size} bytes, received ${bodyBuffer.byteLength}`,
       400,
       ctx.requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 
@@ -308,7 +299,7 @@ async function handleUploadBytes(ctx, params) {
       `SHA-256 mismatch: expected ${pending.sha256}, got ${actualHash}`,
       409,
       ctx.requestId,
-      NO_STORE,
+      RESPONSE_HEADERS,
     )
   }
 
@@ -345,7 +336,7 @@ async function handleUploadBytes(ctx, params) {
 
   return jsonResponse(
     { photoId, etag: r2Obj.etag, size: bodyBuffer.byteLength },
-    { status: 200, requestId: ctx.requestId, headers: NO_STORE },
+    { status: 200, requestId: ctx.requestId, headers: RESPONSE_HEADERS },
   )
 }
 
@@ -377,7 +368,7 @@ async function handleList(ctx, _params) {
     result.nextCursor = listed.cursor
   }
 
-  return jsonResponse(result, { status: 200, requestId: ctx.requestId, headers: NO_STORE })
+  return jsonResponse(result, { status: 200, requestId: ctx.requestId, headers: RESPONSE_HEADERS })
 }
 
 async function handleGet(ctx, params) {
@@ -387,7 +378,7 @@ async function handleGet(ctx, params) {
   if (mode === 'download') {
     const obj = await ctx.env.SIDELOAD_R2.get(`${ctx.prefix}/${photoId}/original`)
     if (!obj) {
-      return errorResponse('NOT_FOUND', 'Photo not found', 404, ctx.requestId, NO_STORE)
+      return errorResponse('NOT_FOUND', 'Photo not found', 404, ctx.requestId, RESPONSE_HEADERS)
     }
     return new Response(obj.body, {
       status: 200,
@@ -395,17 +386,17 @@ async function handleGet(ctx, params) {
         'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
         'Content-Length': String(obj.size),
         'x-request-id': ctx.requestId,
-        ...NO_STORE,
+        ...RESPONSE_HEADERS,
       },
     })
   }
 
   const metaObj = await ctx.env.SIDELOAD_R2.get(`${ctx.prefix}/${photoId}/meta.json`)
   if (!metaObj) {
-    return errorResponse('NOT_FOUND', 'Photo not found', 404, ctx.requestId, NO_STORE)
+    return errorResponse('NOT_FOUND', 'Photo not found', 404, ctx.requestId, RESPONSE_HEADERS)
   }
 
-  return jsonResponse(await metaObj.json(), { status: 200, requestId: ctx.requestId, headers: NO_STORE })
+  return jsonResponse(await metaObj.json(), { status: 200, requestId: ctx.requestId, headers: RESPONSE_HEADERS })
 }
 
 async function handleDelete(ctx, params) {
@@ -421,7 +412,7 @@ async function handleDelete(ctx, params) {
 
   return new Response(null, {
     status: 204,
-    headers: { 'x-request-id': ctx.requestId, ...NO_STORE },
+    headers: { 'x-request-id': ctx.requestId, ...RESPONSE_HEADERS },
   })
 }
 
@@ -430,23 +421,23 @@ async function handleSetLabels(ctx, params) {
 
   const original = await ctx.env.SIDELOAD_R2.head(`${ctx.prefix}/${photoId}/original`)
   if (!original) {
-    return errorResponse('PHOTO_NOT_FOUND', 'Photo must exist before setting labels', 404, ctx.requestId, NO_STORE)
+    return errorResponse('PHOTO_NOT_FOUND', 'Photo must exist before setting labels', 404, ctx.requestId, RESPONSE_HEADERS)
   }
 
   let body
   try {
     body = await ctx.request.json()
   } catch {
-    return errorResponse('BAD_REQUEST', 'Invalid JSON body', 400, ctx.requestId, NO_STORE)
+    return errorResponse('BAD_REQUEST', 'Invalid JSON body', 400, ctx.requestId, RESPONSE_HEADERS)
   }
 
   if (!body.labels || typeof body.labels !== 'object') {
-    return errorResponse('BAD_REQUEST', 'Body must contain a labels object', 400, ctx.requestId, NO_STORE)
+    return errorResponse('BAD_REQUEST', 'Body must contain a labels object', 400, ctx.requestId, RESPONSE_HEADERS)
   }
 
   const serialized = JSON.stringify(body.labels)
   if (serialized.length > 16384) {
-    return errorResponse('PAYLOAD_TOO_LARGE', 'Labels must be under 16KB serialized', 413, ctx.requestId, NO_STORE)
+    return errorResponse('PAYLOAD_TOO_LARGE', 'Labels must be under 16KB serialized', 413, ctx.requestId, RESPONSE_HEADERS)
   }
 
   const now = new Date().toISOString()
@@ -461,7 +452,7 @@ async function handleSetLabels(ctx, params) {
     }
   )
 
-  return jsonResponse(labelsDoc, { status: 200, requestId: ctx.requestId, headers: NO_STORE })
+  return jsonResponse(labelsDoc, { status: 200, requestId: ctx.requestId, headers: RESPONSE_HEADERS })
 }
 
 async function handleGetLabels(ctx, params) {
@@ -469,8 +460,8 @@ async function handleGetLabels(ctx, params) {
 
   const labelsObj = await ctx.env.SIDELOAD_R2.get(`${ctx.prefix}/${photoId}/labels.json`)
   if (!labelsObj) {
-    return errorResponse('NOT_FOUND', 'No labels set for this photo', 404, ctx.requestId, NO_STORE)
+    return errorResponse('NOT_FOUND', 'No labels set for this photo', 404, ctx.requestId, RESPONSE_HEADERS)
   }
 
-  return jsonResponse(await labelsObj.json(), { status: 200, requestId: ctx.requestId, headers: NO_STORE })
+  return jsonResponse(await labelsObj.json(), { status: 200, requestId: ctx.requestId, headers: RESPONSE_HEADERS })
 }
