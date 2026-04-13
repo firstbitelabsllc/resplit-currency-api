@@ -10,11 +10,11 @@
 # Usage:
 #   npm run smoke:sideload
 #   # or directly:
-#   SIDELOAD_BASE="${SIDELOAD_BASE:-https://resplit-fx.leojkwan.workers.dev}" ./scripts/smoke-sideload-staging.sh
+#   SIDELOAD_BASE="${SIDELOAD_BASE:-https://resplit-fx.superfit.workers.dev}" ./scripts/smoke-sideload-staging.sh
 
 set -euo pipefail
 
-BASE="${SIDELOAD_BASE:-https://resplit-fx.leojkwan.workers.dev}"
+BASE="${SIDELOAD_BASE:-https://resplit-fx.superfit.workers.dev}"
 HEADERS=(-H "Cf-Access-Client-Id: ${CF_ACCESS_CLIENT_ID:?missing}" \
          -H "Cf-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET:?missing}")
 
