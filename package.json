@@ -7,6 +7,7 @@
     "validate": "node scripts/validate-package.js",
     "test": "node --test tests/*.test.js",
     "smoke:deploy": "node scripts/smoke-check-deploy.js",
+    "smoke:sideload": "bash scripts/smoke-sideload-staging.sh",
     "check": "npm run generate && npm run validate && npm run test"
   },
   "dependencies": {

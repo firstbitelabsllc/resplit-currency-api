@@ -242,6 +242,48 @@ npx wrangler pages download config resplit-currency-api
 Then review the generated Pages config against dashboard reality before replacing or
 splitting the current Worker-focused config.
 
+### 7. Side-load upload or list fails
+
+**Symptoms**: iOS sideload client gets 502 `SIDELOAD_FAILED`, 401/403 auth errors,
+or upload returns `SIZE_MISMATCH`/`HASH_MISMATCH`.
+
+**Triage**:
+```bash
+# Verify auth is working (needs CF Access credentials)
+curl -s -H "Cf-Access-Authenticated-User-Email: leojkwan@gmail.com" \
+  "https://fx.resplit.app/sideload/photos" | python3 -m json.tool
+
+# Check if preflight works (no auth needed)
+curl -sI -X OPTIONS "https://fx.resplit.app/sideload/photos"
+
+# Check Cloudflare Workers logs for errors
+npx wrangler tail resplit-fx --format json 2>/dev/null | head -20
+```
+
+**Common causes**:
+| Cause | Fix |
+|-------|-----|
+| `AUTH_MISSING` (401) | CF Access not configured for `/sideload/*` path, or iOS client not sending credentials |
+| `FORBIDDEN_NOT_WHITELISTED` (403) | Email doesn't match `leojkwan@gmail.com` (case-insensitive) |
+| `SIZE_MISMATCH` (400) | Client declared one size but sent different bytes. Verify client-side byte counting. |
+| `HASH_MISMATCH` (409) | SHA-256 doesn't match. Check for stream corruption or encoding issues. pending.json is auto-cleaned. |
+| `INVALID_CONTENT_TYPE` (400) | Only jpeg/png/heic/webp allowed |
+| `NOT_FOUND` (404) on `_bytes` | No pending upload — client must call `/upload` first |
+| `SIDELOAD_FAILED` (502) | Unexpected R2 error — check Sentry for the stack trace |
+
+**R2 bucket inspection** (manual, via wrangler):
+```bash
+# List objects in the staging bucket
+npx wrangler r2 object list resplit-sideload-staging --prefix "users/"
+
+# Check if pending uploads are leaking (should be empty normally)
+npx wrangler r2 object list resplit-sideload-staging --prefix "users/" | grep pending
+```
+
+**Rollback**: Sideload routes are fully isolated from FX routes. If sideload is broken,
+FX `/quote`, `/history`, `/coverage` continue working unaffected. To disable sideload
+without redeploying, remove the Cloudflare Access Application covering `/sideload/*`.
+
 ## Monitoring Setup (Optional)
 
 ### Email alerts (free, already on)

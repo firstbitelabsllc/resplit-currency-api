@@ -94,6 +94,55 @@ Each daily run deploys to 3 Cloudflare branches:
 - **Live fallback**: none configured today. If `open.er-api.com` is unavailable, follow the source-swap runbook in `RUNBOOK.md` instead of assuming a secondary upstream is already wired.
 - **License**: Data is sourced through open.er-api.com from ECB and other central-bank feeds; verify any replacement provider's terms before switching.
 
+## Side-load Photo Storage (R2)
+
+The Worker doubles as a photo side-load backend for Leo's opt-in receipt photo
+storage. All sideload routes live under `/sideload/*` and are Cloudflare Access
+authenticated + single-email whitelisted.
+
+### R2 Buckets
+
+| Bucket | Binding | Environment |
+|--------|---------|-------------|
+| `resplit-sideload-staging` | `SIDELOAD_R2` | Default (workers.dev) |
+| `resplit-sideload-prod` | `SIDELOAD_R2` | `--env production` |
+
+### Authentication
+
+- **Cloudflare Access**: Edge-validated JWT → `Cf-Access-Authenticated-User-Email` header
+- **Whitelist**: Single email (`leojkwan@gmail.com`) enforced at worker layer
+- **Per-user isolation**: R2 keys namespaced under `users/<sha256(email)>/photos/`
+
+### Sideload API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `OPTIONS` | `/sideload/*` | CORS preflight (no auth) |
+| `GET` | `/sideload/photos` | List photos (paginated, cursor) |
+| `POST` | `/sideload/photos/upload` | Init upload (returns photoId + uploadUrl) |
+| `POST` | `/sideload/photos/:id/_bytes` | Upload photo bytes (SHA-256 verified) |
+| `GET` | `/sideload/photos/:id` | Get photo meta (or download with `?mode=download`) |
+| `DELETE` | `/sideload/photos/:id` | Delete photo + meta + labels + pending |
+| `POST` | `/sideload/photos/:id/labels` | Set labels (16KB max) |
+| `GET` | `/sideload/photos/:id/labels` | Get labels |
+
+### R2 Key Layout (per photo)
+
+```
+users/<sha256hex>/photos/<photoId>/
+  ├── pending.json   (transient, deleted after upload completes)
+  ├── original       (raw image bytes, content-type in httpMetadata)
+  ├── meta.json      (photoId, size, sha256, capturedAt, uploadedAt, version)
+  └── labels.json    (optional, set via POST labels endpoint)
+```
+
+### Limits
+
+- Max photo size: 25 MB
+- Allowed content types: `image/jpeg`, `image/png`, `image/heic`, `image/webp`
+- Labels payload: 16 KB serialized
+- List page size: 1–200 (default 50)
+
 ## Maintenance
 
 - **Upstream sync**: `git fetch upstream && git merge upstream/main` (if fawazahmed0 adds improvements)
