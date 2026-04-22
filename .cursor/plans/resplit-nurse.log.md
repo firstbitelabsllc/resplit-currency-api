@@ -3,7 +3,7 @@
 ## 2026-04-22 16:57 EDT
 
 - `GO/current` for `resplit-currency-api`.
-- Shipped delta: Worker-side Grafana Cloud Tempo bootstrap wired on top of the existing Sentry path. Added `worker/src/otel.mjs`, wrapped the Sentry worker export in `worker/src/index.mjs`, added OTEL config tests, and documented Wrangler secret + Tempo query wiring in `README.md`, `RUNBOOK.md`, `INFRASTRUCTURE.md`, `.env.example`, and `docs/grafana-otel-smoke-2026-04-22.md`.
+- Shipped delta: Worker-side Grafana Cloud Tempo bootstrap wired on top of the existing Sentry path. Added `worker/src/otel.mjs`, wrapped the Sentry worker export in `worker/src/index.mjs`, added OTEL config tests, and documented Wrangler secret + Tempo query wiring in `README.md`, `RUNBOOK.md`, `INFRASTRUCTURE.md`, `.env.example`, and `docs/grafana-otel-smoke-2026-04-22.md`. Published as PR `firstbitelabsllc/resplit-currency-api#3` from branch `vidux/grafana-worker-otel`.
 - Fresh proof:
   - `node --test tests/fx-worker-otel.test.js`
   - `npm run check` -> `116/116` tests green.
