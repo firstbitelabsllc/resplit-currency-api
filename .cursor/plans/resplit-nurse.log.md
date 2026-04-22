@@ -28,6 +28,19 @@
 
 <promise>SKIP: external blocker</promise>
 
+## 2026-04-22 19:23 EDT
+
+- `GO/current` for `resplit-currency-api` observability on branch `vidux/grafana-worker-otel`.
+- Shipped delta: adds `worker/src/otel-verification.mjs`, wraps `/coverage` with an opt-in verification span keyed by `x-request-id`, adds `scripts/verify-grafana-tempo.mjs` plus `npm run observability:tempo-smoke`, and updates `README.md`, `RUNBOOK.md`, `INFRASTRUCTURE.md`, and `docs/grafana-otel-smoke-2026-04-22.md` with the deterministic proof path.
+- Fresh proof:
+  - `npm run check`
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-22, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `node scripts/verify-grafana-tempo.mjs --base-url https://fx.resplit.app --skip-hit --since 24h --timeout-ms 1000` -> `No Tempo traces found for service resplit-currency-api-worker within 1000ms`
+- Exact next slice: set Wrangler OTLP secrets on the deployed Worker, redeploy, then rerun `npm run observability:tempo-smoke -- --base-url https://fx.resplit.app`.
+- Current blocker: the Tempo verifier is now deterministic, but the Worker runtime is still exporting zero `service.name=resplit-currency-api-worker` traces.
+
+<promise>SKIP: external blocker</promise>
+
 ## 2026-04-03 18:43 EDT
 
 - `NO-GO` overall launch; `GO/current` for `resplit-currency-api`.

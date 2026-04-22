@@ -328,6 +328,7 @@ Current monitor + signal model:
 - Workflow tag: `daily_publish`
 - Public `/coverage` route mismatches stay as structured warning logs only; Sentry issue creation is reserved for the cron canary so expected pre-publish fallback diagnostics do not open false production issues.
 - Grafana Cloud Worker traces use `worker/src/otel.mjs` + `@microlabs/otel-cf-workers` and show up under `service.name=resplit-currency-api-worker` once the OTLP secrets are present and the Worker is redeployed.
+- `scripts/verify-grafana-tempo.mjs` emits an opt-in `/coverage` verification span keyed by `x-request-id`, then polls Tempo until that exact span appears.
 - Grouped issue signals:
   - `currency_publish_failed`
   - `upstream_fetch_failure`
@@ -357,8 +358,9 @@ Expected workflow env wiring:
 Tempo verification after OTLP secrets are set:
 ```bash
 npm run smoke:deploy
-# then open Grafana Cloud Explore/Traces and query:
-# service.name = "resplit-currency-api-worker"
+npm run observability:tempo-smoke -- --base-url https://fx.resplit.app
+# or run against local wrangler dev:
+# npm run observability:tempo-smoke -- --base-url http://127.0.0.1:8787
 ```
 
 ### Slack webhook (5 min setup)

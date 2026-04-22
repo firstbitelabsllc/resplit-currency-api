@@ -8,6 +8,7 @@
     "test": "node --test tests/*.test.js",
     "smoke:deploy": "node scripts/smoke-check-deploy.js",
     "smoke:sideload": "bash scripts/smoke-sideload-staging.sh",
+    "observability:tempo-smoke": "node scripts/verify-grafana-tempo.mjs",
     "check": "npm run generate && npm run validate && npm run test"
   },
   "dependencies": {

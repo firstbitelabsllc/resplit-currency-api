@@ -92,3 +92,26 @@ test('resolveFxOtelTraceConfig returns null when endpoint or auth is missing', a
     null
   )
 })
+
+test('coverage verification span naming is request-id scoped', async () => {
+  const verification = await import('../worker/src/otel-verification.mjs')
+
+  assert.equal(
+    verification.buildFxCoverageVerificationSpanName('req-123'),
+    'resplit.fx.coverage.verify.req-123'
+  )
+})
+
+test('coverage verification only runs when the explicit header is present', async () => {
+  const verification = await import('../worker/src/otel-verification.mjs')
+
+  const enabledRequest = new Request('https://fx.resplit.app/coverage', {
+    headers: {
+      'x-resplit-otel-verify': '1',
+    },
+  })
+  const disabledRequest = new Request('https://fx.resplit.app/coverage')
+
+  assert.equal(verification.shouldEmitFxCoverageVerification(enabledRequest), true)
+  assert.equal(verification.shouldEmitFxCoverageVerification(disabledRequest), false)
+})
