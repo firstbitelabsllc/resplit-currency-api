@@ -26,7 +26,10 @@ import {
   logFxMonitoringEvent,
   startFxCanaryCheckIn,
 } from './monitoring.mjs'
-import { resolveFxWorkerExport } from './otel.mjs'
+import {
+  buildFxOtelDiagnosticHeaders,
+  resolveFxWorkerExport,
+} from './otel.mjs'
 import {
   shouldEmitFxCoverageVerification,
   withFxVerificationSpan,
@@ -224,6 +227,9 @@ async function handleCoverage(request, env) {
   const rawAnchorDate = url.searchParams.get('anchorDate') ?? undefined
   const rawDays = Number(url.searchParams.get('days') ?? 30)
   const verificationRequested = shouldEmitFxCoverageVerification(request)
+  const otelDiagnosticHeaders = verificationRequested
+    ? buildFxOtelDiagnosticHeaders(env)
+    : null
 
   logFxMonitoringEvent('info', {
     signal: 'coverage_entry',
@@ -270,6 +276,7 @@ async function handleCoverage(request, env) {
         requestId,
         headers: {
           'Cache-Control': 'no-store',
+          ...(otelDiagnosticHeaders ?? {}),
         },
       })
     } catch (error) {
@@ -281,6 +288,7 @@ async function handleCoverage(request, env) {
         console.warn(line)
         return errorResponse('INVALID_QUERY', message, 400, requestId, {
           'Cache-Control': 'no-store',
+          ...(otelDiagnosticHeaders ?? {}),
         })
       }
 
@@ -295,6 +303,7 @@ async function handleCoverage(request, env) {
       }, env)
       return errorResponse('FX_DIAGNOSTICS_FAILED', message, 502, requestId, {
         'Cache-Control': 'no-store',
+        ...(otelDiagnosticHeaders ?? {}),
       })
     }
   }

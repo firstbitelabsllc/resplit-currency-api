@@ -171,6 +171,7 @@ This repo includes Sentry-based publisher and Worker observability, plus optiona
 - `worker/src/otel-verification.mjs` emits an opt-in `/coverage` verification span keyed by `x-request-id` so Tempo proof can be deterministic.
 - `currscript.js`, `scripts/validate-package.js`, and `scripts/smoke-check-deploy.js` all run through the monitored wrapper and report grouped failures.
 - `scripts/verify-grafana-tempo.mjs` hits `/coverage` with the verification header, then polls Grafana Tempo for the exact span name.
+- The opt-in verification request also returns safe `x-resplit-otel-*` headers so the smoke can distinguish missing Worker secrets from a configured exporter that still is not reaching Tempo.
 - The GitHub Actions workflow prefers `SENTRY_CURRENCY_API_DSN`, falls back to shared `SENTRY_DSN`, and syncs the chosen DSN into the Worker runtime secret `SENTRY_DSN`.
 
 Current coverage:

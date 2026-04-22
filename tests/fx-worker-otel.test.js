@@ -93,6 +93,37 @@ test('resolveFxOtelTraceConfig returns null when endpoint or auth is missing', a
   )
 })
 
+test('buildFxOtelDiagnosticHeaders exposes safe config presence for verification probes', async () => {
+  const otel = await import('../worker/src/otel.mjs')
+
+  assert.deepEqual(
+    otel.buildFxOtelDiagnosticHeaders({
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otlp-gateway-prod-us-east-2.grafana.net/otlp',
+      OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Basic grafana-token',
+    }),
+    {
+      'x-resplit-otel-auth-source': 'OTEL_EXPORTER_OTLP_HEADERS',
+      'x-resplit-otel-configured': '1',
+      'x-resplit-otel-endpoint-source': 'OTEL_EXPORTER_OTLP_ENDPOINT',
+      'x-resplit-otel-exporter-host': 'otlp-gateway-prod-us-east-2.grafana.net',
+      'x-resplit-otel-exporter-path': '/otlp/v1/traces',
+    }
+  )
+})
+
+test('buildFxOtelDiagnosticHeaders marks missing OTel secrets without leaking auth', async () => {
+  const otel = await import('../worker/src/otel.mjs')
+
+  assert.deepEqual(
+    otel.buildFxOtelDiagnosticHeaders({}),
+    {
+      'x-resplit-otel-auth-source': 'missing',
+      'x-resplit-otel-configured': '0',
+      'x-resplit-otel-endpoint-source': 'missing',
+    }
+  )
+})
+
 test('coverage verification span naming is request-id scoped', async () => {
   const verification = await import('../worker/src/otel-verification.mjs')
 

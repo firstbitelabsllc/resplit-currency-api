@@ -28,6 +28,22 @@ export function normalizeFxTraceEndpoint(rawEndpoint) {
   return `${normalized}/v1/traces`
 }
 
+function resolveFxOtelEndpointSource(env) {
+  if (trimEnvValue(env?.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT)) {
+    return 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'
+  }
+
+  if (trimEnvValue(env?.OTEL_EXPORTER_OTLP_ENDPOINT)) {
+    return 'OTEL_EXPORTER_OTLP_ENDPOINT'
+  }
+
+  if (trimEnvValue(env?.OTEL_ENDPOINT)) {
+    return 'OTEL_ENDPOINT'
+  }
+
+  return 'missing'
+}
+
 export function parseFxOtelHeaders(rawHeaders) {
   const headerString = trimEnvValue(rawHeaders)
   if (!headerString) {
@@ -81,6 +97,18 @@ export function resolveFxOtelHeaders(env) {
   }
 }
 
+function resolveFxOtelAuthSource(env) {
+  if (trimEnvValue(env?.OTEL_EXPORTER_OTLP_HEADERS)) {
+    return 'OTEL_EXPORTER_OTLP_HEADERS'
+  }
+
+  if (trimEnvValue(env?.OTEL_AUTH_HEADER)) {
+    return 'OTEL_AUTH_HEADER'
+  }
+
+  return 'missing'
+}
+
 export function resolveFxOtelTraceConfig(env) {
   const endpoint = normalizeFxTraceEndpoint(
     env?.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
@@ -104,6 +132,38 @@ export function resolveFxOtelTraceConfig(env) {
       version: trimEnvValue(env?.SENTRY_RELEASE) || undefined,
     },
   }
+}
+
+export function describeFxOtelTraceConfig(env) {
+  const config = resolveFxOtelTraceConfig(env)
+
+  return {
+    authSource: resolveFxOtelAuthSource(env),
+    configured: Boolean(config),
+    endpointSource: resolveFxOtelEndpointSource(env),
+    traceEndpoint: config?.exporter.url ?? null,
+  }
+}
+
+export function buildFxOtelDiagnosticHeaders(env) {
+  const diagnostics = describeFxOtelTraceConfig(env)
+  const headers = {
+    'x-resplit-otel-auth-source': diagnostics.authSource,
+    'x-resplit-otel-configured': diagnostics.configured ? '1' : '0',
+    'x-resplit-otel-endpoint-source': diagnostics.endpointSource,
+  }
+
+  if (diagnostics.traceEndpoint) {
+    try {
+      const traceUrl = new URL(diagnostics.traceEndpoint)
+      headers['x-resplit-otel-exporter-host'] = traceUrl.host
+      headers['x-resplit-otel-exporter-path'] = traceUrl.pathname
+    } catch {
+      headers['x-resplit-otel-exporter-path'] = diagnostics.traceEndpoint
+    }
+  }
+
+  return headers
 }
 
 let cachedInstrumentedWorker = null

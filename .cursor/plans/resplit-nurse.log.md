@@ -41,6 +41,19 @@
 
 <promise>SKIP: external blocker</promise>
 
+## 2026-04-22 19:40 EDT
+
+- `GO/current` for `resplit-currency-api` observability on branch `vidux/grafana-worker-otel`.
+- Shipped delta: adds opt-in `x-resplit-otel-*` diagnostics on `/coverage` and teaches `scripts/verify-grafana-tempo.mjs` to fail fast when the Worker reports missing OTLP endpoint/auth secrets. This keeps the existing Sentry monitoring path intact and narrows the remaining Grafana blocker to deployed secret/runtime state.
+- Fresh proof:
+  - `node --test tests/fx-worker-otel.test.js tests/fx-tempo-verifier.test.js` -> `14/14` green
+  - `npm run check` -> `125/125` tests green after regenerate + validate
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-22, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+- Exact next slice: redeploy `vidux/grafana-worker-otel`, hit `/coverage` with the verification header, and confirm whether the new headers report `x-resplit-otel-configured=0` (missing Wrangler secrets) or `1` (exporter configured but Tempo ingest still failing).
+- Current blocker: live proof still needs a deployment running this branch; production trunk cannot surface the new diagnostics yet.
+
+<promise>SKIP: external blocker</promise>
+
 ## 2026-04-03 18:43 EDT
 
 - `NO-GO` overall launch; `GO/current` for `resplit-currency-api`.

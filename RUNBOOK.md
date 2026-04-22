@@ -329,6 +329,7 @@ Current monitor + signal model:
 - Public `/coverage` route mismatches stay as structured warning logs only; Sentry issue creation is reserved for the cron canary so expected pre-publish fallback diagnostics do not open false production issues.
 - Grafana Cloud Worker traces use `worker/src/otel.mjs` + `@microlabs/otel-cf-workers` and show up under `service.name=resplit-currency-api-worker` once the OTLP secrets are present and the Worker is redeployed.
 - `scripts/verify-grafana-tempo.mjs` emits an opt-in `/coverage` verification span keyed by `x-request-id`, then polls Tempo until that exact span appears.
+- The same verification request returns safe `x-resplit-otel-*` headers so the smoke fails fast when the deployed Worker is missing OTLP endpoint/auth secrets.
 - Grouped issue signals:
   - `currency_publish_failed`
   - `upstream_fetch_failure`

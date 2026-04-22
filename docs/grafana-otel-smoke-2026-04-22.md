@@ -8,6 +8,7 @@
 - Documented the Wrangler secret names and Tempo query target: `service.name=resplit-currency-api-worker`.
 - Added `worker/src/otel-verification.mjs` so `/coverage` can emit an opt-in verification span keyed by `x-request-id`.
 - Added `scripts/verify-grafana-tempo.mjs` plus `npm run observability:tempo-smoke` so the repo can hit `/coverage` and poll Grafana Tempo for the exact verification span instead of relying on a manual Explore query.
+- Added opt-in `x-resplit-otel-*` verification headers on `/coverage` so the smoke can tell "Worker missing OTLP secrets" apart from "Worker configured but Tempo still empty."
 
 ## Verification completed in-repo
 

@@ -233,6 +233,29 @@ function parseMaybeJson(value) {
   }
 }
 
+export function readVerificationDiagnostics(headers) {
+  const configured = headers.get('x-resplit-otel-configured')
+  if (configured === null) {
+    return null
+  }
+
+  return {
+    authSource: headers.get('x-resplit-otel-auth-source') ?? 'missing',
+    configured: configured === '1',
+    endpointSource: headers.get('x-resplit-otel-endpoint-source') ?? 'missing',
+    exporterHost: headers.get('x-resplit-otel-exporter-host'),
+    exporterPath: headers.get('x-resplit-otel-exporter-path'),
+  }
+}
+
+export function formatMissingOtelConfigMessage(diagnostics) {
+  const exporterTarget = diagnostics.exporterHost
+    ? `exporter=${diagnostics.exporterHost}${diagnostics.exporterPath ?? ''}`
+    : 'exporter=unresolved'
+
+  return `Verification route reports OTEL exporter not configured (endpointSource=${diagnostics.endpointSource}, authSource=${diagnostics.authSource}, ${exporterTarget})`
+}
+
 function parseEnvFile(contents) {
   const parsed = {}
 
@@ -386,6 +409,7 @@ async function hitVerificationUrl({
   }
 
   return {
+    diagnostics: readVerificationDiagnostics(response.headers),
     payload: parseMaybeJson(bodyText),
     status: response.status,
     verificationUrl,
@@ -418,6 +442,10 @@ export async function main(argv = process.argv.slice(2)) {
       requestId: options.requestId,
       verificationUrl,
     })
+
+    if (routePayload.diagnostics && !routePayload.diagnostics.configured) {
+      throw new Error(formatMissingOtelConfigMessage(routePayload.diagnostics))
+    }
   }
 
   const startedAt = Date.now()

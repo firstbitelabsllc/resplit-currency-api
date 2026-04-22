@@ -46,3 +46,37 @@ test('buildSpanQuery scopes the Tempo search to service name and the verificatio
     '{ resource.service.name = "resplit-currency-api-worker" && span:name = "resplit.fx.coverage.verify.req-123" }'
   )
 })
+
+test('readVerificationDiagnostics parses Worker OTel headers from the verification route', async () => {
+  const verifier = await import('../scripts/verify-grafana-tempo.mjs')
+  const headers = new Headers({
+    'x-resplit-otel-auth-source': 'OTEL_EXPORTER_OTLP_HEADERS',
+    'x-resplit-otel-configured': '1',
+    'x-resplit-otel-endpoint-source': 'OTEL_EXPORTER_OTLP_ENDPOINT',
+    'x-resplit-otel-exporter-host': 'otlp-gateway-prod-us-east-2.grafana.net',
+    'x-resplit-otel-exporter-path': '/otlp/v1/traces',
+  })
+
+  assert.deepEqual(verifier.readVerificationDiagnostics(headers), {
+    authSource: 'OTEL_EXPORTER_OTLP_HEADERS',
+    configured: true,
+    endpointSource: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+    exporterHost: 'otlp-gateway-prod-us-east-2.grafana.net',
+    exporterPath: '/otlp/v1/traces',
+  })
+})
+
+test('formatMissingOtelConfigMessage makes missing Worker secrets explicit', async () => {
+  const verifier = await import('../scripts/verify-grafana-tempo.mjs')
+
+  assert.equal(
+    verifier.formatMissingOtelConfigMessage({
+      authSource: 'missing',
+      configured: false,
+      endpointSource: 'missing',
+      exporterHost: null,
+      exporterPath: null,
+    }),
+    'Verification route reports OTEL exporter not configured (endpointSource=missing, authSource=missing, exporter=unresolved)'
+  )
+})
