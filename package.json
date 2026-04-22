@@ -11,6 +11,8 @@
     "check": "npm run generate && npm run validate && npm run test"
   },
   "dependencies": {
+    "@microlabs/otel-cf-workers": "^1.0.0-rc.52",
+    "@opentelemetry/api": "^1.9.1",
     "@sentry/cloudflare": "^10.44.0",
     "@sentry/node": "^10.44.0",
     "fs-extra": "^11.2.0"

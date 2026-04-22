@@ -1,5 +1,16 @@
 # Resplit Nurse Log
 
+## 2026-04-22 16:57 EDT
+
+- `GO/current` for `resplit-currency-api`.
+- Shipped delta: Worker-side Grafana Cloud Tempo bootstrap wired on top of the existing Sentry path. Added `worker/src/otel.mjs`, wrapped the Sentry worker export in `worker/src/index.mjs`, added OTEL config tests, and documented Wrangler secret + Tempo query wiring in `README.md`, `RUNBOOK.md`, `INFRASTRUCTURE.md`, `.env.example`, and `docs/grafana-otel-smoke-2026-04-22.md`.
+- Fresh proof:
+  - `node --test tests/fx-worker-otel.test.js`
+  - `npm run check` -> `116/116` tests green.
+  - `npm run smoke:deploy` -> `OK (date=2026-04-22, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Blocker: no Grafana Cloud OTLP auth secret was available in-session, so direct Tempo span proof was not possible. The Worker OTEL path stays dormant until Wrangler OTLP secrets are set and the Worker is redeployed.
+- Exact next slice: set `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_EXPORTER_OTLP_HEADERS` (or `OTEL_ENDPOINT` + `OTEL_AUTH_HEADER`) as Wrangler secrets, redeploy, rerun `npm run smoke:deploy`, then verify `service.name = "resplit-currency-api-worker"` in Grafana Cloud Explore/Traces.
+
 ## 2026-04-10 23:25 EDT
 
 - `NO-GO` overall launch (resplit-ios trunk dirty with active claude thread mid-fix on `PendingScanRecord` SwiftData @Model bricked-app failure); `GO/current` for `resplit-currency-api`.

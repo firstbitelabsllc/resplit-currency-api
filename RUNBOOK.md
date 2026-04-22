@@ -289,8 +289,8 @@ without redeploying, remove the Cloudflare Access Application covering `/sideloa
 ### Email alerts (free, already on)
 GitHub sends failure emails to repo admins by default.
 
-### Sentry command center (now wired)
-The publisher now emits grouped issues, structured logs, and cron check-ins to Sentry.
+### Sentry + Grafana command center
+The publisher now emits grouped issues, structured logs, and cron check-ins to Sentry. The Worker can also export traces directly to Grafana Cloud Tempo when OTLP secrets are configured.
 
 Preferred GitHub secret:
 ```bash
@@ -307,6 +307,18 @@ Optional Worker canary secret:
 gh secret set CRON_SECRET --repo firstbitelabsllc/resplit-currency-api --body "LONG_RANDOM_SECRET"
 ```
 
+Optional Worker trace secrets (Wrangler, not GitHub secrets):
+```bash
+npx wrangler secret put OTEL_EXPORTER_OTLP_ENDPOINT
+npx wrangler secret put OTEL_EXPORTER_OTLP_HEADERS
+```
+
+Repo alias pair if you do not want the standard OTEL env names:
+```bash
+npx wrangler secret put OTEL_ENDPOINT
+npx wrangler secret put OTEL_AUTH_HEADER
+```
+
 Note: this repo exposes `/cron/fx-canary` and reports Sentry canary check-ins when that route is called, but it does not schedule the route on its own. Wire an external scheduler before treating the Worker canary as live recurring coverage.
 
 Current monitor + signal model:
@@ -315,6 +327,7 @@ Current monitor + signal model:
 - Scope: scheduled GitHub Actions runs only; `workflow_dispatch` reruns still log/report issues but skip cron check-ins so they cannot falsely fail the daily monitor
 - Workflow tag: `daily_publish`
 - Public `/coverage` route mismatches stay as structured warning logs only; Sentry issue creation is reserved for the cron canary so expected pre-publish fallback diagnostics do not open false production issues.
+- Grafana Cloud Worker traces use `worker/src/otel.mjs` + `@microlabs/otel-cf-workers` and show up under `service.name=resplit-currency-api-worker` once the OTLP secrets are present and the Worker is redeployed.
 - Grouped issue signals:
   - `currency_publish_failed`
   - `upstream_fetch_failure`
@@ -340,6 +353,13 @@ Expected workflow env wiring:
 - `SENTRY_DSN`: shared fallback only
 - `SENTRY_ENVIRONMENT=production`
 - `SENTRY_RELEASE=${GITHUB_SHA}`
+
+Tempo verification after OTLP secrets are set:
+```bash
+npm run smoke:deploy
+# then open Grafana Cloud Explore/Traces and query:
+# service.name = "resplit-currency-api-worker"
+```
 
 ### Slack webhook (5 min setup)
 Add to `.github/workflows/run.yml` after the deploy steps:

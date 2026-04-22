@@ -25,6 +25,7 @@ import {
   logFxMonitoringEvent,
   startFxCanaryCheckIn,
 } from './monitoring.mjs'
+import { resolveFxWorkerExport } from './otel.mjs'
 import { resolveRequestId } from './request-id.mjs'
 import { handleSideload } from './sideload/router.mjs'
 
@@ -42,7 +43,19 @@ const handler = {
   },
 }
 
-export default Sentry.withSentry(getSentryWorkerOptions, handler)
+const sentryWrappedHandler = Sentry.withSentry(getSentryWorkerOptions, handler)
+
+export default {
+  /**
+   * @param {Request} request
+   * @param {Record<string, string | undefined>} env
+   * @param {ExecutionContext} ctx
+   */
+  async fetch(request, env, ctx) {
+    const worker = await resolveFxWorkerExport(sentryWrappedHandler, env)
+    return worker.fetch(request, env, ctx)
+  },
+}
 
 /**
  * @param {Request} request
