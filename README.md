@@ -144,24 +144,34 @@ GET https://resplit-currency-api.pages.dev/latest/aed.json
 
 ## Secrets required
 
-| Secret | Description |
-|--------|-------------|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with Pages edit permission |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
-| `SENTRY_CURRENCY_API_DSN` | Preferred DSN when you provision a dedicated currency-api Sentry project; otherwise the workflow can fall back to `SENTRY_DSN` |
-| `SENTRY_DSN` | Optional shared fallback DSN if a dedicated project is not configured |
-| `CRON_SECRET` | Optional secret for the Worker canary route |
+| Secret | Scope | Description |
+|--------|-------|-------------|
+| `CLOUDFLARE_API_TOKEN` | Required | Cloudflare API token with Pages edit permission |
+| `CLOUDFLARE_ACCOUNT_ID` | Required | Cloudflare account ID |
+| `SENTRY_CURRENCY_API_DSN` | Recommended | Preferred DSN when you provision a dedicated currency-api Sentry project; otherwise the workflow can fall back to `SENTRY_DSN` |
+| `SENTRY_DSN` | Optional fallback | Shared fallback DSN if a dedicated project is not configured |
+| `CRON_SECRET` | Optional | Worker canary route secret |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional Worker secret | Standard Grafana Cloud OTLP base endpoint for traces |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Optional Worker secret | Full traces endpoint override when Grafana already gives you `/v1/traces` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Optional Worker secret | Standard OTLP header string, e.g. `Authorization=Basic ...` |
+| `OTEL_ENDPOINT` | Optional Worker secret alias | Repo alias for the OTLP base endpoint |
+| `OTEL_AUTH_HEADER` | Optional Worker secret alias | Repo alias for the auth header; raw `Basic ...` is accepted |
+| `GRAFANA_CLOUD_STACK_SA_TOKEN` | Optional local env | Needed only for `npm run observability:tempo-smoke` to poll Grafana Tempo |
 
 `GITHUB_TOKEN` is provided automatically. Also used to push snapshot archive commits.
 
 ## Observability
 
-This repo includes Sentry-based publisher and Worker observability.
+This repo includes Sentry-based publisher and Worker observability, plus optional Grafana Cloud Tempo trace export for the Worker runtime.
 
 - `scripts/sentry-monitoring.js` initializes `@sentry/node` with surface, environment, and release metadata for the publisher workflow.
 - `scripts/sentry-checkin.js` emits cron monitor check-ins for the scheduled daily publish workflow only, so manual `workflow_dispatch` reruns do not create false missed/failure incidents on the daily monitor.
 - `worker/src/monitoring.mjs` initializes `@sentry/cloudflare` for the Worker runtime and tags events with `runtime=worker`.
+- `worker/src/otel.mjs` resolves Grafana Cloud OTLP env vars and wraps the Worker with `@microlabs/otel-cf-workers` when the OTLP endpoint + auth header are present.
+- `worker/src/otel-verification.mjs` emits an opt-in `/coverage` verification span keyed by `x-request-id` so Tempo proof can be deterministic.
 - `currscript.js`, `scripts/validate-package.js`, and `scripts/smoke-check-deploy.js` all run through the monitored wrapper and report grouped failures.
+- `scripts/verify-grafana-tempo.mjs` hits `/coverage` with the verification header, then polls Grafana Tempo for the exact span name.
+- The opt-in verification request also returns safe `x-resplit-otel-*` headers so the smoke can distinguish missing Worker secrets from a configured exporter that still is not reaching Tempo.
 - The GitHub Actions workflow prefers `SENTRY_CURRENCY_API_DSN`, falls back to shared `SENTRY_DSN`, and syncs the chosen DSN into the Worker runtime secret `SENTRY_DSN`.
 
 Current coverage:
@@ -171,6 +181,8 @@ Current coverage:
 - structured Sentry logs for monitoring signals
 - release and environment tagging
 - cron monitor check-ins for the daily publish job, plus Worker canary check-ins when `/cron/fx-canary` is invoked by an external scheduler or manual probe
+- Worker request/outbound-fetch traces in Grafana Cloud Tempo when `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_EXPORTER_OTLP_HEADERS` (or the `OTEL_*` alias pair) are configured as Wrangler secrets
+- deterministic Tempo verification via `npm run observability:tempo-smoke`
 
 This is not identical to `resplit-web` in implementation because this repo is a Node cron publisher, not a browser/server app. It is equivalent in intent: release/environment tagging, error capture, structured logs, and runtime health monitoring.
 
@@ -184,6 +196,26 @@ npm run check
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.
 If you want local Sentry events while running scripts manually, set `SENTRY_CURRENCY_API_DSN` or `SENTRY_DSN`.
+If you want local or preview Worker traces in Grafana Cloud, set either:
+
+```bash
+wrangler secret put OTEL_EXPORTER_OTLP_ENDPOINT
+wrangler secret put OTEL_EXPORTER_OTLP_HEADERS
+```
+
+or the repo alias pair:
+
+```bash
+wrangler secret put OTEL_ENDPOINT
+wrangler secret put OTEL_AUTH_HEADER
+```
+
+To prove the trace landed without manually searching Explore, run:
+
+```bash
+npm run observability:tempo-smoke -- --base-url http://127.0.0.1:8787
+```
+
 `npm run smoke:deploy` now defaults its Worker probe to `https://fx.resplit.app`; set
 `FX_WORKER_BASE_URL` to point at an alternate host or `SKIP_WORKER_SMOKE_CHECK=1` only when you
 intentionally need to bypass the canonical Worker check.

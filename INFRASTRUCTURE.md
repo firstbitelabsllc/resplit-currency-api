@@ -47,6 +47,16 @@ allowed and surfaced via `archive-manifest.json` and the canonical coverage rout
 | `CRON_SECRET` | Optional but recommended | Protects `/cron/fx-canary` |
 | `GITHUB_TOKEN` | Auto | Provided by GitHub Actions |
 
+## Worker Secrets (Wrangler)
+
+| Secret | Status | Notes |
+|--------|--------|-------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional | Standard Grafana Cloud OTLP base endpoint; code appends `/v1/traces` |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Optional | Full traces endpoint override when Grafana already provides `/v1/traces` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Optional | Standard OTLP header string, e.g. `Authorization=Basic ...` |
+| `OTEL_ENDPOINT` | Optional alias | Repo alias for the OTLP base endpoint |
+| `OTEL_AUTH_HEADER` | Optional alias | Repo alias for auth; raw `Basic ...` is accepted and normalized to `Authorization` |
+
 ## URL Patterns
 
 ### Artifacts
@@ -81,6 +91,7 @@ Each daily run deploys to 3 Cloudflare branches:
 - **Cloudflare Workers Analytics**: Request counts, errors, p95 latency per Worker
 - **GitHub Actions alerts**: Configure in repo Settings → Actions → Notifications
 - **Sentry**: grouped publisher and Worker issues, structured logs, cron monitor check-ins for the daily publish workflow, and Worker canary check-ins when `/cron/fx-canary` is invoked by an external scheduler or manual probe
+- **Grafana Cloud Tempo (optional, code-wired)**: Worker traces export directly when the OTLP endpoint + auth header Wrangler secrets are configured, and `scripts/verify-grafana-tempo.mjs` can prove the exact `/coverage` verification span reached Tempo
 
 ### Optional Upgrades
 - **Cloudflare Web Analytics**: Add JS snippet to track real usage (free, no cookies)

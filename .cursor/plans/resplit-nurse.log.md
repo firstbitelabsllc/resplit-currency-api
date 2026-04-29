@@ -1,5 +1,16 @@
 # Resplit Nurse Log
 
+## 2026-04-22 16:57 EDT
+
+- `GO/current` for `resplit-currency-api`.
+- Shipped delta: Worker-side Grafana Cloud Tempo bootstrap wired on top of the existing Sentry path. Added `worker/src/otel.mjs`, wrapped the Sentry worker export in `worker/src/index.mjs`, added OTEL config tests, and documented Wrangler secret + Tempo query wiring in `README.md`, `RUNBOOK.md`, `INFRASTRUCTURE.md`, `.env.example`, and `docs/grafana-otel-smoke-2026-04-22.md`. Published as PR `firstbitelabsllc/resplit-currency-api#3` from branch `vidux/grafana-worker-otel`.
+- Fresh proof:
+  - `node --test tests/fx-worker-otel.test.js`
+  - `npm run check` -> `116/116` tests green.
+  - `npm run smoke:deploy` -> `OK (date=2026-04-22, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Blocker: no Grafana Cloud OTLP auth secret was available in-session, so direct Tempo span proof was not possible. The Worker OTEL path stays dormant until Wrangler OTLP secrets are set and the Worker is redeployed.
+- Exact next slice: set `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_EXPORTER_OTLP_HEADERS` (or `OTEL_ENDPOINT` + `OTEL_AUTH_HEADER`) as Wrangler secrets, redeploy, rerun `npm run smoke:deploy`, then verify `service.name = "resplit-currency-api-worker"` in Grafana Cloud Explore/Traces.
+
 ## 2026-04-10 23:25 EDT
 
 - `NO-GO` overall launch (resplit-ios trunk dirty with active claude thread mid-fix on `PendingScanRecord` SwiftData @Model bricked-app failure); `GO/current` for `resplit-currency-api`.
@@ -14,6 +25,32 @@
 - Exact next slice: keep `resplit-currency-api` on fast-exit unless (a) FX freshness drifts past the publish window, OR (b) a launch-critical FX bug surfaces in resplit-ios manual expense / multi-currency split paths, OR (c) the resplit-ios trunk wall clears and the launch train resumes.
 - Current build boundary: trunk `origin/main` `9ff5e74` (was `afdaf5ca`); FX publish date `2026-04-11`; worker 30-day coverage green.
 - Latency: `hygiene` `1m`, `discovery` `2m`, `implementation` `0m` (read-only verify), `proof/wait` `2m`.
+
+<promise>SKIP: external blocker</promise>
+
+## 2026-04-22 19:23 EDT
+
+- `GO/current` for `resplit-currency-api` observability on branch `vidux/grafana-worker-otel`.
+- Shipped delta: adds `worker/src/otel-verification.mjs`, wraps `/coverage` with an opt-in verification span keyed by `x-request-id`, adds `scripts/verify-grafana-tempo.mjs` plus `npm run observability:tempo-smoke`, and updates `README.md`, `RUNBOOK.md`, `INFRASTRUCTURE.md`, and `docs/grafana-otel-smoke-2026-04-22.md` with the deterministic proof path.
+- Fresh proof:
+  - `npm run check`
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-22, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+  - `node scripts/verify-grafana-tempo.mjs --base-url https://fx.resplit.app --skip-hit --since 24h --timeout-ms 1000` -> `No Tempo traces found for service resplit-currency-api-worker within 1000ms`
+- Exact next slice: set Wrangler OTLP secrets on the deployed Worker, redeploy, then rerun `npm run observability:tempo-smoke -- --base-url https://fx.resplit.app`.
+- Current blocker: the Tempo verifier is now deterministic, but the Worker runtime is still exporting zero `service.name=resplit-currency-api-worker` traces.
+
+<promise>SKIP: external blocker</promise>
+
+## 2026-04-22 19:40 EDT
+
+- `GO/current` for `resplit-currency-api` observability on branch `vidux/grafana-worker-otel`.
+- Shipped delta: adds opt-in `x-resplit-otel-*` diagnostics on `/coverage` and teaches `scripts/verify-grafana-tempo.mjs` to fail fast when the Worker reports missing OTLP endpoint/auth secrets. This keeps the existing Sentry monitoring path intact and narrows the remaining Grafana blocker to deployed secret/runtime state.
+- Fresh proof:
+  - `node --test tests/fx-worker-otel.test.js tests/fx-tempo-verifier.test.js` -> `14/14` green
+  - `npm run check` -> `125/125` tests green after regenerate + validate
+  - `npm run smoke:deploy` -> `smoke-check-deploy: OK (date=2026-04-22, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`
+- Exact next slice: redeploy `vidux/grafana-worker-otel`, hit `/coverage` with the verification header, and confirm whether the new headers report `x-resplit-otel-configured=0` (missing Wrangler secrets) or `1` (exporter configured but Tempo ingest still failing).
+- Current blocker: live proof still needs a deployment running this branch; production trunk cannot surface the new diagnostics yet.
 
 <promise>SKIP: external blocker</promise>
 
