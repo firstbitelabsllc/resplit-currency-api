@@ -1,3 +1,4 @@
+import { SpanStatusCode } from '@opentelemetry/api'
 import * as Sentry from '@sentry/cloudflare'
 import {
   buildFxHistoryResponse,
@@ -25,6 +26,14 @@ import {
   logFxMonitoringEvent,
   startFxCanaryCheckIn,
 } from './monitoring.mjs'
+import {
+  buildFxOtelDiagnosticHeaders,
+  resolveFxWorkerExport,
+} from './otel.mjs'
+import {
+  shouldEmitFxCoverageVerification,
+  withFxVerificationSpan,
+} from './otel-verification.mjs'
 import { resolveRequestId } from './request-id.mjs'
 import { handleSideload } from './sideload/router.mjs'
 
@@ -42,7 +51,19 @@ const handler = {
   },
 }
 
-export default Sentry.withSentry(getSentryWorkerOptions, handler)
+const sentryWrappedHandler = Sentry.withSentry(getSentryWorkerOptions, handler)
+
+export default {
+  /**
+   * @param {Request} request
+   * @param {Record<string, string | undefined>} env
+   * @param {ExecutionContext} ctx
+   */
+  async fetch(request, env, ctx) {
+    const worker = await resolveFxWorkerExport(sentryWrappedHandler, env)
+    return worker.fetch(request, env, ctx)
+  },
+}
 
 /**
  * @param {Request} request
@@ -205,6 +226,10 @@ async function handleCoverage(request, env) {
   const rawTo = url.searchParams.get('to') ?? 'USD'
   const rawAnchorDate = url.searchParams.get('anchorDate') ?? undefined
   const rawDays = Number(url.searchParams.get('days') ?? 30)
+  const verificationRequested = shouldEmitFxCoverageVerification(request)
+  const otelDiagnosticHeaders = verificationRequested
+    ? buildFxOtelDiagnosticHeaders(env)
+    : null
 
   logFxMonitoringEvent('info', {
     signal: 'coverage_entry',
@@ -217,66 +242,97 @@ async function handleCoverage(request, env) {
     requestedDays: rawDays,
   }, env)
 
-  try {
-    const report = await buildFxCoverageReport({
-      from: rawFrom,
-      to: rawTo,
-      anchorDate: rawAnchorDate,
-      days: rawDays,
-      baseUrl: env.ASSET_BASE_URL || ASSET_BASE_URL,
-    })
-    const summary = summarizeFxCoverageReport(report)
-    const line = `[FX_DIAGNOSTICS] step=done status=200 ${summary}`
+  const runCoverage = async () => {
+    try {
+      const report = await buildFxCoverageReport({
+        from: rawFrom,
+        to: rawTo,
+        anchorDate: rawAnchorDate,
+        days: rawDays,
+        baseUrl: env.ASSET_BASE_URL || ASSET_BASE_URL,
+      })
+      const summary = summarizeFxCoverageReport(report)
+      const line = `[FX_DIAGNOSTICS] step=done status=200 ${summary}`
 
-    if (report.mismatchCount > 0) {
-      console.warn(line)
-      await captureFxCoverageMismatch(report, 'fx-coverage-route', requestId, env)
-    } else {
-      console.log(line)
-      logFxMonitoringEvent('info', {
-        signal: 'coverage_ok',
-        source: 'fx-coverage-route',
-        route: 'coverage',
+      if (report.mismatchCount > 0) {
+        console.warn(line)
+        await captureFxCoverageMismatch(report, 'fx-coverage-route', requestId, env)
+      } else {
+        console.log(line)
+        logFxMonitoringEvent('info', {
+          signal: 'coverage_ok',
+          source: 'fx-coverage-route',
+          route: 'coverage',
+          requestId,
+          from: report.from,
+          to: report.to,
+          anchorDate: report.anchorDate,
+          requestedDays: report.requestedDays,
+          availableDays: report.historyCoverage.availableDays,
+        }, env)
+      }
+
+      return jsonResponse(report, {
         requestId,
-        from: report.from,
-        to: report.to,
-        anchorDate: report.anchorDate,
-        requestedDays: report.requestedDays,
-        availableDays: report.historyCoverage.availableDays,
+        headers: {
+          'Cache-Control': 'no-store',
+          ...(otelDiagnosticHeaders ?? {}),
+        },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const line =
+        `[FX_DIAGNOSTICS] step=error from=${rawFrom} to=${rawTo} anchorDate=${rawAnchorDate ?? 'today'} days=${rawDays} message=${message}`
+
+      if (message.startsWith('Invalid ') || message.startsWith('No history points available')) {
+        console.warn(line)
+        return errorResponse('INVALID_QUERY', message, 400, requestId, {
+          'Cache-Control': 'no-store',
+          ...(otelDiagnosticHeaders ?? {}),
+        })
+      }
+
+      console.error(line)
+      await captureFxCoverageFailure(error, {
+        source: 'fx-coverage-route',
+        from: rawFrom,
+        to: rawTo,
+        anchorDate: rawAnchorDate ?? new Date().toISOString().slice(0, 10),
+        requestedDays: rawDays,
+        requestId,
       }, env)
-    }
-
-    return jsonResponse(report, {
-      requestId,
-      headers: {
+      return errorResponse('FX_DIAGNOSTICS_FAILED', message, 502, requestId, {
         'Cache-Control': 'no-store',
-      },
-    })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    const line =
-      `[FX_DIAGNOSTICS] step=error from=${rawFrom} to=${rawTo} anchorDate=${rawAnchorDate ?? 'today'} days=${rawDays} message=${message}`
-
-    if (message.startsWith('Invalid ') || message.startsWith('No history points available')) {
-      console.warn(line)
-      return errorResponse('INVALID_QUERY', message, 400, requestId, {
-        'Cache-Control': 'no-store',
+        ...(otelDiagnosticHeaders ?? {}),
       })
     }
-
-    console.error(line)
-    await captureFxCoverageFailure(error, {
-      source: 'fx-coverage-route',
-      from: rawFrom,
-      to: rawTo,
-      anchorDate: rawAnchorDate ?? new Date().toISOString().slice(0, 10),
-      requestedDays: rawDays,
-      requestId,
-    }, env)
-    return errorResponse('FX_DIAGNOSTICS_FAILED', message, 502, requestId, {
-      'Cache-Control': 'no-store',
-    })
   }
+
+  if (!verificationRequested) {
+    return runCoverage()
+  }
+
+  return withFxVerificationSpan(
+    requestId,
+    {
+      'resplit.observability.probe': 'grafana_tempo',
+      'resplit.request_id': requestId,
+      'resplit.route': 'coverage',
+      'http.route': url.pathname,
+      'url.path': url.pathname,
+    },
+    async span => {
+      const response = await runCoverage()
+
+      span.setAttribute('http.response.status_code', response.status)
+      span.setStatus({
+        code: response.ok ? SpanStatusCode.OK : SpanStatusCode.ERROR,
+        message: `http_${response.status}`,
+      })
+
+      return response
+    }
+  )
 }
 
 async function handleFxCanary(request, env) {
