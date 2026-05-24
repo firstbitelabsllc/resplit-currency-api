@@ -184,6 +184,9 @@ npm run check
 
 npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23
 # Read-only: verifies whether any complete single historical source can safely backfill archive gaps
+
+npm run backfill:history -- --from 2026-05-12 --to 2026-05-23 --reference snapshot-archive/2026-05-24.json
+# Dry-run: builds complete missing snapshots from the approved source/derivation contract
 ```
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.
@@ -200,3 +203,5 @@ During recovery from archive gaps, deploy smoke warns through `history_range_inc
 `archive_gap_detected` only when latest data and Worker quote resolution are current and exact.
 
 The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over. Before backfilling an archive gap, run `npm run audit:backfill-sources` and require at least one complete single-source candidate for every missing date; do not merge partial providers just to clear canary pairs.
+
+The current safe backfill contract is `fxapi-pair-history` plus explicit one-to-one derivations for `fok<-dkk`, `kid<-aud`, and `tvd<-aud`. The derivations are only applied when the source omits the local currency code and the anchor currency is present; they never synthesize independent market rates such as `ssp` or `zwg`.

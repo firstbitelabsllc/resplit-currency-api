@@ -5,6 +5,7 @@
   "scripts": {
     "generate": "node currscript.js",
     "audit:backfill-sources": "node scripts/audit-history-backfill-sources.js",
+    "backfill:history": "node scripts/backfill-history-snapshots.js",
     "validate": "node scripts/validate-package.js",
     "test": "node --test tests/*.test.js",
     "smoke:deploy": "node scripts/smoke-check-deploy.js",

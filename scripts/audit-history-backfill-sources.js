@@ -24,6 +24,16 @@ const defaultSourceDefinitions = [
     urlForDate: (date) => `https://api.frankfurter.app/${date}?from=EUR`,
     parseRates: parseFrankfurterRates,
   },
+  {
+    name: 'fxapi-pair-history',
+    createSource: createFxApiPairHistorySource,
+  },
+]
+
+const deterministicCurrencyDerivations = [
+  { code: 'fok', sourceCode: 'dkk' },
+  { code: 'kid', sourceCode: 'aud' },
+  { code: 'tvd', sourceCode: 'aud' },
 ]
 
 if (require.main === module) {
@@ -47,6 +57,8 @@ async function main({
   const requiredCodes = loadRequiredCodes(referencePath)
   const dates = enumerateDates(options.from, options.to)
   const sources = createNetworkSources(defaultSourceDefinitions, fetchImpl, {
+    dates,
+    requiredCodes,
     timeoutMs: options.timeoutMs,
   })
   const audit = await buildBackfillAudit({
@@ -147,47 +159,177 @@ function loadRequiredCodes(referencePath) {
   return codes
 }
 
-function createNetworkSources(sourceDefinitions, fetchImpl, { timeoutMs }) {
+function createNetworkSources(sourceDefinitions, fetchImpl, { dates = [], requiredCodes = [], timeoutMs }) {
   if (typeof fetchImpl !== 'function') {
     throw new Error('global fetch is unavailable; use Node 18+')
   }
 
-  return sourceDefinitions.map((source) => ({
-    name: source.name,
-    fetchRates: async (date) => {
-      const url = source.urlForDate(date)
-      try {
-        const response = await fetchImpl(url, {
-          signal: AbortSignal.timeout(timeoutMs),
-        })
-        if (!response.ok) {
+  return sourceDefinitions.map((source) => {
+    if (typeof source.createSource === 'function') {
+      return source.createSource({
+        dates,
+        fetchImpl,
+        requiredCodes,
+        timeoutMs,
+      })
+    }
+
+    return {
+      name: source.name,
+      fetchRates: async (date) => {
+        const url = source.urlForDate(date)
+        try {
+          const response = await fetchImpl(url, {
+            signal: AbortSignal.timeout(timeoutMs),
+          })
+          if (!response.ok) {
+            return {
+              name: source.name,
+              url,
+              ok: false,
+              error: `HTTP ${response.status}`,
+              rates: {},
+            }
+          }
+
+          const payload = await response.json()
+          return {
+            name: source.name,
+            url,
+            ok: true,
+            rates: normalizeRatesMap(source.parseRates(payload)),
+          }
+        } catch (error) {
           return {
             name: source.name,
             url,
             ok: false,
-            error: `HTTP ${response.status}`,
+            error: error.message,
             rates: {},
           }
         }
+      },
+    }
+  })
+}
 
-        const payload = await response.json()
-        return {
-          name: source.name,
-          url,
-          ok: true,
-          rates: normalizeRatesMap(source.parseRates(payload)),
-        }
-      } catch (error) {
-        return {
-          name: source.name,
-          url,
-          ok: false,
-          error: error.message,
-          rates: {},
-        }
+function createFxApiPairHistorySource({ dates, fetchImpl, requiredCodes, timeoutMs }) {
+  const derivableCodes = new Set(deterministicCurrencyDerivations.map((derivation) => derivation.code))
+  const targetCodes = requiredCodes.filter((code) => code !== 'eur' && !derivableCodes.has(code))
+  const from = dates[0]
+  const to = dates[dates.length - 1]
+  let cachePromise = null
+
+  return {
+    name: 'fxapi-pair-history',
+    fetchRates: async (date) => {
+      cachePromise ||= fetchFxApiPairHistoryRange({
+        dates,
+        fetchImpl,
+        from,
+        targetCodes,
+        timeoutMs,
+        to,
+      })
+      const { errors, ratesByDate } = await cachePromise
+      return {
+        name: 'fxapi-pair-history',
+        url: `https://fxapi.app/api/history/EUR/{target}.json?from=${from}&to=${to}`,
+        ok: errors.length === 0,
+        error: errors.length > 0 ? `${errors.length} target fetch(es) failed: ${errors.slice(0, 3).join('; ')}` : undefined,
+        rates: ratesByDate.get(date) || {},
       }
     },
-  }))
+  }
+}
+
+async function fetchFxApiPairHistoryRange({
+  dates,
+  fetchImpl,
+  from,
+  targetCodes,
+  timeoutMs,
+  to,
+}) {
+  const dateSet = new Set(dates)
+  const ratesByDate = new Map(dates.map((date) => [date, { eur: 1 }]))
+  const errors = []
+  let nextTargetIndex = 0
+
+  async function worker() {
+    while (nextTargetIndex < targetCodes.length) {
+      const targetCode = targetCodes[nextTargetIndex++]
+      const result = await fetchFxApiPairHistoryTarget({
+        fetchImpl,
+        from,
+        targetCode,
+        timeoutMs,
+        to,
+      })
+
+      if (result.error) {
+        errors.push(`${targetCode}:${result.error}`)
+        continue
+      }
+
+      for (const point of result.points) {
+        if (!dateSet.has(point.date)) {
+          continue
+        }
+        ratesByDate.get(point.date)[targetCode] = point.rate
+      }
+    }
+  }
+
+  const concurrency = Math.min(8, targetCodes.length || 1)
+  await Promise.all(Array.from({ length: concurrency }, worker))
+
+  return { errors, ratesByDate }
+}
+
+async function fetchFxApiPairHistoryTarget({
+  fetchImpl,
+  from,
+  targetCode,
+  timeoutMs,
+  to,
+}) {
+  const target = targetCode.toUpperCase()
+  const url = `https://fxapi.app/api/history/EUR/${target}.json?from=${from}&to=${to}`
+
+  try {
+    const response = await fetchImpl(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    if (!response.ok) {
+      return {
+        error: `HTTP ${response.status}`,
+        points: [],
+      }
+    }
+
+    const payload = await response.json()
+    if (!Array.isArray(payload?.rates)) {
+      return {
+        error: 'missing rates array',
+        points: [],
+      }
+    }
+
+    return {
+      points: payload.rates
+        .map((point) => ({
+          date: point.date,
+          rate: Number(point.rate),
+        }))
+        .filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.rate) && point.rate > 0),
+    }
+  } catch (error) {
+    return {
+      error: error.message,
+      points: [],
+    }
+  }
 }
 
 async function buildBackfillAudit({ dates, requiredCodes, sources }) {
@@ -211,7 +353,8 @@ async function auditDate({ date, requiredCodes, sources }) {
 
   for (const source of sources) {
     const result = await source.fetchRates(date)
-    const rates = normalizeRatesMap(result.rates)
+    const derivationResult = applyDeterministicCurrencyDerivations(normalizeRatesMap(result.rates))
+    const rates = derivationResult.rates
     Object.assign(unionRates, rates)
     const missing = missingCodes(requiredCodes, rates)
     sourceResults.push({
@@ -219,6 +362,7 @@ async function auditDate({ date, requiredCodes, sources }) {
       url: result.url,
       ok: Boolean(result.ok),
       count: Object.keys(rates).length,
+      derivations: derivationResult.derivations,
       missingCount: missing.length,
       missing,
       error: result.error,
@@ -257,8 +401,11 @@ function formatAuditReport(audit) {
     for (const source of result.sourceResults) {
       const status = source.ok ? 'ok' : `error=${source.error || 'unknown'}`
       const missing = source.missing.length > 0 ? formatCodeList(source.missing) : 'none'
+      const derived = source.derivations.length > 0
+        ? `; derived=${source.derivations.map((derivation) => `${derivation.code}<-${derivation.sourceCode}`).join(',')}`
+        : ''
       lines.push(
-        `  - ${source.name}: ${status}; count=${source.count}; missing=${missing}`
+        `  - ${source.name}: ${status}; count=${source.count}; missing=${missing}${derived}`
       )
     }
   }
@@ -286,6 +433,31 @@ function normalizeRatesMap(rates) {
     }
   }
   return normalized
+}
+
+function applyDeterministicCurrencyDerivations(rates) {
+  const derivedRates = { ...rates }
+  const derivations = []
+
+  for (const derivation of deterministicCurrencyDerivations) {
+    if (Number.isFinite(derivedRates[derivation.code]) && derivedRates[derivation.code] > 0) {
+      continue
+    }
+
+    const sourceRate = derivedRates[derivation.sourceCode]
+    if (Number.isFinite(sourceRate) && sourceRate > 0) {
+      derivedRates[derivation.code] = sourceRate
+      derivations.push({
+        code: derivation.code,
+        sourceCode: derivation.sourceCode,
+      })
+    }
+  }
+
+  return {
+    derivations,
+    rates: derivedRates,
+  }
 }
 
 function parseResplitSnapshot(payload) {
@@ -342,11 +514,15 @@ function assertISODate(value, fieldName) {
 }
 
 module.exports = {
+  applyDeterministicCurrencyDerivations,
   auditDate,
   buildBackfillAudit,
+  createFxApiPairHistorySource,
   createNetworkSources,
   defaultSourceDefinitions,
+  deterministicCurrencyDerivations,
   enumerateDates,
+  fetchFxApiPairHistoryRange,
   formatAuditReport,
   loadRequiredCodes,
   main,

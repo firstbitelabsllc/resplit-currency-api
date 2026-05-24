@@ -87,6 +87,15 @@ Pass criteria:
 - the source covers the full current package currency set, not just canary pairs
 - no snapshot is written from merged or partial third-party data unless the package contract is explicitly changed
 
+When the audit reports `fxapi-pair-history` complete, build snapshots with the dry-run first:
+
+```bash
+npm run backfill:history -- --from 2026-05-12 --to 2026-05-23 --reference snapshot-archive/2026-05-24.json
+npm run backfill:history -- --from 2026-05-12 --to 2026-05-23 --reference snapshot-archive/2026-05-24.json --write
+```
+
+The approved derivation contract is `fok<-dkk`, `kid<-aud`, and `tvd<-aud`. These fill non-independent local currency codes only when the anchor rate exists; do not derive independent rates such as `ssp` or `zwg`.
+
 ### 2. Worker + web mirror parity
 
 ```bash
@@ -413,6 +422,7 @@ missing days (e.g., first run or recovery from a reset).
 | `scripts/sentry-monitoring.js` | Shared Sentry issue, log, and cron check-in helper |
 | `scripts/sentry-checkin.js` | Workflow helper for start/finish/error check-ins |
 | `scripts/audit-history-backfill-sources.js` | Read-only audit for historical source completeness before backfilling snapshot gaps. Fails closed when no single source covers the full current package currency set. |
+| `scripts/backfill-history-snapshots.js` | Dry-run-first archive backfill writer for complete `fxapi-pair-history` snapshots plus explicit deterministic currency derivations. |
 | `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
 | `scripts/smoke-check-deploy.js` | Verifies Pages, dated snapshot, GitHub fallback, and canonical Worker after publish. Defaults to current UTC date; `EXPECTED_DATE=yyyy-mm-dd` pins workflow checks, `ALLOW_STALE_DEPLOY_SMOKE=1` is diagnostic-only, and `SKIP_WORKER_SMOKE_CHECK=1` only bypasses the Worker check intentionally. |
 | `.env.local` | Local Cloudflare credentials (gitignored) |
