@@ -13,6 +13,8 @@ function makeWorkerHealthPayload() {
   return {
     ok: true,
     service: 'resplit-currency-api',
+    environment: 'production',
+    release: 'release-123',
     timestamp: '2026-03-25T14:00:00.000Z',
   }
 }
@@ -247,6 +249,26 @@ test('smokeCheckWorker rejects missing worker health payloads', async () => {
       },
     }),
     /worker health shape mismatch/
+  )
+})
+
+test('smokeCheckWorker rejects health payloads without release metadata', async () => {
+  await assert.rejects(
+    smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
+      fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return {
+            ok: true,
+            service: 'resplit-currency-api',
+            environment: 'production',
+            release: 'unknown',
+            timestamp: '2026-03-25T14:00:00.000Z',
+          }
+        }
+        throw new Error(`Unexpected URL: ${url}`)
+      },
+    }),
+    /worker health release missing/
   )
 })
 

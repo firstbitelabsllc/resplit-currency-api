@@ -89,6 +89,13 @@ function handleHealth(request, env) {
     return response
   }
 
+  if (request.method !== 'GET') {
+    return errorResponse('METHOD_NOT_ALLOWED', 'Expected GET or HEAD', 405, requestId, {
+      ...headers,
+      Allow: 'GET, HEAD',
+    })
+  }
+
   return jsonResponse({
     ok: true,
     service: 'resplit-currency-api',

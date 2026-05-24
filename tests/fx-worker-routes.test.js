@@ -112,6 +112,27 @@ test('worker health route supports HEAD without a body', async () => {
   assert.equal(await response.text(), '')
 })
 
+test('worker health route rejects non-probe methods', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      method: 'POST',
+      headers: { 'x-request-id': 'req-health-post' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 405)
+  assert.equal(response.headers.get('x-request-id'), 'req-health-post')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(response.headers.get('allow'), 'GET, HEAD')
+  assert.deepEqual(await response.json(), {
+    error: 'METHOD_NOT_ALLOWED',
+    message: 'Expected GET or HEAD',
+  })
+})
+
 test('worker quote route returns request id on invalid query', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 

@@ -190,6 +190,12 @@ function assertWorkerHealth(health, normalizedBase) {
   if (health?.ok !== true || health?.service !== 'resplit-currency-api') {
     throw new Error(`worker health shape mismatch for ${normalizedBase}`)
   }
+  if (typeof health.environment !== 'string' || health.environment.trim() === '' || health.environment === 'unknown') {
+    throw new Error(`worker health environment missing for ${normalizedBase}`)
+  }
+  if (typeof health.release !== 'string' || health.release.trim() === '' || health.release === 'unknown') {
+    throw new Error(`worker health release missing for ${normalizedBase}`)
+  }
   if (typeof health.timestamp !== 'string' || Number.isNaN(Date.parse(health.timestamp))) {
     throw new Error(`worker health timestamp invalid for ${normalizedBase}`)
   }

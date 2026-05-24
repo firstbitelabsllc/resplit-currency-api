@@ -361,6 +361,7 @@ Add to `.github/workflows/run.yml` after the deploy steps:
 Set up UptimeRobot to check:
 - `https://resplit-currency-api.pages.dev/latest/usd.json`
 - `https://resplit-currency-api.pages.dev/history/30d/usd.json`
+- `https://fx.resplit.app/health` (GET or HEAD; should return `200`, `Cache-Control: no-store`, `x-request-id`, and release/environment metadata)
 
 ## Architecture Recap
 
