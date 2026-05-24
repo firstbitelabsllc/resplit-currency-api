@@ -2,8 +2,10 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const {
+  applyDeterministicCurrencyDerivations,
   auditDate,
   buildBackfillAudit,
+  createFxApiPairHistorySource,
   enumerateDates,
   formatAuditReport,
   missingCodes,
@@ -58,6 +60,45 @@ test('auditDate requires a complete single source and reports union holes', asyn
   )
 })
 
+test('auditDate applies explicit deterministic currency derivations', async () => {
+  const requiredCodes = ['aud', 'dkk', 'eur', 'fok', 'kid', 'tvd', 'usd']
+  const result = await auditDate({
+    date: '2026-05-12',
+    requiredCodes,
+    sources: [
+      source('source-with-pegs', {
+        aud: 1.6,
+        dkk: 7.46,
+        eur: 1,
+        usd: 1.08,
+      }),
+    ],
+  })
+
+  assert.deepEqual(result.completeSources, ['source-with-pegs'])
+  assert.deepEqual(result.unionMissing, [])
+  assert.deepEqual(result.sourceResults[0].derivations, [
+    { code: 'fok', sourceCode: 'dkk' },
+    { code: 'kid', sourceCode: 'aud' },
+    { code: 'tvd', sourceCode: 'aud' },
+  ])
+})
+
+test('applyDeterministicCurrencyDerivations does not override source-provided rates', () => {
+  const result = applyDeterministicCurrencyDerivations({
+    aud: 1.6,
+    dkk: 7.46,
+    fok: 7.45,
+    tvd: 1.61,
+  })
+
+  assert.equal(result.rates.fok, 7.45)
+  assert.equal(result.rates.tvd, 1.61)
+  assert.deepEqual(result.derivations, [
+    { code: 'kid', sourceCode: 'aud' },
+  ])
+})
+
 test('buildBackfillAudit passes when each date has a full single-source candidate', async () => {
   const audit = await buildBackfillAudit({
     dates: enumerateDates('2026-05-12', '2026-05-13'),
@@ -96,6 +137,65 @@ test('formatAuditReport makes missing source coverage visible', async () => {
   assert.match(report, /partial-source: ok; count=2; missing=kid/)
 })
 
+test('formatAuditReport shows deterministic derivation provenance', async () => {
+  const audit = await buildBackfillAudit({
+    dates: ['2026-05-12'],
+    requiredCodes: ['aud', 'eur', 'kid'],
+    sources: [
+      source('aud-source', {
+        aud: 1.6,
+        eur: 1,
+      }),
+    ],
+  })
+
+  assert.match(formatAuditReport(audit), /derived=kid<-aud/)
+})
+
+test('fxapi pair-history source composes a complete dated source with peg derivations', async () => {
+  const dates = enumerateDates('2026-05-12', '2026-05-13')
+  const source = createFxApiPairHistorySource({
+    dates,
+    fetchImpl: fakeFxApiFetch({
+      AUD: {
+        '2026-05-12': 1.6,
+        '2026-05-13': 1.61,
+      },
+      DKK: {
+        '2026-05-12': 7.46,
+        '2026-05-13': 7.47,
+      },
+      SSP: {
+        '2026-05-12': 5400,
+        '2026-05-13': 5401,
+      },
+      USD: {
+        '2026-05-12': 1.08,
+        '2026-05-13': 1.09,
+      },
+    }),
+    requiredCodes: ['aud', 'dkk', 'eur', 'fok', 'kid', 'ssp', 'tvd', 'usd'],
+    timeoutMs: 1000,
+  })
+
+  const audit = await buildBackfillAudit({
+    dates,
+    requiredCodes: ['aud', 'dkk', 'eur', 'fok', 'kid', 'ssp', 'tvd', 'usd'],
+    sources: [source],
+  })
+
+  assert.equal(audit.incompleteDateCount, 0)
+  assert.deepEqual(audit.dates.map((entry) => entry.completeSources), [
+    ['fxapi-pair-history'],
+    ['fxapi-pair-history'],
+  ])
+  assert.deepEqual(audit.dates[0].sourceResults[0].derivations, [
+    { code: 'fok', sourceCode: 'dkk' },
+    { code: 'kid', sourceCode: 'aud' },
+    { code: 'tvd', sourceCode: 'aud' },
+  ])
+})
+
 test('missingCodes returns normalized missing codes in required order', () => {
   assert.deepEqual(
     missingCodes(['aed', 'eur', 'usd'], { AED: 3.97, usd: 1.08 }),
@@ -119,5 +219,18 @@ function source(name, rates) {
       ok: true,
       rates,
     }),
+  }
+}
+
+function fakeFxApiFetch(historyByTarget) {
+  return async (url) => {
+    const target = url.match(/\/EUR\/([A-Z]{3})\.json/)?.[1]
+    const targetHistory = historyByTarget[target] || {}
+    return {
+      ok: true,
+      json: async () => ({
+        rates: Object.entries(targetHistory).map(([date, rate]) => ({ date, rate })),
+      }),
+    }
   }
 }
