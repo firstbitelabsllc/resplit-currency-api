@@ -190,5 +190,7 @@ intentionally need to bypass the canonical Worker check.
 By default, deploy smoke expects the current UTC publish date. Set `EXPECTED_DATE=yyyy-mm-dd` for
 workflow-pinned checks, or `ALLOW_STALE_DEPLOY_SMOKE=1` only when diagnosing an intentionally stale
 deployment.
+During recovery from archive gaps, deploy smoke warns through `history_range_incomplete` /
+`archive_gap_detected` only when latest data and Worker quote resolution are current and exact.
 
 The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over.

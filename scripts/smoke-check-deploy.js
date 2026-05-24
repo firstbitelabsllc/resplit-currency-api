@@ -162,18 +162,43 @@ async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithR
   if (coverage.quote.resolutionKind !== 'exact') {
     throw new Error(`worker coverage quote degraded for ${normalizedBase}`)
   }
-  if (!Array.isArray(coverage.signals) || coverage.signals.length > 0) {
-    throw new Error(`worker coverage signals present for ${normalizedBase}`)
+  const coverageSignals = Array.isArray(coverage.signals) ? coverage.signals : null
+  if (!coverageSignals) {
+    throw new Error(`worker coverage signals missing for ${normalizedBase}`)
   }
-  if (!Number.isFinite(coverage.mismatchCount) || coverage.mismatchCount !== 0) {
-    throw new Error(`worker coverage mismatchCount expected 0 for ${normalizedBase}, got ${coverage.mismatchCount}`)
+  const hasCoverageGaps = coverage.historyCoverage.requestedDays !== coverage.historyCoverage.availableDays ||
+    coverage.historyCoverage.missingDayCount !== 0 ||
+    coverageSignals.length > 0 ||
+    coverage.mismatchCount !== 0
+
+  if (hasCoverageGaps && !isRecoveryCoverageGap(coverage, dateToday)) {
+    throw new Error(`worker coverage signals present for ${normalizedBase}: ${coverageSignals.join(', ')}`)
   }
-  if (coverage.historyCoverage.requestedDays !== coverage.historyCoverage.availableDays) {
-    throw new Error(`worker coverage availableDays mismatch for ${normalizedBase}`)
+  if (hasCoverageGaps) {
+    console.warn(
+      `smoke-check-deploy: WARNING worker coverage has recovery archive gaps ` +
+      `(availableDays=${coverage.historyCoverage.availableDays}/${coverage.historyCoverage.requestedDays}, ` +
+      `missingDayCount=${coverage.historyCoverage.missingDayCount}, signals=${coverageSignals.join(',')})`
+    )
   }
-  if (coverage.historyCoverage.missingDayCount !== 0) {
-    throw new Error(`worker coverage missingDayCount expected 0 for ${normalizedBase}, got ${coverage.historyCoverage.missingDayCount}`)
+}
+
+function isRecoveryCoverageGap(coverage, dateToday) {
+  const allowedSignals = new Set(['history_range_incomplete', 'archive_gap_detected'])
+  const signals = Array.isArray(coverage.signals) ? coverage.signals : []
+  if (signals.some((signal) => !allowedSignals.has(signal))) {
+    return false
   }
+  if (!coverage.historyCoverage || coverage.historyCoverage.archiveLatestDate !== dateToday) {
+    return false
+  }
+  if (coverage?.freshness?.quoteResolvedLagDays !== 0 || coverage?.freshness?.archiveLatestLagDays !== 0) {
+    return false
+  }
+  if (coverage?.freshness?.staleAgainstAnchor === true) {
+    return false
+  }
+  return coverage.quote?.resolutionKind === 'exact'
 }
 
 async function fetchJSONWithRetry(url, attempts = 8, delayMs = 3_000) {
@@ -229,5 +254,6 @@ module.exports = {
   main,
   resolveExpectedDate,
   resolveWorkerBase,
+  isRecoveryCoverageGap,
   smokeCheckWorker,
 }

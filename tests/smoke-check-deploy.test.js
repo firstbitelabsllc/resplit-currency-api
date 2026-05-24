@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 
 const {
   defaultWorkerBase,
+  isRecoveryCoverageGap,
   resolveExpectedDate,
   resolveWorkerBase,
   smokeCheckWorker,
@@ -137,6 +138,80 @@ test('smokeCheckWorker accepts exact coverage payloads', async () => {
         }
       },
     })
+  )
+})
+
+test('smokeCheckWorker warns through archive-only recovery gaps', async () => {
+  const warnings = []
+  const originalWarn = console.warn
+
+  console.warn = (message) => warnings.push(message)
+
+  try {
+    await assert.doesNotReject(
+      smokeCheckWorker('https://fx.resplit.app', '2026-05-24', {
+        fetchJson: async (url) => {
+          if (String(url).includes('/quote?')) {
+            return {
+              from: 'AED',
+              to: 'USD',
+              requestedDate: '2026-05-24',
+              resolvedDate: '2026-05-24',
+              resolutionKind: 'exact',
+              rate: 0.27,
+            }
+          }
+          if (String(url).includes('/history?')) {
+            return {
+              points: [
+                { date: '2026-05-24', rate: 0.27 },
+              ],
+            }
+          }
+          return {
+            quote: {
+              resolvedDate: '2026-05-24',
+              resolutionKind: 'exact',
+            },
+            historyCoverage: {
+              requestedDays: 30,
+              availableDays: 18,
+              missingDayCount: 12,
+              archiveLatestDate: '2026-05-24',
+            },
+            freshness: {
+              quoteResolvedLagDays: 0,
+              archiveLatestLagDays: 0,
+              staleAgainstAnchor: false,
+            },
+            mismatchCount: 24,
+            signals: ['history_range_incomplete', 'archive_gap_detected'],
+          }
+        },
+      })
+    )
+  } finally {
+    console.warn = originalWarn
+  }
+
+  assert.ok(warnings.some((line) => line.includes('recovery archive gaps')))
+})
+
+test('isRecoveryCoverageGap rejects stale or fallback coverage', () => {
+  assert.equal(
+    isRecoveryCoverageGap({
+      quote: { resolutionKind: 'prior_day_fallback' },
+      historyCoverage: {
+        archiveLatestDate: '2026-05-24',
+      },
+      freshness: {
+        quoteResolvedLagDays: 1,
+        archiveLatestLagDays: 0,
+        staleAgainstAnchor: true,
+      },
+      signals: ['prior_day_fallback_used', 'history_range_incomplete'],
+    }, '2026-05-24'),
+    false
   )
 })
 

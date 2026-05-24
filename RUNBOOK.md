@@ -73,7 +73,8 @@ Pass criteria:
 
 `npm run smoke:deploy` fails stale deployments by default. Use `EXPECTED_DATE=yyyy-mm-dd` for a
 known workflow date, or `ALLOW_STALE_DEPLOY_SMOKE=1` only for diagnostics when you intentionally
-need to inspect the latest deployed stale package.
+need to inspect the latest deployed stale package. During publish-hole recovery it may warn through
+archive-only coverage gaps, but only when latest data and Worker quote resolution are current.
 
 ### 2. Worker + web mirror parity
 
