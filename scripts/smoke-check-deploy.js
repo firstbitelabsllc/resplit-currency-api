@@ -132,6 +132,9 @@ function resolveExpectedDate({
 async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithRetry } = {}) {
   const normalizedBase = baseUrl.replace(/\/+$/, '')
   const historyStart = dateDaysBeforeUTC(dateToday, 2)
+  const health = await fetchJson(`${normalizedBase}/health`)
+  assertWorkerHealth(health, normalizedBase)
+
   const quote = await fetchJson(
     `${normalizedBase}/quote?from=AED&to=USD&date=${dateToday}`
   )
@@ -180,6 +183,15 @@ async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithR
       `(availableDays=${coverage.historyCoverage.availableDays}/${coverage.historyCoverage.requestedDays}, ` +
       `missingDayCount=${coverage.historyCoverage.missingDayCount}, signals=${coverageSignals.join(',')})`
     )
+  }
+}
+
+function assertWorkerHealth(health, normalizedBase) {
+  if (health?.ok !== true || health?.service !== 'resplit-currency-api') {
+    throw new Error(`worker health shape mismatch for ${normalizedBase}`)
+  }
+  if (typeof health.timestamp !== 'string' || Number.isNaN(Date.parse(health.timestamp))) {
+    throw new Error(`worker health timestamp invalid for ${normalizedBase}`)
   }
 }
 

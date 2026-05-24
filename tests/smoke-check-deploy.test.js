@@ -9,6 +9,14 @@ const {
   smokeCheckWorker,
 } = require('../scripts/smoke-check-deploy.js')
 
+function makeWorkerHealthPayload() {
+  return {
+    ok: true,
+    service: 'resplit-currency-api',
+    timestamp: '2026-03-25T14:00:00.000Z',
+  }
+}
+
 test('resolveWorkerBase defaults to the canonical production worker host', () => {
   assert.equal(resolveWorkerBase({}), defaultWorkerBase)
 })
@@ -62,6 +70,9 @@ test('smokeCheckWorker rejects degraded coverage payloads', async () => {
   await assert.rejects(
     smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
       fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return makeWorkerHealthPayload()
+        }
         if (String(url).includes('/quote?')) {
           return {
             from: 'AED',
@@ -104,6 +115,9 @@ test('smokeCheckWorker accepts exact coverage payloads', async () => {
   await assert.doesNotReject(
     smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
       fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return makeWorkerHealthPayload()
+        }
         if (String(url).includes('/quote?')) {
           return {
             from: 'AED',
@@ -151,6 +165,9 @@ test('smokeCheckWorker warns through archive-only recovery gaps', async () => {
     await assert.doesNotReject(
       smokeCheckWorker('https://fx.resplit.app', '2026-05-24', {
         fetchJson: async (url) => {
+          if (String(url).endsWith('/health')) {
+            return makeWorkerHealthPayload()
+          }
           if (String(url).includes('/quote?')) {
             return {
               from: 'AED',
@@ -215,6 +232,24 @@ test('isRecoveryCoverageGap rejects stale or fallback coverage', () => {
   )
 })
 
+test('smokeCheckWorker rejects missing worker health payloads', async () => {
+  await assert.rejects(
+    smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
+      fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return {
+            ok: false,
+            service: 'unknown',
+            timestamp: '2026-03-25T14:00:00.000Z',
+          }
+        }
+        throw new Error(`Unexpected URL: ${url}`)
+      },
+    }),
+    /worker health shape mismatch/
+  )
+})
+
 test('smokeCheckWorker anchors history start to the requested publish date', async () => {
   const seenUrls = []
 
@@ -222,6 +257,9 @@ test('smokeCheckWorker anchors history start to the requested publish date', asy
     smokeCheckWorker('https://fx.resplit.app', '2026-03-01', {
       fetchJson: async (url) => {
         seenUrls.push(String(url))
+        if (String(url).endsWith('/health')) {
+          return makeWorkerHealthPayload()
+        }
         if (String(url).includes('/quote?')) {
           return {
             from: 'AED',
@@ -258,6 +296,9 @@ test('smokeCheckWorker anchors history start to the requested publish date', asy
     })
   )
 
+  assert.ok(
+    seenUrls.includes('https://fx.resplit.app/health')
+  )
   assert.ok(
     seenUrls.includes('https://fx.resplit.app/history?from=AED&to=USD&start=2026-02-27&end=2026-03-01')
   )

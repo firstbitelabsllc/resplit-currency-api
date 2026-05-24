@@ -57,6 +57,8 @@ export async function handleRequest(request, env) {
   }
 
   switch (url.pathname) {
+  case '/health':
+    return handleHealth(request, env)
   case '/quote':
     return handleQuote(request, env)
   case '/history':
@@ -70,6 +72,33 @@ export async function handleRequest(request, env) {
       'Cache-Control': 'no-store',
     })
   }
+}
+
+function handleHealth(request, env) {
+  const requestId = resolveRequestId(request)
+  const headers = {
+    'Cache-Control': 'no-store',
+  }
+
+  if (request.method === 'HEAD') {
+    const response = new Response(null, {
+      status: 200,
+      headers,
+    })
+    response.headers.set('x-request-id', requestId)
+    return response
+  }
+
+  return jsonResponse({
+    ok: true,
+    service: 'resplit-currency-api',
+    environment: env.SENTRY_ENVIRONMENT || 'unknown',
+    release: env.SENTRY_RELEASE || 'unknown',
+    timestamp: new Date().toISOString(),
+  }, {
+    requestId,
+    headers,
+  })
 }
 
 async function handleQuote(request, env) {

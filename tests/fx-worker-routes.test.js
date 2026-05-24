@@ -70,6 +70,48 @@ function createArchiveFetchStub(availableDates, rates = { eur: 1, usd: 1.2, aed:
   }
 }
 
+test('worker health route returns liveness payload with request id', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      headers: { 'x-request-id': 'req-health' },
+    }),
+    {
+      SENTRY_ENVIRONMENT: 'production',
+      SENTRY_RELEASE: 'release-123',
+    }
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-request-id'), 'req-health')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+
+  const body = await response.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.service, 'resplit-currency-api')
+  assert.equal(body.environment, 'production')
+  assert.equal(body.release, 'release-123')
+  assert.match(body.timestamp, /^\d{4}-\d{2}-\d{2}T/)
+})
+
+test('worker health route supports HEAD without a body', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      method: 'HEAD',
+      headers: { 'x-request-id': 'req-health-head' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-request-id'), 'req-health-head')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(await response.text(), '')
+})
+
 test('worker quote route returns request id on invalid query', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 

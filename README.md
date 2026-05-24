@@ -170,6 +170,7 @@ Current coverage:
 - grouped issue capture for Worker route and coverage failures
 - structured Sentry logs for monitoring signals
 - release and environment tagging
+- dependency-free Worker liveness at `/health` for GET/HEAD probes
 - cron monitor check-ins for the daily publish job, plus Worker canary check-ins when `/cron/fx-canary` is invoked by an external scheduler or manual probe
 
 This is not identical to `resplit-web` in implementation because this repo is a Node cron publisher, not a browser/server app. It is equivalent in intent: release/environment tagging, error capture, structured logs, and runtime health monitoring.
@@ -187,6 +188,8 @@ If you want local Sentry events while running scripts manually, set `SENTRY_CURR
 `npm run smoke:deploy` now defaults its Worker probe to `https://fx.resplit.app`; set
 `FX_WORKER_BASE_URL` to point at an alternate host or `SKIP_WORKER_SMOKE_CHECK=1` only when you
 intentionally need to bypass the canonical Worker check.
+Worker smoke also probes `/health` so liveness regressions fail the deploy gate before release
+automation treats the Worker as watchable.
 By default, deploy smoke expects the current UTC publish date. Set `EXPECTED_DATE=yyyy-mm-dd` for
 workflow-pinned checks, or `ALLOW_STALE_DEPLOY_SMOKE=1` only when diagnosing an intentionally stale
 deployment.
