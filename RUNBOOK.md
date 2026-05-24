@@ -69,7 +69,11 @@ npm run smoke:deploy
 Pass criteria:
 - the latest `Update Currency Rates` run is `success`
 - `npm run smoke:deploy` ends with `smoke-check-deploy: OK (...)`
-- the smoke output reports today's `date` plus a non-empty 30-day history payload
+- the smoke output reports today's UTC `date` plus a 30-point history payload
+
+`npm run smoke:deploy` fails stale deployments by default. Use `EXPECTED_DATE=yyyy-mm-dd` for a
+known workflow date, or `ALLOW_STALE_DEPLOY_SMOKE=1` only for diagnostics when you intentionally
+need to inspect the latest deployed stale package.
 
 ### 2. Worker + web mirror parity
 
@@ -396,7 +400,7 @@ missing days (e.g., first run or recovery from a reset).
 | `scripts/sentry-monitoring.js` | Shared Sentry issue, log, and cron check-in helper |
 | `scripts/sentry-checkin.js` | Workflow helper for start/finish/error check-ins |
 | `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
-| `scripts/smoke-check-deploy.js` | Verifies Pages, dated snapshot, GitHub fallback, and canonical Worker after publish (`SKIP_WORKER_SMOKE_CHECK=1` only when you intentionally need to bypass the Worker check) |
+| `scripts/smoke-check-deploy.js` | Verifies Pages, dated snapshot, GitHub fallback, and canonical Worker after publish. Defaults to current UTC date; `EXPECTED_DATE=yyyy-mm-dd` pins workflow checks, `ALLOW_STALE_DEPLOY_SMOKE=1` is diagnostic-only, and `SKIP_WORKER_SMOKE_CHECK=1` only bypasses the Worker check intentionally. |
 | `.env.local` | Local Cloudflare credentials (gitignored) |
 | `INFRASTRUCTURE.md` | Account IDs, URLs, secrets inventory |
 | `package.json` | Dependencies and publisher scripts |

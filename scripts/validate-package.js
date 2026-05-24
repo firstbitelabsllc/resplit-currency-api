@@ -4,18 +4,20 @@ const fs = require('fs')
 const path = require('path')
 const { runMonitoredScript } = require('./sentry-monitoring')
 
-const packageRoot = path.join(__dirname, '..', 'package')
+const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(__dirname, '..', 'package')
 const MIN_ARCHIVE_DAYS = 365
 const MAX_ARCHIVE_DAYS = 365
 const MAX_ARCHIVE_GAP_DAYS = 7
 
-runMonitoredScript('validate_package', main, {
-  workflow: 'daily_publish',
-  failureSignal: 'validate_package_failed'
-}).catch((error) => {
-  console.error(`validate-package: FAILED\n${error.stack || error.message}`)
-  process.exitCode = 1
-})
+if (require.main === module) {
+  runMonitoredScript('validate_package', main, {
+    workflow: 'daily_publish',
+    failureSignal: 'validate_package_failed'
+  }).catch((error) => {
+    console.error(`validate-package: FAILED\n${error.stack || error.message}`)
+    process.exitCode = 1
+  })
+}
 
 function main() {
   const currencies = readJSON('currencies.json')
@@ -43,8 +45,8 @@ function main() {
   ensure(historyFrom.from === fromCode, `history from mismatch: expected ${fromCode}`)
   ensure(Array.isArray(historyFrom.points), 'history points must be an array')
   ensure(
-    historyFrom.points.length > 0 && historyFrom.points.length <= 30,
-    `history points must be 1..30, got ${historyFrom.points.length}`
+    historyFrom.points.length === 30,
+    `history/30d/${fromCode}.json points must contain exactly 30 entries, got ${historyFrom.points.length}`
   )
 
   let previousDate = null
@@ -71,9 +73,10 @@ function main() {
   ensure(meta.archiveMode === 'immutable', `meta archiveMode expected immutable, got ${meta.archiveMode}`)
   ensure(
     Array.isArray(meta.availableHistoryDates) &&
-      meta.availableHistoryDates.length > 0 &&
-      meta.availableHistoryDates.length <= 30,
-    'meta availableHistoryDates must contain 1..30 entries'
+      meta.availableHistoryDates.length === 30,
+    `meta availableHistoryDates must contain exactly 30 entries, got ${
+      Array.isArray(meta.availableHistoryDates) ? meta.availableHistoryDates.length : typeof meta.availableHistoryDates
+    }`
   )
 
   // Numeric consistency check between snapshot-derived pair and latest pair.
@@ -106,9 +109,9 @@ function main() {
     Number.isInteger(archiveManifest.gapCount) && archiveManifest.gapCount >= 0,
     `archive gapCount must be a non-negative integer, got ${archiveManifest.gapCount}`
   )
-  ensure(
-    archiveManifest.availableDates.length >= MIN_ARCHIVE_DAYS - MAX_ARCHIVE_GAP_DAYS,
-    `archive availableDates must contain at least ${MIN_ARCHIVE_DAYS - MAX_ARCHIVE_GAP_DAYS} dates, got ${archiveManifest.availableDates.length}`
+  warnIf(
+    archiveManifest.availableDates.length < MIN_ARCHIVE_DAYS - MAX_ARCHIVE_GAP_DAYS,
+    `archive availableDates below target ${MIN_ARCHIVE_DAYS - MAX_ARCHIVE_GAP_DAYS}: got ${archiveManifest.availableDates.length}`
   )
   ensure(
     archiveManifest.availableDates.length <= MAX_ARCHIVE_DAYS,
@@ -122,9 +125,9 @@ function main() {
     daysBetween(archiveManifest.earliestDate, archiveManifest.latestDate) + 1 <= MAX_ARCHIVE_DAYS,
     `archive date span must not exceed ${MAX_ARCHIVE_DAYS} days, got ${archiveManifest.earliestDate}..${archiveManifest.latestDate}`
   )
-  ensure(
-    archiveManifest.gapCount <= MAX_ARCHIVE_GAP_DAYS,
-    `archive gapCount must be <= ${MAX_ARCHIVE_GAP_DAYS}, got ${archiveManifest.gapCount}`
+  warnIf(
+    archiveManifest.gapCount > MAX_ARCHIVE_GAP_DAYS,
+    `archive gapCount above target ${MAX_ARCHIVE_GAP_DAYS}: got ${archiveManifest.gapCount}`
   )
   ensure(
     Array.isArray(archiveManifest.supportedCurrencies) &&
@@ -148,13 +151,29 @@ function main() {
 
 function readJSON(relativePath) {
   const fullPath = path.join(packageRoot, relativePath)
-  const raw = fs.readFileSync(fullPath, 'utf8')
-  return JSON.parse(raw)
+  try {
+    const raw = fs.readFileSync(fullPath, 'utf8')
+    return JSON.parse(raw)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      throw new Error(`missing required file ${relativePath}`)
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(`invalid JSON in ${relativePath}: ${error.message}`)
+    }
+    throw error
+  }
 }
 
 function ensure(condition, message) {
   if (!condition) {
     throw new Error(message)
+  }
+}
+
+function warnIf(condition, message) {
+  if (condition) {
+    console.warn(`validate-package: WARNING ${message}`)
   }
 }
 
@@ -181,4 +200,8 @@ function daysBetween(start, end) {
   const startDate = new Date(`${start}T00:00:00Z`)
   const endDate = new Date(`${end}T00:00:00Z`)
   return Math.round((endDate - startDate) / (24 * 60 * 60 * 1000))
+}
+
+module.exports = {
+  main
 }

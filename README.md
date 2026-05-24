@@ -187,5 +187,8 @@ If you want local Sentry events while running scripts manually, set `SENTRY_CURR
 `npm run smoke:deploy` now defaults its Worker probe to `https://fx.resplit.app`; set
 `FX_WORKER_BASE_URL` to point at an alternate host or `SKIP_WORKER_SMOKE_CHECK=1` only when you
 intentionally need to bypass the canonical Worker check.
+By default, deploy smoke expects the current UTC publish date. Set `EXPECTED_DATE=yyyy-mm-dd` for
+workflow-pinned checks, or `ALLOW_STALE_DEPLOY_SMOKE=1` only when diagnosing an intentionally stale
+deployment.
 
 The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over.

@@ -19,6 +19,7 @@ async function main() {
   const fallbackBase = process.env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api'
   const workerBase = resolveWorkerBase()
   const requestedDate = process.env.EXPECTED_DATE || null
+  const allowLatestFallback = process.env.ALLOW_STALE_DEPLOY_SMOKE === '1'
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
   const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
   const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
@@ -26,7 +27,18 @@ async function main() {
     requestedDate,
     latestDate: latest?.date,
     metaLatestDate: meta?.latestDate,
+    allowLatestFallback,
   })
+
+  assertISODate(latest.date, 'cloudflare latest date')
+  assertISODate(meta.latestDate, 'cloudflare meta latestDate')
+  if (latest.date !== dateToday) {
+    throw new Error(`cloudflare latest date expected ${dateToday}, got ${latest.date}`)
+  }
+  if (meta.latestDate !== dateToday) {
+    throw new Error(`cloudflare meta latestDate expected ${dateToday}, got ${meta.latestDate}`)
+  }
+
   const datedSnapshotUrl = `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
   let datedSnapshot
   try {
@@ -46,8 +58,6 @@ async function main() {
   }
   const ghFallbackLatest = await fetchJSONWithRetry(`${fallbackBase}/latest/usd.json`)
 
-  assertISODate(latest.date, 'cloudflare latest date')
-  assertISODate(meta.latestDate, 'cloudflare meta latestDate')
   assertISODate(datedSnapshot.date, 'dated snapshot date')
   assertISODate(ghFallbackLatest.date, 'github fallback latest date')
 
@@ -55,8 +65,12 @@ async function main() {
   assertPositive(ghFallbackLatest?.rates?.usd, 'github fallback latest usd->usd')
   assertPositive(datedSnapshot?.rates?.usd, 'dated snapshot usd base rate')
 
-  if (!Array.isArray(history.points) || history.points.length < 1) {
-    throw new Error('cloudflare history has no points')
+  if (!Array.isArray(history.points) || history.points.length !== 30) {
+    throw new Error(
+      `cloudflare history points expected 30, got ${
+        Array.isArray(history.points) ? history.points.length : typeof history.points
+      }`
+    )
   }
   for (const point of history.points) {
     assertISODate(point.date, 'cloudflare history point date')
@@ -93,20 +107,26 @@ function resolveWorkerBase(env = process.env) {
   return (env.FX_WORKER_BASE_URL || defaultWorkerBase).replace(/\/+$/, '')
 }
 
-function resolveExpectedDate({ requestedDate, latestDate, metaLatestDate }) {
+function resolveExpectedDate({
+  requestedDate,
+  latestDate,
+  metaLatestDate,
+  allowLatestFallback = false,
+  now = new Date()
+}) {
   if (requestedDate) {
     return requestedDate
   }
 
-  if (metaLatestDate) {
+  if (allowLatestFallback && metaLatestDate) {
     return metaLatestDate
   }
 
-  if (latestDate) {
+  if (allowLatestFallback && latestDate) {
     return latestDate
   }
 
-  return toDateStringUTC(new Date())
+  return toDateStringUTC(now)
 }
 
 async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithRetry } = {}) {

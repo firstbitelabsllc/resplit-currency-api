@@ -34,11 +34,24 @@ test('resolveExpectedDate prefers an explicit requested date', () => {
   )
 })
 
-test('resolveExpectedDate falls back to the latest published date when no explicit date is set', () => {
+test('resolveExpectedDate defaults to the current UTC date when no explicit date is set', () => {
   assert.equal(
     resolveExpectedDate({
       latestDate: '2026-03-22',
       metaLatestDate: '2026-03-22',
+      now: new Date('2026-03-25T14:00:00Z'),
+    }),
+    '2026-03-25'
+  )
+})
+
+test('resolveExpectedDate supports explicit stale deploy smoke fallback', () => {
+  assert.equal(
+    resolveExpectedDate({
+      latestDate: '2026-03-21',
+      metaLatestDate: '2026-03-22',
+      allowLatestFallback: true,
+      now: new Date('2026-03-25T14:00:00Z'),
     }),
     '2026-03-22'
   )
