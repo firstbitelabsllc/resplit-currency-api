@@ -181,6 +181,9 @@ This is not identical to `resplit-web` in implementation because this repo is a 
 npm ci
 npm run check
 # Generates package/, validates unversioned artifact integrity, and runs unit tests
+
+npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23
+# Read-only: verifies whether any complete single historical source can safely backfill archive gaps
 ```
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.
@@ -196,4 +199,4 @@ deployment.
 During recovery from archive gaps, deploy smoke warns through `history_range_incomplete` /
 `archive_gap_detected` only when latest data and Worker quote resolution are current and exact.
 
-The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over.
+The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over. Before backfilling an archive gap, run `npm run audit:backfill-sources` and require at least one complete single-source candidate for every missing date; do not merge partial providers just to clear canary pairs.
