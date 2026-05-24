@@ -76,6 +76,17 @@ known workflow date, or `ALLOW_STALE_DEPLOY_SMOKE=1` only for diagnostics when y
 need to inspect the latest deployed stale package. During publish-hole recovery it may warn through
 archive-only coverage gaps, but only when latest data and Worker quote resolution are current.
 
+When a release-history gap needs backfill, audit sources before writing any snapshot:
+
+```bash
+npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23
+```
+
+Pass criteria:
+- every missing date reports at least one `complete=` source
+- the source covers the full current package currency set, not just canary pairs
+- no snapshot is written from merged or partial third-party data unless the package contract is explicitly changed
+
 ### 2. Worker + web mirror parity
 
 ```bash
@@ -401,6 +412,7 @@ missing days (e.g., first run or recovery from a reset).
 | `.github/workflows/run.yml` | Daily cron, deploy to CDNs, commit archive |
 | `scripts/sentry-monitoring.js` | Shared Sentry issue, log, and cron check-in helper |
 | `scripts/sentry-checkin.js` | Workflow helper for start/finish/error check-ins |
+| `scripts/audit-history-backfill-sources.js` | Read-only audit for historical source completeness before backfilling snapshot gaps. Fails closed when no single source covers the full current package currency set. |
 | `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
 | `scripts/smoke-check-deploy.js` | Verifies Pages, dated snapshot, GitHub fallback, and canonical Worker after publish. Defaults to current UTC date; `EXPECTED_DATE=yyyy-mm-dd` pins workflow checks, `ALLOW_STALE_DEPLOY_SMOKE=1` is diagnostic-only, and `SKIP_WORKER_SMOKE_CHECK=1` only bypasses the Worker check intentionally. |
 | `.env.local` | Local Cloudflare credentials (gitignored) |
