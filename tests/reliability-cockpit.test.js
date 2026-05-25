@@ -4023,7 +4023,7 @@ test('buildProofAcceptanceMatrix blocks adjacent proof from becoming launch proo
       {
         id: 'loaded-mcp-refresh',
         boundary: 'local-agent-host',
-        evidenceRequired: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.',
+        evidenceRequired: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, the loaded resplit_currency_api repo path matching the current proof repo path, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.',
       },
       {
         id: 'grafana-otel-proof',
@@ -4043,6 +4043,7 @@ test('buildProofAcceptanceMatrix blocks adjacent proof from becoming launch proo
   assert.match(loaded.acceptedProof, /diagnostic evidence only/)
   assert.match(loaded.rejectedProof, /Do not claim Codex\/Cursor loaded MCP/)
   assert.match(loaded.nextValidProof, /mcp__firstbite_local_ci\.list_lanes/)
+  assert.match(loaded.nextValidProof, /current proof repo path/)
   assert.match(loaded.nextValidProof, /resplit_currency_api_all/)
   assert.equal(loaded.actionId, 'loaded-mcp-refresh')
   assert.equal(repoBacked.claimAllowed, true)

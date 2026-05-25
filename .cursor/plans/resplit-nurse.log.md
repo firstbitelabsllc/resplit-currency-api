@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 15:47 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI found a loaded-host trust issue and the cockpit now repeats the checkout-path requirement at the operator level, not only inside the probe JSON: recovery claim, action queue, launch audit, proof acceptance matrix, and verifier all require the loaded `resplit_currency_api` repo path to match the current proof repo path.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now blocks wrong-checkout loaded MCP proof in the human-facing proof strings. `scripts/verify-reliability-cockpit-report.js` fails if the loaded-agent proof row or recovery boundary claim drops repo-path binding, and `tests/verify-reliability-cockpit-report.test.js` simulates the old wording coming back.
+- Fresh proof:
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `95/95` focused cockpit/verifier tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/capture-loaded-mcp-probe.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `110/110` cockpit/probe/verifier/completion tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated cockpit report HEAD matches current checkout and proof row says loaded-client proof must include the current proof repo path.
+  - `RESPLIT_CURRENCY_API_REPO='/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525' bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh --run-id fx-pr-worktree-20260525-1548` -> `/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-pr-worktree-20260525-1548/report.json`; declared lanes `16/16`, repo-backed catalog `13/16` pass with `resplit_currency_api_trust_preflight` still failing, and loaded MCP process audit `2/43` stale.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). The `proof:loaded-agent-mcp` blocker now explicitly requires `repo-manifest-v2`, loaded repo path matching current proof repo path, all current FX lanes, and `resplit_currency_api_all`; `agent-ledger-fleet` now points at the real failing `resplit_currency_api` lane instead of stale readout scope.
+  - `npm run check` -> generate green, strict release validation green, and `282/282` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this does not restart/reload Codex/Cursor, prove the loaded MCP host is bound to this PR worktree, pass `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the local-CI answer harder to misread: a loaded host showing lanes from `/Users/leokwan/Development/resplit-currency-api` cannot satisfy launch trust for `/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525`.
+- Exact next slice: commit/push this operator-level path-binding contract, regenerate the cockpit at the new commit HEAD, then pursue either a real loaded-host restart/recapture from the PR worktree or the `resplit_currency_api_trust_preflight` proof chain without mixing the gates.
+
 ## 2026-05-25 15:39 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI found a second loaded-host trust issue worth locking down: the live Codex MCP tool is now fresh and source-valid, but it is bound to the primary `/Users/leokwan/Development/resplit-currency-api` checkout, not the PR worktree, and it still misses `resplit_currency_api_trust_preflight`.

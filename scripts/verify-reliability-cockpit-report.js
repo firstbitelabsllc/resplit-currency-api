@@ -285,8 +285,9 @@ function verifyJsonContract(cockpit) {
       const nextValidProof = loaded?.nextValidProof || ''
       if (!/mcp__firstbite_local_ci\.list_lanes/i.test(nextValidProof)
         || !/codex-mcp-tool|cursor-mcp-tool/i.test(nextValidProof)
-        || !/repo-manifest-v2/i.test(nextValidProof)) {
-        failures.push('loaded MCP proof row does not name live loaded-client list_lanes source and repo-manifest proof')
+        || !/repo-manifest-v2/i.test(nextValidProof)
+        || !/repo path|checkout path|current proof repo path|expected repo path/i.test(nextValidProof)) {
+        failures.push('loaded MCP proof row does not name live loaded-client list_lanes source, repo-manifest proof, and current repo path binding')
       }
     }
 
@@ -332,6 +333,10 @@ function verifyRecoveryFlowContract(cockpit) {
       requiredProofPattern: /list_lanes|repo-manifest-v2|restart|reload/i,
       forbiddenClaimPattern: /Do not claim.*Codex|Do not claim.*Cursor|loaded.*MCP/i,
     })
+    const loadedClaim = claimsByBoundary.get('local-agent-host')
+    if (loadedClaim && !/repo path|checkout path|current proof repo path|expected repo path/i.test(`${loadedClaim.requiredProof || ''} ${loadedClaim.forbiddenClaim || ''}`)) {
+      failures.push('loaded MCP recovery boundary claim does not name current repo path binding')
+    }
   }
 
   if (actionIds.has('grafana-otel-proof')) {

@@ -143,6 +143,26 @@ test('verifyCockpitReport fails when loaded MCP path binding disappears', () => 
   assert.match(result.report.failures.join('\n'), /loaded MCP live capture contract does not record repo path match status/)
 })
 
+test('verifyCockpitReport fails when loaded MCP operator proof drops repo path binding', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-loaded-proof-path-'))
+  const report = buildReport()
+  const claim = report.trustModel.operatorRecoveryFlow.boundaryClaims.find(row => row.boundary === 'local-agent-host')
+  claim.forbiddenClaim = 'Do not claim the loaded Codex/Cursor MCP host can execute FX lanes from a repo-backed package catalog or stale loaded-host probe.'
+  claim.requiredProof = 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes after Codex/Cursor restart or reload, captured with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, showing repo-manifest-v2 and all current resplit_currency_api lanes plus the resplit_currency_api_all group.'
+  const proofRow = report.trustModel.proofAcceptanceMatrix.rows.find(row => row.id === 'loaded-agent-mcp')
+  proofRow.nextValidProof = 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.'
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /loaded MCP recovery boundary claim does not name current repo path binding/)
+  assert.match(result.report.failures.join('\n'), /loaded MCP proof row does not name live loaded-client list_lanes source, repo-manifest proof, and current repo path binding/)
+})
+
 test('verifyCockpitReport fails when the generated report head is stale', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-stale-head-'))
   const report = buildReport()
@@ -391,8 +411,8 @@ function buildReport() {
             status: 'red',
             claimAllowed: false,
             actionIds: ['loaded-mcp-refresh'],
-            forbiddenClaim: 'Do not claim the loaded Codex/Cursor MCP host can execute FX lanes from a repo-backed package catalog or stale loaded-host probe.',
-            requiredProof: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes after Codex/Cursor restart or reload, captured with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, showing repo-manifest-v2 and all current resplit_currency_api lanes plus the resplit_currency_api_all group.',
+            forbiddenClaim: 'Do not claim the loaded Codex/Cursor MCP host can execute FX lanes from a repo-backed package catalog, stale loaded-host probe, or wrong-checkout repo path.',
+            requiredProof: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes after Codex/Cursor restart or reload, captured with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, showing repo-manifest-v2, the loaded resplit_currency_api repo path matching the current proof repo path, all current resplit_currency_api lanes plus the resplit_currency_api_all group.',
             currentBlocker: 'Loaded MCP host catalog is missing current lanes.',
             nextAction: 'Save work and restart/reload Codex/Cursor.',
           },
@@ -436,7 +456,7 @@ function buildReport() {
             rejectedProof: 'Do not claim Codex/Cursor loaded MCP can execute or even see FX lanes from the current host process.',
             currentEvidence: 'reports/firstbite-loaded-mcp-lanes.json',
             currentGap: 'missing current FX lanes',
-            nextValidProof: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.',
+            nextValidProof: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, the loaded resplit_currency_api repo path matching the current proof repo path, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.',
             actionId: 'loaded-mcp-refresh',
           },
           {
