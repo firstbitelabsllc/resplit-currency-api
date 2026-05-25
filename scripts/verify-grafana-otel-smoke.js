@@ -503,16 +503,21 @@ function summarizeNextActions(checks) {
 
 function readSourceIdentity(repoDir = process.cwd(), deps = {}) {
   const run = deps.execFileSync || execFileSync
-  const git = args => String(run('git', ['-C', repoDir, ...args], {
+  const gitRaw = args => String(run('git', ['-C', repoDir, ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
-  })).trim()
+  }))
+  const git = args => gitRaw(args).trim()
 
   try {
     const root = git(['rev-parse', '--show-toplevel']) || repoDir
-    const statusRows = git(['status', '--porcelain=v1', '--untracked-files=all'])
+    const statusRows = gitRaw(['status', '--porcelain=v1', '--untracked-files=all'])
       .split('\n')
       .filter(Boolean)
+    const dirtyPaths = statusRows
+      .map(gitStatusPath)
+      .filter(Boolean)
+    const sourceDirtyPaths = dirtyPaths.filter(item => !isGeneratedOtelArtifactPath(item))
     return {
       status: 'ok',
       repoPath: root,
@@ -520,6 +525,9 @@ function readSourceIdentity(repoDir = process.cwd(), deps = {}) {
       head: git(['rev-parse', '--short=12', 'HEAD']),
       headFull: git(['rev-parse', 'HEAD']),
       dirtyCount: statusRows.length,
+      dirtyPaths,
+      sourceDirtyCount: sourceDirtyPaths.length,
+      sourceDirtyPaths,
     }
   } catch (error) {
     return {
@@ -529,9 +537,25 @@ function readSourceIdentity(repoDir = process.cwd(), deps = {}) {
       head: null,
       headFull: null,
       dirtyCount: null,
+      dirtyPaths: [],
+      sourceDirtyCount: null,
+      sourceDirtyPaths: [],
       error: error.message,
     }
   }
+}
+
+function gitStatusPath(row) {
+  const value = String(row || '').slice(3).trim()
+  if (!value) return null
+  const arrowIndex = value.indexOf(' -> ')
+  return arrowIndex === -1 ? value : value.slice(arrowIndex + 4)
+}
+
+function isGeneratedOtelArtifactPath(filePath) {
+  return filePath === 'reports'
+    || filePath.startsWith('reports/')
+    || /^docs\/grafana-otel-smoke-[^/]+\.md$/.test(filePath)
 }
 
 function missingGrafanaConfig(options) {
@@ -585,4 +609,5 @@ module.exports = {
   parseArgs,
   queryWindow,
   readSourceIdentity,
+  isGeneratedOtelArtifactPath,
 }

@@ -5,6 +5,7 @@ const {
   buildGrafanaSmokeReport,
   extractLokiMatch,
   extractTempoMatch,
+  isGeneratedOtelArtifactPath,
   missingGrafanaConfig,
   parseArgs,
   queryWindow,
@@ -143,7 +144,7 @@ test('readSourceIdentity records checkout head, repo path, and dirty count', () 
       calls.push(args)
       const key = args.slice(2).join(' ')
       if (key === 'rev-parse --show-toplevel') return '/tmp/fx-repo\n'
-      if (key === 'status --porcelain=v1 --untracked-files=all') return ' M scripts/verify-grafana-otel-smoke.js\n?? reports/\n'
+      if (key === 'status --porcelain=v1 --untracked-files=all') return ' M scripts/verify-grafana-otel-smoke.js\n?? reports/grafana-otel-smoke.json\n?? docs/grafana-otel-smoke-20260525.md\n'
       if (key === 'rev-parse --abbrev-ref HEAD') return 'codex/fx-otel-grafana-config-20260525\n'
       if (key === 'rev-parse --short=12 HEAD') return 'b44aee28f379\n'
       if (key === 'rev-parse HEAD') return 'b44aee28f379111111111111111111111111111111\n'
@@ -157,9 +158,23 @@ test('readSourceIdentity records checkout head, repo path, and dirty count', () 
     branch: 'codex/fx-otel-grafana-config-20260525',
     head: 'b44aee28f379',
     headFull: 'b44aee28f379111111111111111111111111111111',
-    dirtyCount: 2,
+    dirtyCount: 3,
+    dirtyPaths: [
+      'scripts/verify-grafana-otel-smoke.js',
+      'reports/grafana-otel-smoke.json',
+      'docs/grafana-otel-smoke-20260525.md',
+    ],
+    sourceDirtyCount: 1,
+    sourceDirtyPaths: ['scripts/verify-grafana-otel-smoke.js'],
   })
   assert.equal(calls.every(args => args[0] === '-C' && args[1] === '/tmp/fx-repo'), true)
+})
+
+test('isGeneratedOtelArtifactPath recognizes generated smoke artifacts only', () => {
+  assert.equal(isGeneratedOtelArtifactPath('reports/grafana-otel-smoke.json'), true)
+  assert.equal(isGeneratedOtelArtifactPath('docs/grafana-otel-smoke-20260525.md'), true)
+  assert.equal(isGeneratedOtelArtifactPath('scripts/verify-grafana-otel-smoke.js'), false)
+  assert.equal(isGeneratedOtelArtifactPath('wrangler.jsonc'), false)
 })
 
 test('extractors understand common Tempo and Loki response shapes', () => {
