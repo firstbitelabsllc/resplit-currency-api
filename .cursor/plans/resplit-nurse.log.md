@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 12:32 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The completion audit now treats the Proof Acceptance Matrix as a hard launch gate, so a green Launch Trust Audit or trust-contract shell cannot launder adjacent, stale, or missing proof into a launch-ready claim.
+- Shipped delta pending source promotion: `scripts/reliability-completion-audit.js` now requires `trustModel.proofAcceptanceMatrix.status === "green"`, verifies every expected proof row is present, emits `proofBlockers`, and prints `proof:<id>` next actions in the CLI. `tests/reliability-completion-audit.test.js` now covers green proof boundaries, missing proof rows, shared loaded-MCP/Grafana blockers, and the specific failure mode where only the proof matrix is red.
+- Fresh proof:
+  - `node --test tests/reliability-completion-audit.test.js` -> `7/7` completion-audit tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `80/80` cockpit/verifier/completion tests passed.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.{json,html}`.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green with `11` gate(s), `5` action(s), and generated Proof Acceptance Matrix HTML/JSON present.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). The CLI now shows both launch blockers and matching `proof:*` blockers for loaded MCP, clean FirstBite, Cloudflare, Grafana, peer execution, and ledger fleet proof.
+  - `npm run check` -> generate green, strict release validation green, and `257/257` tests passed.
+- Boundary: this does not restart/reload Codex/Cursor, prove the live loaded MCP tool is current, land the source bundle to `origin/main`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the completion gate refuse launch readiness until the proof matrix agrees with the claim boundaries.
+- Exact next slice: reload the long-lived Codex/Cursor FirstBite MCP host, recapture live loaded `list_lanes`, then work the matrix rows top-down for clean landed-source FirstBite, M4 peer execution, Cloudflare destination, and Grafana Tempo/Loki proof.
+
 ## 2026-05-25 12:22 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit now has an explicit Proof Acceptance Matrix so local operators can see which proof boundaries are accepted versus diagnostic-only, instead of inferring trust from adjacent green rows.

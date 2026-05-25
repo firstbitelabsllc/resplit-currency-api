@@ -6,6 +6,7 @@ const path = require('node:path')
 
 const {
   EXPECTED_LAUNCH_AUDIT_IDS,
+  EXPECTED_PROOF_ACCEPTANCE_IDS,
   auditCockpitCompletion,
   buildCompletionAudit,
   parseArgs,
@@ -18,7 +19,7 @@ test('parseArgs reads the generated reliability cockpit by default', () => {
   assert.equal(options.printJson, false)
 })
 
-test('buildCompletionAudit passes only when every launch boundary and trust contract is green', () => {
+test('buildCompletionAudit passes only when every launch boundary, proof boundary, and trust contract is green', () => {
   const report = buildCompletionAudit({
     checkedAt: '2026-05-25T15:00:00.000Z',
     cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
@@ -28,6 +29,7 @@ test('buildCompletionAudit passes only when every launch boundary and trust cont
   assert.equal(report.status, 'green')
   assert.match(report.summary, /Launch completion audit is green/)
   assert.equal(report.blockers.length, 0)
+  assert.equal(report.proofBlockers.length, 0)
   assert.equal(report.nonGreenContracts.length, 0)
 })
 
@@ -46,9 +48,22 @@ test('buildCompletionAudit blocks launch trust when loaded host and Grafana proo
     gap: 'Tempo/Loki evidence is missing.',
     nextAction: 'Run npm run observability:otel-smoke.',
   })
+  setProofRow(cockpit, 'loaded-agent-mcp', {
+    status: 'red',
+    claimAllowed: false,
+    currentGap: 'Loaded MCP host is missing FX lanes.',
+    nextValidProof: 'Restart host and capture list_lanes.',
+  })
+  setProofRow(cockpit, 'otel-grafana-proof', {
+    status: 'yellow',
+    claimAllowed: false,
+    currentGap: 'Tempo/Loki evidence is missing.',
+    nextValidProof: 'Run npm run observability:otel-smoke.',
+  })
   cockpit.trustModel.contracts.find(contract => contract.gate === 'Loaded MCP host catalog').status = 'red'
   cockpit.trustModel.contracts.find(contract => contract.gate === 'OTEL/Grafana evidence').status = 'yellow'
   cockpit.trustModel.launchTrustAudit.status = 'red'
+  cockpit.trustModel.proofAcceptanceMatrix.status = 'red'
 
   const report = buildCompletionAudit({
     checkedAt: '2026-05-25T15:00:00.000Z',
@@ -59,7 +74,9 @@ test('buildCompletionAudit blocks launch trust when loaded host and Grafana proo
   assert.equal(report.status, 'red')
   assert.match(report.summary, /Launch completion blocked/)
   assert.deepEqual(report.blockers.map(blocker => blocker.id), ['loaded-agent-mcp', 'otel-grafana-proof'])
+  assert.deepEqual(report.proofBlockers.map(blocker => blocker.id), ['loaded-agent-mcp', 'otel-grafana-proof'])
   assert.deepEqual(report.nonGreenContracts.map(contract => contract.gate), ['Loaded MCP host catalog', 'OTEL/Grafana evidence'])
+  assert.match(report.failures.join('\n'), /loaded-agent-mcp: proof red/)
 })
 
 test('auditCockpitCompletion reads the report from disk', () => {
@@ -95,6 +112,48 @@ test('buildCompletionAudit treats missing launch audit rows as launch-blocking',
   assert.match(report.failures.join('\n'), /missing launch audit row: peer-execution/)
 })
 
+test('buildCompletionAudit treats missing proof acceptance rows as launch-blocking', () => {
+  const cockpit = buildCockpit()
+  cockpit.trustModel.proofAcceptanceMatrix.rows = cockpit.trustModel.proofAcceptanceMatrix.rows
+    .filter(row => row.id !== 'loaded-agent-mcp')
+  cockpit.trustModel.proofAcceptanceMatrix.status = 'red'
+
+  const report = buildCompletionAudit({
+    checkedAt: '2026-05-25T15:00:00.000Z',
+    cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    cockpit,
+  })
+
+  assert.equal(report.status, 'red')
+  assert.deepEqual(report.proofAcceptanceMatrix.missingRows, ['loaded-agent-mcp'])
+  assert.match(report.failures.join('\n'), /missing proof acceptance row: loaded-agent-mcp/)
+})
+
+test('buildCompletionAudit blocks completion when only the proof matrix is red', () => {
+  const cockpit = buildCockpit()
+  setProofRow(cockpit, 'repo-backed-mcp-source', {
+    status: 'red',
+    claimAllowed: false,
+    acceptedProof: 'No launch claim accepted; diagnostic evidence only: stale catalog.',
+    rejectedProof: 'Do not promote a remembered catalog into a current loaded-host claim.',
+    currentGap: 'Proof matrix found stale or adjacent evidence.',
+    nextValidProof: 'Capture fresh repo-backed catalog proof.',
+  })
+  cockpit.trustModel.proofAcceptanceMatrix.status = 'red'
+
+  const report = buildCompletionAudit({
+    checkedAt: '2026-05-25T15:00:00.000Z',
+    cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    cockpit,
+  })
+
+  assert.equal(report.status, 'red')
+  assert.equal(report.blockers.length, 0)
+  assert.equal(report.nonGreenContracts.length, 0)
+  assert.deepEqual(report.proofBlockers.map(blocker => blocker.id), ['repo-backed-mcp-source'])
+  assert.match(report.summary, /1 non-green\/missing proof boundary/)
+})
+
 function buildCockpit() {
   return {
     verdict: {
@@ -115,6 +174,24 @@ function buildCockpit() {
           evidence: `/tmp/${id}.json`,
           gap: 'No gap.',
           nextAction: 'Keep proof fresh.',
+        })),
+      },
+      proofAcceptanceMatrix: {
+        status: 'green',
+        summary: 'All proof boundaries are claim-allowed.',
+        rows: EXPECTED_PROOF_ACCEPTANCE_IDS.map(id => ({
+          id,
+          surface: id.replace(/-/g, ' '),
+          boundary: 'test',
+          owner: 'test owner',
+          status: 'green',
+          claimAllowed: true,
+          acceptedProof: 'Current matching proof accepted.',
+          rejectedProof: 'No rejected proof while green.',
+          currentEvidence: `/tmp/${id}.json`,
+          currentGap: 'No gap.',
+          nextValidProof: 'Keep proof fresh.',
+          actionId: `action-${id}`,
         })),
       },
       contracts: [
@@ -147,5 +224,10 @@ function buildCockpit() {
 
 function setAuditRow(cockpit, id, patch) {
   const row = cockpit.trustModel.launchTrustAudit.rows.find(candidate => candidate.id === id)
+  Object.assign(row, patch)
+}
+
+function setProofRow(cockpit, id, patch) {
+  const row = cockpit.trustModel.proofAcceptanceMatrix.rows.find(candidate => candidate.id === id)
   Object.assign(row, patch)
 }
