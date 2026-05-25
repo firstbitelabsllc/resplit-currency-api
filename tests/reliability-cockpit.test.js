@@ -23,6 +23,7 @@ const {
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
   inspectFirstBiteRunnerControlPlane,
+  inspectFirstBiteMcpRefreshPlan,
   inspectFirstBiteOperatingReadout,
   inspectGrafanaEvidence,
   inspectLaneLog,
@@ -970,6 +971,109 @@ test('inspectFirstBiteOperatingReadout surfaces fleet readiness without hiding n
   assert.match(readout.summary, /17\/18 lane proof/)
   assert.match(readout.summary, /active_ready=false/)
   assert.match(readout.summary, /M4 peer support-only/)
+})
+
+test('inspectFirstBiteMcpRefreshPlan surfaces stale loaded-client process audit', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-'))
+  const runDir = path.join(root, '20260525T112208Z-16715')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    runId: '20260525T112208Z-16715',
+    createdAt: '2026-05-25T11:22:10Z',
+    verdict: 'stale_loaded_clients_need_host_app_restart',
+    processAudit: {
+      status: 'stale_processes_visible',
+      process_count: 19,
+      stale_process_count: 17,
+      current_process_count: 2,
+      stale_pids: [11702],
+      current_pids: [9143],
+    },
+    repoBackedCatalog: {
+      catalog_version: 'repo-manifest-v2',
+      lane_count: 15,
+      declared_count: 15,
+      repo_keys: ['resplit_currency_api'],
+      lane_keys: ['resplit_currency_api_unit', 'resplit_currency_api_ui'],
+    },
+    authority: {
+      repoBackedCatalogCurrent: true,
+    },
+    recommendedSteps: [
+      'Trust repo-backed npm call for current catalog truth.',
+      'Save work and quit/reopen Codex/Cursor if loaded clients expose the stale surface.',
+    ],
+    continuationCommands: [{
+      label: 'Rerun stale MCP refresh plan',
+      command: 'bash refresh',
+    }],
+    safety: {
+      readOnly: true,
+      killsProcesses: false,
+    },
+  }, null, 2))
+
+  const plan = inspectFirstBiteMcpRefreshPlan({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: ['resplit_currency_api_unit', 'resplit_currency_api_ui'],
+    generatedAt: '2026-05-25T11:25:10Z',
+  })
+
+  assert.equal(plan.status, 'yellow')
+  assert.equal(plan.verdict, 'stale_loaded_clients_need_host_app_restart')
+  assert.equal(plan.staleProcessCount, 17)
+  assert.equal(plan.processCount, 19)
+  assert.equal(plan.currentProcessCount, 2)
+  assert.equal(plan.repoBackedCatalogCurrent, true)
+  assert.equal(plan.repoPresent, true)
+  assert.deepEqual(plan.missingExpectedLaneIds, [])
+  assert.equal(plan.continuationCommands[0].command, 'bash refresh')
+  assert.match(plan.summary, /17\/19 stale process/)
+  assert.match(plan.nextAction, /restart\/reload Codex\/Cursor/)
+})
+
+test('inspectFirstBiteMcpRefreshPlan rejects stale repo-backed catalog against current manifest lanes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-stale-'))
+  const runDir = path.join(root, '20260525T112208Z-16715')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    runId: '20260525T112208Z-16715',
+    createdAt: '2026-05-25T11:22:10Z',
+    verdict: 'stale_loaded_clients_need_host_app_restart',
+    processAudit: {
+      status: 'stale_processes_visible',
+      process_count: 19,
+      stale_process_count: 17,
+    },
+    repoBackedCatalog: {
+      catalog_version: 'repo-manifest-v2',
+      lane_count: 15,
+      declared_count: 15,
+      repo_keys: ['resplit_currency_api'],
+      lane_keys: ['resplit_currency_api_unit', 'resplit_currency_api_integration', 'resplit_currency_api_ui'],
+    },
+    authority: {
+      repoBackedCatalogCurrent: true,
+    },
+  }, null, 2))
+
+  const plan = inspectFirstBiteMcpRefreshPlan({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    generatedAt: '2026-05-25T11:25:10Z',
+  })
+
+  assert.equal(plan.status, 'red')
+  assert.equal(plan.repoBackedCatalogCurrent, false)
+  assert.deepEqual(plan.missingExpectedLaneIds, ['resplit_currency_api_trust_preflight'])
+  assert.match(plan.summary, /missing current manifest lane/)
 })
 
 test('inspectLoadedMcpProbe detects stale in-process lane catalogs', () => {
@@ -2143,6 +2247,46 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
   assert.match(contracts.find(contract => contract.gate === 'Release-history strict coverage').nextAction, /May 12-23/)
 })
 
+test('buildTrustContracts uses refresh-plan proof when loaded probe is missing', () => {
+  const contracts = buildTrustContracts({
+    git: { branch: 'main', dirtyCount: 0, behindOriginMain: 0 },
+    localCi: {
+      status: 'yellow',
+      summary: 'Selected local-CI proof is not clean-current yet.',
+      trackedSource: { status: 'green', summary: 'tracked' },
+      cleanProofReadiness: { status: 'yellow', summary: 'needs clean proof' },
+      sourcePromotionBundle: { status: 'green', summary: 'tracked' },
+      operatingReadout: { status: 'green', summary: 'readout fresh', reportPath: '/tmp/readout.json' },
+      runnerControlPlane: { status: 'green', summary: 'runner durable', serverRelativePath: 'server.mjs' },
+      loadedMcpProbe: {
+        status: 'missing',
+        summary: 'No loaded MCP host probe was found.',
+      },
+      mcpRefreshPlan: {
+        status: 'yellow',
+        summary: 'FirstBite MCP refresh plan: stale_loaded_clients_need_host_app_restart; process audit stale_processes_visible with 17/19 stale process(es).',
+        reportPath: '/tmp/refresh/report.json',
+        staleProcessCount: 17,
+      },
+      repoBackedMcpProbe: { status: 'green', summary: 'repo-backed ok', packageDir: '/tmp/firstbite-local-ci' },
+      mcpProof: { latest: { reportPath: '/tmp/report.json' } },
+    },
+    telemetry: {
+      status: 'yellow',
+      summary: 'Grafana proof missing.',
+      cloudflare: { destinations: { status: 'yellow', summary: 'missing', latestPath: '/tmp/cloudflare.json' } },
+      grafana: { evidence: { latestPath: '/tmp/grafana.json' } },
+    },
+    nurseLog: { releaseReadiness: 'yellow', latestBullets: [] },
+    ledger: { health: { status: 'green', summary: 'healthy' } },
+  })
+
+  const loaded = contracts.find(contract => contract.gate === 'Loaded MCP host catalog')
+  assert.equal(loaded.proof, '/tmp/refresh/report.json')
+  assert.match(loaded.current, /Refresh packet/)
+  assert.match(loaded.nextAction, /restart\/reload Codex\/Cursor/)
+})
+
 test('buildLaunchTrustAudit states allowed and forbidden launch claims per boundary', () => {
   const contracts = buildTrustContracts({
     git: { branch: 'main', dirtyCount: 2, behindOriginMain: 10 },
@@ -2532,6 +2676,18 @@ test('buildEvidenceFreshnessLedger separates artifact age from trust status', ()
         ageMinutes: 10,
         summary: 'FirstBite operating readout is fresh.',
       },
+      mcpRefreshPlan: {
+        status: 'yellow',
+        reportPath: '/tmp/refresh/report.json',
+        summaryPath: '/tmp/refresh/summary.md',
+        createdAt: '2026-05-25T07:42:00.000Z',
+        ageMinutes: 3,
+        summary: 'FirstBite MCP refresh plan: stale_loaded_clients_need_host_app_restart; process audit stale_processes_visible with 17/19 stale process(es).',
+        continuationCommands: [{
+          label: 'Rerun stale MCP refresh plan',
+          command: 'bash refresh',
+        }],
+      },
     },
     telemetry: {
       cloudflare: {
@@ -2558,6 +2714,7 @@ test('buildEvidenceFreshnessLedger separates artifact age from trust status', ()
   const preflight = ledger.rows.find(row => row.id === 'local-trust-preflight')
   const packet = ledger.rows.find(row => row.id === 'source-promotion-packet')
   const loaded = ledger.rows.find(row => row.id === 'loaded-mcp-host-probe')
+  const refresh = ledger.rows.find(row => row.id === 'firstbite-mcp-refresh-plan')
   const cloudflare = ledger.rows.find(row => row.id === 'cloudflare-otel-destinations')
   const grafana = ledger.rows.find(row => row.id === 'grafana-otel-smoke')
 
@@ -2568,6 +2725,9 @@ test('buildEvidenceFreshnessLedger separates artifact age from trust status', ()
   assert.equal(packet.trustStatus, 'red')
   assert.equal(loaded.freshnessStatus, 'yellow')
   assert.equal(loaded.trustStatus, 'red')
+  assert.equal(refresh.freshnessStatus, 'green')
+  assert.equal(refresh.trustStatus, 'yellow')
+  assert.equal(refresh.artifact, '/tmp/refresh/report.json')
   assert.equal(cloudflare.freshnessStatus, 'green')
   assert.equal(cloudflare.trustStatus, 'yellow')
   assert.equal(grafana.freshnessStatus, 'green')

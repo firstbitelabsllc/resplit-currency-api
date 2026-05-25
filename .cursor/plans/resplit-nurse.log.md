@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 07:31 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, and Grafana Tempo/Loki proof remain separate required trust contracts.
+- Shipped delta pending source promotion: the cockpit now ingests `~/.agent-ledger/firstbite-mcp-refresh-plan/*/report.json` as a first-class `FirstBite MCP Refresh Plan` section, trust-contract note, operator action proof, and evidence-freshness row. It compares the packet's repo-backed lane keys against the current `.firstbite/local-ci.json` expected lanes so a fresh packet cannot hide stale source/catalog drift.
+- Fresh proof:
+  - `FIRSTBITE_MCP_REFRESH_PLAN_RUN_ID=codex-post-pr10-20260525-072944 bash "$HOME/Development/ai-leo/skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh"` -> report `/Users/leokwan/.agent-ledger/firstbite-mcp-refresh-plan/codex-post-pr10-20260525-072944/report.json`; verdict `stale_loaded_clients_need_host_app_restart`; process audit `17/19` stale; packet catalog `repo-manifest-v2` `15/15`.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract`. Direct repo-backed FirstBite probe is green with `16` lanes and `resplit_currency_api` `4/4`; refresh packet is red because it is missing `resplit_currency_api_trust_preflight`; loaded MCP host probe remains missing.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `52/52` focused cockpit tests green, including refresh-plan stale-process and stale-current-manifest regressions.
+  - `npm run check` -> strict release validation green and `228/228` tests passed.
+- Boundary: this is not live loaded `list_lanes` proof. The refresh packet is read-only process/catalog evidence; it now proves the host-app MCP surface needs restart/reload and also shows its default repo-backed catalog path is stale versus this PR worktree's current manifest.
+- Exact next slice: source-promote this PR bundle, restart/reload Codex/Cursor FirstBite MCP host, capture `reports/firstbite-loaded-mcp-lanes.json` from live `list_lanes`, then run clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 07:18 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, selected clean local-CI proof, source-promotion, and external Cloudflare/Grafana proof remain separate required trust contracts.

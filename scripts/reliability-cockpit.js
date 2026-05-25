@@ -22,8 +22,10 @@ const FIRSTBITE_RUNNER_README_RELATIVE_PATH = 'skills/resplit-watch/mcp/firstbit
 const FIRSTBITE_WARN_EXIT_BRANCH_REF = 'origin/codex/firstbite-mcp-warn-exits-20260525'
 const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
 const DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-operating-readout')
+const DEFAULT_FIRSTBITE_MCP_REFRESH_PLAN_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-mcp-refresh-plan')
 const RESPLIT_CURRENCY_API_REPO_ENV = 'RESPLIT_CURRENCY_API_REPO'
 const FIRSTBITE_OPERATING_READOUT_FRESHNESS_LIMIT_MINUTES = 60
+const FIRSTBITE_MCP_REFRESH_PLAN_FRESHNESS_LIMIT_MINUTES = 60
 const MAX_MCP_HISTORY = 8
 const MAX_AGENT_ACTIVITY_ROWS = 8
 const SOURCE_PROMOTION_REQUIRED_PATHS = [
@@ -174,6 +176,7 @@ function buildReport({
   firstBiteRunnerControlPlane,
   aiLeoRepoDir,
   operatingReadoutRoot,
+  mcpRefreshPlanRoot,
   sharedLedgerPath,
 } = {}) {
   const manifestPath = path.join(repoDir, '.firstbite', 'local-ci.json')
@@ -226,6 +229,12 @@ function buildReport({
     expectedRepo: manifest?.repo,
     generatedAt,
   })
+  const mcpRefreshPlan = inspectFirstBiteMcpRefreshPlan({
+    reportRoot: mcpRefreshPlanRoot || DEFAULT_FIRSTBITE_MCP_REFRESH_PLAN_DIR,
+    expectedRepo: manifest?.repo,
+    expectedLaneIds: Object.keys(manifest?.localCi?.lanes || {}),
+    generatedAt,
+  })
   const runnerControlPlane = firstBiteRunnerControlPlane || inspectFirstBiteRunnerControlPlane({
     aiLeoRepoDir: aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR,
     packageDir: repoBackedMcpPackageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
@@ -234,6 +243,7 @@ function buildReport({
 
   const localCi = inspectLocalCiManifest(manifest, manifestPath, mcpProof, generatedAt, loadedMcpProbe, trackedSource, repoBackedMcpCatalog, git)
   localCi.operatingReadout = operatingReadout
+  localCi.mcpRefreshPlan = mcpRefreshPlan
   localCi.runnerControlPlane = runnerControlPlane
   localCi.sourcePromotionBundle = buildSourcePromotionBundle({
     repoDir,
@@ -1155,6 +1165,137 @@ function inspectFirstBiteOperatingReadout({
         : peerBoundaryWarning && failCount === 0 && manifestPortability?.ready !== false && !mousseyNotReady
           ? peerExecutionBoundary.nextAction
           : 'Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.',
+  }
+}
+
+function inspectFirstBiteMcpRefreshPlan({
+  reportRoot = DEFAULT_FIRSTBITE_MCP_REFRESH_PLAN_DIR,
+  expectedRepo = null,
+  expectedLaneIds = [],
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  const missing = {
+    status: 'missing',
+    reportRoot,
+    reportPath: null,
+    summaryPath: null,
+    runId: null,
+    createdAt: null,
+    ageMinutes: null,
+    searchedReports: 0,
+    verdict: 'missing',
+    processAudit: null,
+    repoBackedCatalog: null,
+    staleProcessCount: null,
+    processCount: null,
+    repoBackedCatalogCurrent: false,
+    repoPresent: false,
+    missingExpectedLaneIds: expectedLaneIds,
+    summary: 'No FirstBite MCP refresh plan report was found.',
+    nextAction: 'Run the read-only FirstBite MCP refresh plan before claiming loaded Codex/Cursor MCP clients are current.',
+    continuationCommands: [],
+  }
+  if (!fs.existsSync(reportRoot)) {
+    return missing
+  }
+
+  const reports = fs.readdirSync(reportRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const reportPath = path.join(reportRoot, entry.name, 'report.json')
+      if (!fs.existsSync(reportPath)) {
+        return null
+      }
+      const stat = fs.statSync(reportPath)
+      return {
+        runId: entry.name,
+        reportPath,
+        summaryPath: path.join(reportRoot, entry.name, 'summary.md'),
+        mtimeMs: stat.mtimeMs,
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+
+  if (reports.length === 0) {
+    return missing
+  }
+
+  const latest = reports[0]
+  const data = readJsonIfExists(latest.reportPath)
+  if (!data) {
+    return {
+      ...missing,
+      status: 'yellow',
+      reportPath: latest.reportPath,
+      summaryPath: latest.summaryPath,
+      runId: latest.runId,
+      searchedReports: reports.length,
+      summary: `Latest FirstBite MCP refresh plan could not be parsed: ${latest.reportPath}.`,
+    }
+  }
+
+  const processAudit = data.processAudit || null
+  const repoBackedCatalog = data.repoBackedCatalog || null
+  const createdAt = data.createdAt || data.created_at || null
+  const ageMinutes = ageMinutesBetween(createdAt, generatedAt)
+  const stale = ageMinutes === null || ageMinutes > FIRSTBITE_MCP_REFRESH_PLAN_FRESHNESS_LIMIT_MINUTES
+  const staleProcessCount = numberOrNull(processAudit?.stale_process_count)
+  const processCount = numberOrNull(processAudit?.process_count)
+  const repoKeys = Array.isArray(repoBackedCatalog?.repo_keys) ? repoBackedCatalog.repo_keys : []
+  const laneKeys = Array.isArray(repoBackedCatalog?.lane_keys) ? repoBackedCatalog.lane_keys : []
+  const repoPresent = expectedRepo
+    ? repoKeys.includes(expectedRepo) || laneKeys.some(lane => lane.startsWith(`${expectedRepo}_`))
+    : repoKeys.length > 0 || laneKeys.length > 0
+  const missingExpectedLaneIds = expectedLaneIds.filter(laneId => !laneKeys.includes(laneId))
+  const catalogHasExpectedManifest = (expectedLaneIds.length === 0 || missingExpectedLaneIds.length === 0)
+    && (!expectedRepo || repoPresent)
+  const catalogLooksRepoManifestV2 = repoBackedCatalog?.catalog_version === 'repo-manifest-v2'
+    && numberOrNull(repoBackedCatalog?.lane_count) >= 15
+    && numberOrNull(repoBackedCatalog?.declared_count) >= 15
+  const repoBackedCatalogCurrent = catalogHasExpectedManifest
+    && (Boolean(data.authority?.repoBackedCatalogCurrent) || catalogLooksRepoManifestV2)
+  const verdict = data.verdict || 'unknown'
+  const status = /unavailable|needs_attention/i.test(verdict) || repoBackedCatalogCurrent === false
+    ? 'red'
+    : staleProcessCount > 0 || stale
+      ? 'yellow'
+      : 'green'
+  const summary = status === 'green'
+    ? `FirstBite MCP refresh plan is fresh: ${verdict}; process audit ${processAudit?.status || 'unknown'} with ${staleProcessCount ?? 0}/${processCount ?? 0} stale process(es).`
+    : `FirstBite MCP refresh plan: ${verdict}; process audit ${processAudit?.status || 'unknown'} with ${staleProcessCount ?? 'unknown'}/${processCount ?? 'unknown'} stale process(es); repo-backed catalog ${repoBackedCatalog?.catalog_version || 'unknown'} ${repoBackedCatalog?.declared_count ?? 'unknown'}/${repoBackedCatalog?.lane_count ?? 'unknown'} declared lane(s)${missingExpectedLaneIds.length > 0 ? `; missing current manifest lane(s): ${missingExpectedLaneIds.join(', ')}` : ''}.`
+
+  return {
+    status,
+    reportRoot,
+    reportPath: latest.reportPath,
+    summaryPath: latest.summaryPath,
+    runId: data.runId || data.run_id || latest.runId,
+    createdAt,
+    ageMinutes,
+    searchedReports: reports.length,
+    verdict,
+    processAudit,
+    repoBackedCatalog,
+    expectedRepo,
+    expectedLaneIds,
+    staleProcessCount,
+    processCount,
+    currentProcessCount: numberOrNull(processAudit?.current_process_count),
+    repoPresent,
+    laneKeys,
+    missingExpectedLaneIds,
+    repoBackedCatalogCurrent,
+    recommendedSteps: Array.isArray(data.recommendedSteps) ? data.recommendedSteps : [],
+    continuationCommands: Array.isArray(data.continuationCommands) ? data.continuationCommands : [],
+    artifacts: data.artifacts || {},
+    safety: data.safety || {},
+    summary,
+    nextAction: status === 'green'
+      ? 'Capture live loaded-host list_lanes output into reports/firstbite-loaded-mcp-lanes.json before trusting the in-app MCP boundary.'
+      : staleProcessCount > 0
+        ? 'Save work and restart/reload Codex/Cursor, then rerun the refresh plan and capture live loaded-host list_lanes output.'
+        : 'Rerun the read-only refresh plan and inspect repo-backed catalog availability before loaded-host MCP claims.',
   }
 }
 
@@ -3447,6 +3588,7 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
   const cloudflareDestinations = telemetry?.cloudflare?.destinations
   const loadedMcp = localCi?.loadedMcpProbe
   const repoBackedMcp = localCi?.repoBackedMcpProbe
+  const mcpRefreshPlan = localCi?.mcpRefreshPlan
   const trackedSource = localCi?.trackedSource
   const cleanProofReadiness = localCi?.cleanProofReadiness
   const sourcePromotionBundle = localCi?.sourcePromotionBundle
@@ -3526,10 +3668,17 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
     {
       gate: 'Loaded MCP host catalog',
       status: loadedMcp?.status || 'yellow',
-      current: loadedMcp?.summary || 'No loaded-host MCP probe artifact was found.',
-      proof: loadedMcp?.path || 'reports/firstbite-loaded-mcp-lanes.json',
+      current: [
+        loadedMcp?.summary || 'No loaded-host MCP probe artifact was found.',
+        mcpRefreshPlan?.status && mcpRefreshPlan.status !== 'missing' ? `Refresh packet: ${mcpRefreshPlan.summary}` : '',
+      ].filter(Boolean).join(' '),
+      proof: loadedMcp?.status && loadedMcp.status !== 'missing'
+        ? loadedMcp.path
+        : mcpRefreshPlan?.reportPath || 'reports/firstbite-loaded-mcp-lanes.json',
       nextAction: loadedMcp?.status === 'green'
         ? 'Use the in-app MCP tool only while its catalog age and lane count remain current.'
+        : mcpRefreshPlan?.staleProcessCount > 0
+          ? 'Save work and restart/reload Codex/Cursor, rerun the refresh plan, then capture a fresh live loaded-host list_lanes artifact.'
         : 'Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes.',
     },
     {
@@ -3587,6 +3736,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const sourcePromotion = localCi.sourcePromotionBundle || {}
   const cleanProof = localCi.cleanProofReadiness || {}
   const loadedMcp = localCi.loadedMcpProbe || {}
+  const mcpRefreshPlan = localCi.mcpRefreshPlan || {}
   const operatingReadout = localCi.operatingReadout || {}
   const runnerControlPlane = localCi.runnerControlPlane || {}
   const cloudflareDestinations = telemetry.cloudflare?.destinations || {}
@@ -3656,11 +3806,15 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       owner: 'Codex/Cursor MCP host',
       gate: 'Loaded MCP host catalog',
       status: byGate.get('Loaded MCP host catalog')?.status || loadedMcp.status || 'yellow',
-      proof: loadedMcp.path || 'reports/firstbite-loaded-mcp-lanes.json',
-      command: LOADED_MCP_REUSE_COMMAND,
-      blocker: loadedMcp.summary || byGate.get('Loaded MCP host catalog')?.current || 'Loaded MCP catalog was not captured.',
-      nextAction: 'Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.',
-      evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2, 15 lanes, and all resplit_currency_api lanes present.',
+      proof: loadedMcp.status && loadedMcp.status !== 'missing'
+        ? loadedMcp.path
+        : mcpRefreshPlan.reportPath || 'reports/firstbite-loaded-mcp-lanes.json',
+      command: mcpRefreshPlan.continuationCommands?.find(command => /refresh plan/i.test(command.label || ''))?.command || LOADED_MCP_REUSE_COMMAND,
+      blocker: loadedMcp.summary || mcpRefreshPlan.summary || byGate.get('Loaded MCP host catalog')?.current || 'Loaded MCP catalog was not captured.',
+      nextAction: mcpRefreshPlan.staleProcessCount > 0
+        ? 'Save work and restart/reload Codex/Cursor, then rerun the refresh plan and capture live list_lanes output into the loaded-host probe artifact.'
+        : 'Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.',
+      evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2 and all current resplit_currency_api lanes present.',
       unblocks: 'In-app local coding agent trust',
       canRunNow: true,
       blockedBy: '',
@@ -3911,6 +4065,19 @@ function buildEvidenceFreshnessLedger({
       freshnessStatus: localCi?.loadedMcpProbe?.freshnessStatus,
       missingStatus: 'yellow',
       missingSummary: 'Loaded MCP host probe is missing.',
+    }),
+    buildEvidenceFreshnessRow({
+      id: 'firstbite-mcp-refresh-plan',
+      surface: 'FirstBite MCP refresh plan',
+      artifact: localCi?.mcpRefreshPlan?.reportPath || path.join(os.homedir(), '.agent-ledger', 'firstbite-mcp-refresh-plan', '<run-id>', 'report.json'),
+      secondaryArtifact: localCi?.mcpRefreshPlan?.summaryPath || null,
+      checkedAt: localCi?.mcpRefreshPlan?.createdAt || null,
+      ageMinutes: localCi?.mcpRefreshPlan?.ageMinutes ?? ageMinutesBetween(localCi?.mcpRefreshPlan?.createdAt || null, generatedAt),
+      trustStatus: localCi?.mcpRefreshPlan?.status || 'missing',
+      summary: localCi?.mcpRefreshPlan?.summary || 'No FirstBite MCP refresh plan packet was found.',
+      nextAction: localCi?.mcpRefreshPlan?.continuationCommands?.find(command => /refresh plan/i.test(command.label || ''))?.command || 'bash ~/Development/ai-leo/skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh',
+      missingStatus: 'yellow',
+      missingSummary: 'FirstBite MCP refresh plan is missing.',
     }),
     buildEvidenceFreshnessRow({
       id: 'repo-backed-mcp-catalog',
@@ -4711,6 +4878,7 @@ function renderLocalCiProof(localCi) {
       ${renderFirstBiteRunnerControlPlane(localCi.runnerControlPlane)}
       ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
       ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
+      ${renderFirstBiteMcpRefreshPlan(localCi.mcpRefreshPlan)}
       ${renderLoadedMcpProbe(localCi.loadedMcpProbe)}
       ${renderTrackedSourceContract(localCi.trackedSource)}
     </section>`
@@ -4744,6 +4912,7 @@ function renderLocalCiProof(localCi) {
     ${renderCurrentManifestProof(localCi.currentManifestProof)}
     ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
     ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
+    ${renderFirstBiteMcpRefreshPlan(localCi.mcpRefreshPlan)}
     ${renderLoadedMcpProbe(localCi.loadedMcpProbe)}
     ${renderTrackedSourceContract(localCi.trackedSource)}
     <table>
@@ -5049,6 +5218,43 @@ function renderMcpCatalogDelta(delta) {
       <div>Missing groups in loaded host</div><div><code>${escapeHtml(missingGroups)}</code></div>
       <div>Missing total lanes in loaded host</div><div><code>${escapeHtml(missingLanes)}</code></div>
       <div>Next action</div><div>${escapeHtml(delta.nextAction || '')}</div>
+    </div>`
+}
+
+function renderFirstBiteMcpRefreshPlan(plan) {
+  if (!plan) {
+    return ''
+  }
+
+  const statusClass = plan.status === 'green' ? 'green' : plan.status === 'red' ? 'red' : 'yellow'
+  const checked = plan.createdAt
+    ? `${plan.createdAt}${plan.ageMinutes === null ? '' : ` (${plan.ageMinutes}m old)`}`
+    : 'unknown'
+  const stalePids = (plan.processAudit?.stale_pids || []).length > 0
+    ? plan.processAudit.stale_pids.join(', ')
+    : 'none'
+  const currentPids = (plan.processAudit?.current_pids || []).length > 0
+    ? plan.processAudit.current_pids.join(', ')
+    : 'none'
+  const missingExpected = (plan.missingExpectedLaneIds || []).length > 0
+    ? plan.missingExpectedLaneIds.join(', ')
+    : 'none'
+  const steps = (plan.recommendedSteps || []).slice(0, 5)
+
+  return `<h2>FirstBite MCP Refresh Plan</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${statusClass}">${escapeHtml(plan.status || 'unknown')}</span> ${escapeHtml(plan.summary || '')}</div>
+      <div>Verdict</div><div><code>${escapeHtml(plan.verdict || 'unknown')}</code></div>
+      <div>Checked</div><div>${escapeHtml(checked)}</div>
+      <div>Process audit</div><div>${escapeHtml(plan.processAudit?.status || 'unknown')} · stale ${escapeHtml(String(plan.staleProcessCount ?? 'unknown'))}/${escapeHtml(String(plan.processCount ?? 'unknown'))}</div>
+      <div>Stale PIDs</div><div><code>${escapeHtml(stalePids)}</code></div>
+      <div>Current PIDs</div><div><code>${escapeHtml(currentPids)}</code></div>
+      <div>Repo-backed catalog</div><div>${escapeHtml(plan.repoBackedCatalog?.catalog_version || 'unknown')} · ${escapeHtml(String(plan.repoBackedCatalog?.declared_count ?? 'unknown'))}/${escapeHtml(String(plan.repoBackedCatalog?.lane_count ?? 'unknown'))} declared lane(s)</div>
+      <div>Missing current manifest lanes</div><div><code>${escapeHtml(missingExpected)}</code></div>
+      <div>Report</div><div><code>${escapeHtml(plan.reportPath || 'missing')}</code></div>
+      <div>Summary</div><div><code>${escapeHtml(plan.summaryPath || 'missing')}</code></div>
+      <div>Next action</div><div>${escapeHtml(plan.nextAction || '')}</div>
+      <div>Recommended steps</div><div>${steps.length ? `<ul>${steps.map(step => `<li>${escapeHtml(step)}</li>`).join('\n')}</ul>` : 'none'}</div>
     </div>`
 }
 
@@ -5375,6 +5581,7 @@ module.exports = {
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
   inspectFirstBiteRunnerControlPlane,
+  inspectFirstBiteMcpRefreshPlan,
   inspectFirstBiteOperatingReadout,
   inspectGrafanaEvidence,
   inspectLaneLog,
