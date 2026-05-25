@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "decisions": [
+    {
+      "path": ".firstbite/local-ci.json",
+      "decision": "accept-current",
+      "currentHash": "73b23a4ce29e",
+      "originHash": "df769870bb74",
+      "reason": "Current manifest routes the integration lane through check:publish so clean local CI can prove the publish-safe contract while check remains the stricter release-history gate.",
+      "evidence": [
+        "diff -u origin/main:.firstbite/local-ci.json .firstbite/local-ci.json reviewed",
+        "node --test tests/source-promotion-packet.test.js tests/reliability-cockpit.test.js tests/smoke-check-deploy.test.js"
+      ]
+    },
+    {
+      "path": "package.json",
+      "decision": "accept-current",
+      "currentHash": "295faa8f2f11",
+      "originHash": "f8b8601a079a",
+      "reason": "Current scripts preserve origin/main backfill:history and add strict validate:release, publish-safe check:publish, local-CI MCP capture, OTEL smoke, source-promotion packet, cockpit, and trust preflight commands.",
+      "evidence": [
+        "git diff origin/main -- package.json reviewed",
+        "node --test tests/source-promotion-packet.test.js tests/reliability-cockpit.test.js tests/smoke-check-deploy.test.js"
+      ]
+    },
+    {
+      "path": "scripts/smoke-check-deploy.js",
+      "decision": "accept-current",
+      "currentHash": "9d948ee433c9",
+      "originHash": "e7e02c36c368",
+      "reason": "Current smoke keeps origin/main Worker health release/environment checks, restores provenance-gated recovery gap handling, and adds publish-grace plus GitHub fallback freshness checks.",
+      "evidence": [
+        "git diff origin/main -- scripts/smoke-check-deploy.js reviewed",
+        "node --check scripts/smoke-check-deploy.js",
+        "node --test tests/smoke-check-deploy.test.js"
+      ]
+    },
+    {
+      "path": "tests/smoke-check-deploy.test.js",
+      "decision": "accept-current",
+      "currentHash": "bcd2cec612ad",
+      "originHash": "00b0f53169d3",
+      "reason": "Current tests preserve origin/main Worker health and recovery-gap assertions while adding publish-grace coverage for the stricter smoke contract.",
+      "evidence": [
+        "git diff origin/main -- tests/smoke-check-deploy.test.js reviewed",
+        "node --test tests/smoke-check-deploy.test.js"
+      ]
+    }
+  ]
+}

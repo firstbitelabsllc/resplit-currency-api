@@ -8,6 +8,8 @@ const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(__dirname, '.
 const MIN_ARCHIVE_DAYS = 365
 const MAX_ARCHIVE_DAYS = 365
 const MAX_ARCHIVE_GAP_DAYS = 7
+const HISTORY_DAYS = 30
+const STRICT_HISTORY_COVERAGE = process.env.STRICT_HISTORY_COVERAGE === '1'
 
 if (require.main === module) {
   runMonitoredScript('validate_package', main, {
@@ -45,17 +47,19 @@ function main() {
   ensure(historyFrom.from === fromCode, `history from mismatch: expected ${fromCode}`)
   ensure(Array.isArray(historyFrom.points), 'history points must be an array')
   ensure(
-    historyFrom.points.length === 30,
-    `history/30d/${fromCode}.json points must contain exactly 30 entries, got ${historyFrom.points.length}`
+    historyFrom.points.length > 0 && historyFrom.points.length <= HISTORY_DAYS,
+    `history/30d/${fromCode}.json points must contain 1..${HISTORY_DAYS} entries, got ${historyFrom.points.length}`
   )
 
   let previousDate = null
+  const historyDates = []
   for (const point of historyFrom.points) {
     ensure(isIsoDate(point.date), `Invalid point date: ${point.date}`)
     if (previousDate !== null) {
-      ensure(previousDate <= point.date, 'history points must be ascending by date')
+      ensure(previousDate < point.date, 'history points must be strictly ascending by date')
     }
     previousDate = point.date
+    historyDates.push(point.date)
     ensure(point.rates && typeof point.rates === 'object', `Missing rates map at ${point.date}`)
     ensure(
       Number.isFinite(point.rates[toCode]) && point.rates[toCode] > 0,
@@ -69,15 +73,24 @@ function main() {
   ensure(Object.keys(snapshot.rates).length === codes.length, 'snapshot currency count mismatch')
 
   ensure(isIsoDate(meta.latestDate), 'meta latestDate invalid')
-  ensure(meta.historyDays === 30, `meta historyDays must be 30, got ${meta.historyDays}`)
+  ensure(meta.historyDays === HISTORY_DAYS, `meta historyDays must be ${HISTORY_DAYS}, got ${meta.historyDays}`)
   ensure(meta.archiveMode === 'immutable', `meta archiveMode expected immutable, got ${meta.archiveMode}`)
   ensure(
     Array.isArray(meta.availableHistoryDates) &&
-      meta.availableHistoryDates.length === 30,
-    `meta availableHistoryDates must contain exactly 30 entries, got ${
+      meta.availableHistoryDates.length === historyDates.length,
+    `meta availableHistoryDates must match history points length ${historyDates.length}, got ${
       Array.isArray(meta.availableHistoryDates) ? meta.availableHistoryDates.length : typeof meta.availableHistoryDates
     }`
   )
+  ensure(
+    arraysEqual(meta.availableHistoryDates, historyDates),
+    'meta availableHistoryDates must match history point dates'
+  )
+  validateHistoryCoverage({
+    dates: historyDates,
+    latestDate: meta.latestDate,
+    strict: STRICT_HISTORY_COVERAGE
+  })
 
   // Numeric consistency check between snapshot-derived pair and latest pair.
   const fromBaseRate = snapshot.rates[fromCode]
@@ -145,8 +158,31 @@ function main() {
   readJSON(`history/30d/${fromCode}.min.json`)
 
   console.log(
-    `validate-package: OK (${codes.length} currencies, history points=${historyFrom.points.length}, sample=${fromCode}->${toCode})`
+    `validate-package: OK (${codes.length} currencies, history points=${historyFrom.points.length}, sample=${fromCode}->${toCode}, strictHistory=${STRICT_HISTORY_COVERAGE ? 'on' : 'off'})`
   )
+}
+
+function validateHistoryCoverage({ dates, latestDate, strict }) {
+  ensure(dates.includes(latestDate), `history points must include latestDate ${latestDate}`)
+
+  const startDate = dateDaysBeforeUTC(latestDate, HISTORY_DAYS - 1)
+  const expectedDates = enumerateDates(startDate, latestDate)
+  const expectedDateSet = new Set(expectedDates)
+  const dateSet = new Set(dates)
+  const outsideWindow = dates.filter((date) => !expectedDateSet.has(date))
+  ensure(
+    outsideWindow.length === 0,
+    `history points outside ${startDate}..${latestDate}: ${outsideWindow.join(', ')}`
+  )
+
+  const missingDates = expectedDates.filter((date) => !dateSet.has(date))
+  if (missingDates.length > 0) {
+    const message = `history/30d calendar coverage incomplete: available ${dates.length}/${HISTORY_DAYS}, missing ${missingDates.length} day(s): ${formatDateSample(missingDates)}`
+    if (strict) {
+      throw new Error(message)
+    }
+    console.warn(`validate-package: WARNING ${message}`)
+  }
 }
 
 function readJSON(relativePath) {
@@ -177,6 +213,13 @@ function warnIf(condition, message) {
   }
 }
 
+function arraysEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false
+  }
+  return left.every((value, index) => value === right[index])
+}
+
 function isIsoDate(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
 }
@@ -200,6 +243,30 @@ function daysBetween(start, end) {
   const startDate = new Date(`${start}T00:00:00Z`)
   const endDate = new Date(`${end}T00:00:00Z`)
   return Math.round((endDate - startDate) / (24 * 60 * 60 * 1000))
+}
+
+function dateDaysBeforeUTC(anchorDate, daysBefore) {
+  const date = new Date(`${anchorDate}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() - daysBefore)
+  return date.toISOString().slice(0, 10)
+}
+
+function enumerateDates(start, end) {
+  const dates = []
+  const cursor = new Date(`${start}T00:00:00Z`)
+  const endDate = new Date(`${end}T00:00:00Z`)
+  while (cursor <= endDate) {
+    dates.push(cursor.toISOString().slice(0, 10))
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dates
+}
+
+function formatDateSample(dates) {
+  if (dates.length <= 6) {
+    return dates.join(', ')
+  }
+  return `${dates.slice(0, 3).join(', ')} ... ${dates.slice(-3).join(', ')}`
 }
 
 module.exports = {

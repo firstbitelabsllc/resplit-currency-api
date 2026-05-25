@@ -3,6 +3,12 @@
 const { captureIssue, runMonitoredScript } = require('./sentry-monitoring')
 
 const defaultWorkerBase = 'https://fx.resplit.app'
+const allowedRecoveryCoverageSignals = new Set([
+  'archive_gap_detected',
+  'history_range_incomplete',
+])
+const defaultPublishGraceMinutes = 45
+const defaultPublishUtcHours = [0, 3]
 
 if (require.main === module) {
   runMonitoredScript('smoke_check_deploy', main, {
@@ -20,15 +26,21 @@ async function main() {
   const workerBase = resolveWorkerBase()
   const requestedDate = process.env.EXPECTED_DATE || null
   const allowLatestFallback = process.env.ALLOW_STALE_DEPLOY_SMOKE === '1'
+  const publishGraceMinutes = parsePositiveInteger(
+    process.env.PUBLISH_GRACE_MINUTES,
+    defaultPublishGraceMinutes
+  )
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
   const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
   const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
-  const dateToday = resolveExpectedDate({
+  const freshnessContract = resolveFreshnessContract({
     requestedDate,
     latestDate: latest?.date,
     metaLatestDate: meta?.latestDate,
     allowLatestFallback,
+    publishGraceMinutes,
   })
+  const dateToday = freshnessContract.expectedDate
 
   assertISODate(latest.date, 'cloudflare latest date')
   assertISODate(meta.latestDate, 'cloudflare meta latestDate')
@@ -37,6 +49,12 @@ async function main() {
   }
   if (meta.latestDate !== dateToday) {
     throw new Error(`cloudflare meta latestDate expected ${dateToday}, got ${meta.latestDate}`)
+  }
+  if (freshnessContract.mode === 'publish_grace') {
+    console.warn(
+      `smoke-check-deploy: WARNING publish window grace accepted ${dateToday}; ` +
+      `strict expected ${freshnessContract.strictExpectedDate} until ${freshnessContract.graceEndsAt}`
+    )
   }
 
   const datedSnapshotUrl = `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
@@ -88,6 +106,9 @@ async function main() {
   if (datedSnapshot.date !== dateToday) {
     throw new Error(`dated deployment date mismatch: expected ${dateToday}, got ${datedSnapshot.date}`)
   }
+  if (ghFallbackLatest.date !== dateToday) {
+    throw new Error(`github fallback latest date expected ${dateToday}, got ${ghFallbackLatest.date}`)
+  }
 
   if (workerBase) {
     await smokeCheckWorker(workerBase, dateToday)
@@ -114,19 +135,95 @@ function resolveExpectedDate({
   allowLatestFallback = false,
   now = new Date()
 }) {
+  return resolveFreshnessContract({
+    requestedDate,
+    latestDate,
+    metaLatestDate,
+    allowLatestFallback,
+    now,
+  }).expectedDate
+}
+
+function resolveFreshnessContract({
+  requestedDate,
+  latestDate,
+  metaLatestDate,
+  allowLatestFallback = false,
+  now = new Date(),
+  publishGraceMinutes = defaultPublishGraceMinutes,
+  publishUtcHours = defaultPublishUtcHours,
+} = {}) {
   if (requestedDate) {
-    return requestedDate
+    return {
+      mode: 'requested',
+      expectedDate: requestedDate,
+      strictExpectedDate: requestedDate,
+      graceEndsAt: null,
+    }
   }
 
   if (allowLatestFallback && metaLatestDate) {
-    return metaLatestDate
+    return {
+      mode: 'latest_fallback',
+      expectedDate: metaLatestDate,
+      strictExpectedDate: toDateStringUTC(now),
+      graceEndsAt: null,
+    }
   }
 
   if (allowLatestFallback && latestDate) {
-    return latestDate
+    return {
+      mode: 'latest_fallback',
+      expectedDate: latestDate,
+      strictExpectedDate: toDateStringUTC(now),
+      graceEndsAt: null,
+    }
   }
 
-  return toDateStringUTC(now)
+  const strictExpectedDate = toDateStringUTC(now)
+  const servedDate = metaLatestDate || latestDate || null
+  const graceWindow = resolvePublishGraceWindow(now, publishUtcHours, publishGraceMinutes)
+  if (
+    servedDate &&
+    servedDate !== strictExpectedDate &&
+    servedDate === dateDaysBeforeUTC(strictExpectedDate, 1) &&
+    graceWindow.active
+  ) {
+    return {
+      mode: 'publish_grace',
+      expectedDate: servedDate,
+      strictExpectedDate,
+      graceEndsAt: graceWindow.endsAt,
+    }
+  }
+
+  return {
+    mode: 'strict',
+    expectedDate: strictExpectedDate,
+    strictExpectedDate,
+    graceEndsAt: null,
+  }
+}
+
+function resolvePublishGraceWindow(now, publishUtcHours, publishGraceMinutes) {
+  const nowTime = now.getTime()
+  const windows = publishUtcHours
+    .filter(hour => Number.isInteger(hour) && hour >= 0 && hour <= 23)
+    .map(hour => {
+      const start = new Date(now)
+      start.setUTCHours(hour, 0, 0, 0)
+      if (start.getTime() > nowTime) {
+        start.setUTCDate(start.getUTCDate() - 1)
+      }
+      const end = new Date(start.getTime() + publishGraceMinutes * 60_000)
+      return { start, end }
+    })
+    .sort((a, b) => b.start.getTime() - a.start.getTime())
+
+  const active = windows.find(window => nowTime >= window.start.getTime() && nowTime <= window.end.getTime())
+  return active
+    ? { active: true, startsAt: active.start.toISOString(), endsAt: active.end.toISOString() }
+    : { active: false, startsAt: windows[0]?.start.toISOString() || null, endsAt: windows[0]?.end.toISOString() || null }
 }
 
 async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithRetry } = {}) {
@@ -202,9 +299,8 @@ function assertWorkerHealth(health, normalizedBase) {
 }
 
 function isRecoveryCoverageGap(coverage, dateToday) {
-  const allowedSignals = new Set(['history_range_incomplete', 'archive_gap_detected'])
   const signals = Array.isArray(coverage.signals) ? coverage.signals : []
-  if (signals.some((signal) => !allowedSignals.has(signal))) {
+  if (signals.some((signal) => !allowedRecoveryCoverageSignals.has(signal))) {
     return false
   }
   if (!coverage.historyCoverage || coverage.historyCoverage.archiveLatestDate !== dateToday) {
@@ -266,11 +362,23 @@ function dateDaysBeforeUTC(anchorDate, daysAgo) {
   return toDateStringUTC(date)
 }
 
+function parsePositiveInteger(value, fallback) {
+  if (value === undefined || value === null || value === '') {
+    return fallback
+  }
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
 module.exports = {
   defaultWorkerBase,
+  defaultPublishGraceMinutes,
   fetchJSONWithRetry,
+  isRecoveryCoverageGap,
   main,
   resolveExpectedDate,
+  resolveFreshnessContract,
+  resolvePublishGraceWindow,
   resolveWorkerBase,
   isRecoveryCoverageGap,
   smokeCheckWorker,

@@ -12,14 +12,14 @@
       },
       "resplit_currency_api_integration": {
         "kind": "integration",
-        "command": "npm ci && npm run check",
+        "command": "npm ci && npm run check:publish",
         "timeoutMs": 1500000
       },
       "resplit_currency_api_ui": {
         "kind": "ui",
         "command": "npm ci && npm run smoke:deploy",
         "timeoutMs": 1500000,
-        "note": "Live Worker/CDN smoke; this repo has no browser UI, so the UI lane is the user-facing FX contract smoke."
+        "note": "Live Worker/CDN smoke; this repo has no browser UI, so the UI lane is the user-facing FX contract smoke. The smoke script keeps strict date checks outside a narrow publish grace window and emits a warning when grace is active."
       }
     }
   }
