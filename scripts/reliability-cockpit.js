@@ -7439,6 +7439,7 @@ function renderFirstBiteMcpRefreshPlan(plan) {
     ? plan.continuationProofDrift.map(row => `${row.label}: expected ${row.expectedLaneCount}, catalog ${row.catalogLaneCount}`).join('; ')
     : 'none'
   const steps = (plan.recommendedSteps || []).slice(0, 5)
+  const continuationCommands = plan.continuationCommands || []
 
   return `<h2>FirstBite MCP Refresh Plan</h2>
     <div class="kv">
@@ -7455,7 +7456,14 @@ function renderFirstBiteMcpRefreshPlan(plan) {
       <div>Summary</div><div><code>${escapeHtml(plan.summaryPath || 'missing')}</code></div>
       <div>Next action</div><div>${escapeHtml(plan.nextAction || '')}</div>
       <div>Recommended steps</div><div>${steps.length ? `<ul>${steps.map(step => `<li>${escapeHtml(step)}</li>`).join('\n')}</ul>` : 'none'}</div>
-    </div>`
+    </div>
+    <h3>Continuation commands</h3>
+    ${continuationCommands.length ? `<table>
+      <thead><tr><th>Command</th><th>Run on</th><th>Safety</th><th>Expected proof</th></tr></thead>
+      <tbody>
+        ${continuationCommands.map(command => `<tr><td><code>${escapeHtml(command.label || 'unnamed')}</code><div class="meta"><code>${escapeHtml(command.command || '')}</code></div></td><td>${escapeHtml(command.runOn || 'unknown')}</td><td>${escapeHtml(command.safety || 'unknown')}</td><td>${escapeHtml(command.expectedProof || '')}</td></tr>`).join('\n')}
+      </tbody>
+    </table>` : '<p class="meta">No continuation commands recorded.</p>'}`
 }
 
 function renderLoadedMcpCaptureContract(contract) {

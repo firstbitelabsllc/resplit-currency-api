@@ -40,6 +40,7 @@ const REQUIRED_HTML_LABELS = [
   'Proof Acceptance Matrix',
   'Evidence Freshness Ledger',
   'FirstBite Local CI',
+  'FirstBite MCP Refresh Plan',
   'FirstBite Operating Readout Scope Contract',
   'Loaded MCP Host Probe',
   'Loaded MCP Live Capture Contract',
@@ -521,6 +522,24 @@ function verifyHtmlContract({ cockpit, html }) {
     for (const proof of operatingReadoutScopeContract.rejectedProof || []) {
       if (!html.includes(escapeForHtmlText(proof))) {
         failures.push(`HTML missing operating readout rejected proof: ${proof}`)
+      }
+    }
+  }
+
+  const mcpRefreshPlan = cockpit.localCi?.mcpRefreshPlan
+  if (mcpRefreshPlan) {
+    if (mcpRefreshPlan.summary && !html.includes(escapeForHtmlText(mcpRefreshPlan.summary))) {
+      failures.push('HTML missing MCP refresh plan summary')
+    }
+    for (const command of mcpRefreshPlan.continuationCommands || []) {
+      if (command.label && !html.includes(escapeForHtmlText(command.label))) {
+        failures.push(`HTML missing MCP refresh plan command label: ${command.label}`)
+      }
+      if (command.command && !html.includes(escapeForHtmlText(command.command))) {
+        failures.push(`HTML missing MCP refresh plan command: ${command.label || 'unnamed'}`)
+      }
+      if (command.expectedProof && !html.includes(escapeForHtmlText(command.expectedProof))) {
+        failures.push(`HTML missing MCP refresh plan expected proof: ${command.label || 'unnamed'}`)
       }
     }
   }

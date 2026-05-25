@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 17:30 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The MCP refresh-plan consistency check is now visible in the operator GUI, not only machine-checked in JSON.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now renders a `Continuation commands` table inside the `FirstBite MCP Refresh Plan` section, including command label, run target, safety, command text, and `expectedProof` such as `catalog_version=repo-manifest-v2 and lane_count=37`. `scripts/verify-reliability-cockpit-report.js` now treats `FirstBite MCP Refresh Plan` as a required HTML section and fails if any refresh-plan command label, command, or expected proof disappears from the HTML. Tests cover the missing-expected-proof regression.
+- Fresh proof:
+  - `node --test tests/verify-reliability-cockpit-report.test.js` -> `17/17` tests passed.
+  - `node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `119/119` tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated HTML includes the refresh-plan continuation proof table and report HEAD matches the current checkout.
+  - `npm run check` -> generate green, strict release validation green, and `293/293` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+- Boundary: this still does not restart/reload Codex/Cursor, clear `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the GUI say exactly what proof to expect after a loaded-host refresh, including the repo-backed lane count.
+- Exact next slice: commit/push this GUI visibility contract, regenerate cockpit at the new commit HEAD, rerun current-source FirstBite proof for that HEAD, then continue down `loaded-agent-mcp` and external observability without treating repo-backed proof as loaded-host proof.
+
 ## 2026-05-25 17:21 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI found a stale-evidence class that needed a verifier contract: an MCP refresh-plan packet could be older than the current repo-backed catalog delta and still leave the cockpit looking structurally valid.

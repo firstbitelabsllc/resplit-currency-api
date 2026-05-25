@@ -177,6 +177,21 @@ test('verifyCockpitReport fails when MCP refresh continuation proof names the wr
   assert.match(result.report.failures.join('\n'), /MCP refresh plan continuation command has stale lane_count proof: expectedProof 15, refresh plan 37/)
 })
 
+test('verifyCockpitReport fails when MCP refresh continuation proof disappears from HTML', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-mcp-refresh-html-'))
+  const report = buildReport()
+  const html = buildHtml(report).replace('catalog_version=repo-manifest-v2 and lane_count=37', 'catalog_version=repo-manifest-v2')
+  writeReport(repoDir, report, html)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /HTML missing MCP refresh plan expected proof: Prove repo-backed MCP catalog/)
+})
+
 test('verifyCockpitReport fails when trust preflight proof gap reason is opaque', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-opaque-trust-reason-'))
   const report = buildReport()
@@ -316,6 +331,7 @@ function buildReport() {
           declared_count: 37,
         },
         continuationCommands: [{
+          label: 'Prove repo-backed MCP catalog',
           command: 'mcp__firstbite_local_ci.list_lanes {}',
           expectedProof: 'catalog_version=repo-manifest-v2 and lane_count=37',
         }],
@@ -620,6 +636,12 @@ function buildHtml(report) {
     report.localCi.operatingReadoutScopeContract.currentInvalidReason,
     ...report.localCi.operatingReadoutScopeContract.acceptedProof,
     ...report.localCi.operatingReadoutScopeContract.rejectedProof,
+    report.localCi.mcpRefreshPlan.summary,
+    ...report.localCi.mcpRefreshPlan.continuationCommands.flatMap(command => [
+      command.label,
+      command.command,
+      command.expectedProof,
+    ]),
     'Local CI Finding Taxonomy',
     ...report.localCi.findingTaxonomy.categories.flatMap(category => [
       category.id,
