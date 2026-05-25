@@ -102,6 +102,38 @@ test('verifyCockpitReport fails when non-green Grafana query rows use match-like
   assert.match(result.report.failures.join('\n'), /observability proof chain tempo-query uses match-like proof language without structured green check/)
 })
 
+test('verifyCockpitReport fails when JSON loses the Worker observability config row', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-worker-observability-'))
+  const report = buildReport()
+  report.telemetry.observabilityProofChain.required = report.telemetry.observabilityProofChain.required
+    .filter(row => row.id !== 'worker-observability-config')
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /observability proof chain missing row: worker-observability-config/)
+})
+
+test('verifyCockpitReport fails when accepted OTEL proof drops wrangler source config', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-wrangler-proof-'))
+  const report = buildReport()
+  report.telemetry.observabilityProofChain.acceptedProof = report.telemetry.observabilityProofChain.acceptedProof
+    .filter(proof => !/wrangler\.jsonc/i.test(proof))
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /observability proof chain missing accepted proof: wrangler observability source config/)
+})
+
 test('verifyCockpitReport fails when JSON loses a recovery boundary claim', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-boundary-claim-'))
   const report = buildReport()
@@ -537,6 +569,7 @@ function buildReport() {
         status: 'yellow',
         summary: 'Observability proof chain is incomplete.',
         required: [
+          { id: 'worker-observability-config', label: 'Worker observability config', status: 'green', proof: 'logs enabled / traces enabled' },
           { id: 'cloudflare-destinations', label: 'Cloudflare destination read proof', status: 'yellow', proof: 'Cloudflare proof missing.' },
           { id: 'worker-trigger', label: 'Worker trigger', status: 'yellow', proof: 'Worker trigger missing.' },
           { id: 'grafana-read-config', label: 'Grafana read config', status: 'yellow', proof: 'Grafana config missing.' },
@@ -545,6 +578,7 @@ function buildReport() {
           { id: 'freshness', label: 'Freshness', status: 'yellow', proof: 'Freshness missing.' },
         ],
         acceptedProof: [
+          'wrangler.jsonc observability logs/traces enabled',
           'reports/cloudflare-otel-destinations.json:green',
           'reports/grafana-otel-smoke.json:worker-trigger green',
           'reports/grafana-otel-smoke.json:grafana-read-config green',

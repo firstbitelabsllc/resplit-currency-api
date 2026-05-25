@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 18:05 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The next local-CI/OTEL trust slice closes a verifier gap: the cockpit already rendered `worker-observability-config`, but the report verifier did not require that row or require the accepted-proof list to name the source-side `wrangler.jsonc` logs/traces prerequisite.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now lists `wrangler.jsonc observability logs/traces enabled` in the accepted OTEL proof chain. `scripts/verify-reliability-cockpit-report.js` now requires the `worker-observability-config` row and checks every accepted OTEL proof prerequisite individually (`wrangler.jsonc`, Cloudflare green report, Worker trigger, Grafana read config, Tempo, Loki, freshness). `tests/verify-reliability-cockpit-report.test.js` covers both missing-source-config row and missing `wrangler.jsonc` accepted-proof regressions.
+- Fresh proof:
+  - `npm run observability:cloudflare-destinations` -> expected yellow exit `2`: missing `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`; wrote `reports/cloudflare-otel-destinations.json`.
+  - `npm run observability:otel-smoke -- --since-minutes 60` -> expected yellow exit `2`: Worker trigger green with request id `1d14daa0-73a4-4179-bdbf-b7aec9e13676`, Grafana read/query proof blocked by missing `GRAFANA_BASE_URL`, `GRAFANA_TEMPO_DATASOURCE_UID`, and `GRAFANA_LOKI_DATASOURCE_UID`.
+  - `node --test tests/verify-reliability-cockpit-report.test.js tests/reliability-cockpit.test.js` -> `111/111` tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated cockpit report HEAD matched the current checkout and HTML includes the strengthened OTEL accepted-proof chain.
+  - `node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `125/125` tests passed.
+  - `npm run check` -> generate green, strict release validation green, and `300/300` tests passed.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this does not clear Cloudflare/Grafana proof; it makes the cockpit stricter about the full proof chain. Cloudflare read credentials and Grafana datasource IDs are still missing in this host, loaded Codex/Cursor MCP is still stale, `resplit_currency_api_trust_preflight` is red, and clean landed-source/M4 proof remain unproven.
+- Exact next slice: commit/push this OTEL proof-chain verifier hardening, prove stale cockpit detection after the commit HEAD changes, regenerate cockpit at the new HEAD, rerun current-source FirstBite proof/readout, and keep the Grafana/Cloudflare gates yellow until read credentials produce green JSON artifacts.
+
 ## 2026-05-25 17:54 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI found another trust gap in the OTEL/Grafana surface: manual Tempo/Loki match fields were visible in the cockpit even when no structured `tempo-query` or `loki-query` JSON check existed, which could make diagnostic evidence look like launch proof.

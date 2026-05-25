@@ -46,6 +46,7 @@ const LOADED_MCP_REJECTED_SOURCES = [
   '--reuse-existing',
 ]
 const OBSERVABILITY_ACCEPTED_PROOF = [
+  'wrangler.jsonc observability logs/traces enabled',
   'reports/cloudflare-otel-destinations.json:green',
   'reports/grafana-otel-smoke.json:worker-trigger green',
   'reports/grafana-otel-smoke.json:grafana-read-config green',

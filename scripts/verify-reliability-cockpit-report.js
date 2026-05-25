@@ -328,7 +328,7 @@ function verifyJsonContract(cockpit) {
   const observabilityProofChain = cockpit.telemetry?.observabilityProofChain
   if (observabilityProofChain) {
     const chainIds = new Set((observabilityProofChain.required || []).map(row => row.id))
-    for (const id of ['cloudflare-destinations', 'worker-trigger', 'grafana-read-config', 'tempo-query', 'loki-query', 'freshness']) {
+    for (const id of ['worker-observability-config', 'cloudflare-destinations', 'worker-trigger', 'grafana-read-config', 'tempo-query', 'loki-query', 'freshness']) {
       if (!chainIds.has(id)) {
         failures.push(`observability proof chain missing row: ${id}`)
       }
@@ -343,8 +343,18 @@ function verifyJsonContract(cockpit) {
     }
     const accepted = (observabilityProofChain.acceptedProof || []).join(' ')
     const rejected = (observabilityProofChain.rejectedProof || []).join(' ')
-    if (!/Cloudflare|worker-trigger|grafana-read-config|tempo-query|loki-query|fresh/i.test(accepted)) {
-      failures.push('observability proof chain does not name the full accepted Cloudflare/Grafana proof chain')
+    for (const [label, pattern] of [
+      ['wrangler observability source config', /wrangler\.jsonc/i],
+      ['Cloudflare destination green report', /cloudflare-otel-destinations\.json:green/i],
+      ['worker-trigger green check', /worker-trigger green/i],
+      ['grafana-read-config green check', /grafana-read-config green/i],
+      ['tempo-query green check', /tempo-query green/i],
+      ['loki-query green check', /loki-query green/i],
+      ['fresh checkedAt proof', /fresh checkedAt/i],
+    ]) {
+      if (!pattern.test(accepted)) {
+        failures.push(`observability proof chain missing accepted proof: ${label}`)
+      }
     }
     if (!/wrangler|skip-trigger|Tempo-only|Loki-only|stale|nurse-log/i.test(rejected)) {
       failures.push('observability proof chain does not reject config-only, skipped, partial, stale, and note-only proof')
