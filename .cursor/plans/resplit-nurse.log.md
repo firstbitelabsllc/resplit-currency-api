@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 06:23 EDT
+
+- `NO-GO` overall launch; `YELLOW/current` for the local-CI/agent/OTEL control plane because repo-backed FirstBite can now see the current FX trust lane, but the loaded in-app MCP host and external Cloudflare/Grafana proof are still not green.
+- Shipped delta pending source promotion: added `resplit_currency_api_trust_preflight` to `.firstbite/local-ci.json`; `npm run trust:preflight` now runs the Cloudflare destination proof before Grafana proof; `scripts/reliability-cockpit.js` passes the selected `--repo` path through `RESPLIT_CURRENCY_API_REPO` when probing the repo-backed FirstBite package so worktree evidence is not confused with the default checkout.
+- Fresh proof:
+  - `node --check scripts/reliability-cockpit.js && node --check scripts/trust-preflight.js && node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js tests/verify-cloudflare-otel-destinations.test.js` -> `57/57` focused tests green.
+  - `npm run trust:preflight` -> expected red overall; commands `8 green, 3 yellow, 0 red`; Cloudflare destination proof yellow for missing `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN`; Grafana proof yellow for missing read config; source-promotion generate yellow while cockpit remains red.
+  - `npm run check` -> strict release validation green and `221/221` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - Repo-backed FirstBite package probe -> green: `repo-manifest-v2`, `16` total lanes, `resplit_currency_api` has `4/4` expected lanes including `resplit_currency_api_trust_preflight`; `fresh_clone_ready=true`, `active_ready=false`.
+  - Live loaded `mcp__firstbite_local_ci.list_lanes` still does not expose `resplit_currency_api`; it lists only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`, so the loaded MCP host boundary remains untrusted until restart/reload plus a captured probe artifact.
+- Exact next slice: land this PR bundle, reload the in-app FirstBite MCP host and capture `reports/firstbite-loaded-mcp-lanes.json`, then run clean worktree `resplit_currency_api_all` and external Cloudflare/Grafana read-token proofs.
+
 ## 2026-05-25 06:12 EDT
 
 - `NO-GO` overall launch; `YELLOW/current` for the Cloudflare/Grafana observability lane because wrangler destination intent is source-declared, but Cloudflare dashboard destination existence and Grafana Tempo/Loki delivery remain separate unproven gates.
