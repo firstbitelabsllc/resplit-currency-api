@@ -245,6 +245,7 @@ function buildReport({
     reportRoot: mcpRefreshPlanRoot || DEFAULT_FIRSTBITE_MCP_REFRESH_PLAN_DIR,
     expectedRepo: manifest?.repo,
     expectedLaneIds: Object.keys(manifest?.localCi?.lanes || {}),
+    repoDir,
     generatedAt,
   })
   const runnerControlPlane = firstBiteRunnerControlPlane || inspectFirstBiteRunnerControlPlane({
@@ -1202,6 +1203,7 @@ function inspectFirstBiteMcpRefreshPlan({
   reportRoot = DEFAULT_FIRSTBITE_MCP_REFRESH_PLAN_DIR,
   expectedRepo = null,
   expectedLaneIds = [],
+  repoDir = null,
   generatedAt = new Date().toISOString(),
 } = {}) {
   const missing = {
@@ -1293,6 +1295,10 @@ function inspectFirstBiteMcpRefreshPlan({
   const repoBackedCatalogCurrent = catalogHasExpectedManifest
     && (Boolean(data.authority?.repoBackedCatalogCurrent) || catalogLooksRepoManifestV2)
   const verdict = data.verdict || 'unknown'
+  const continuationCommands = scopeRefreshPlanCommands(
+    Array.isArray(data.continuationCommands) ? data.continuationCommands : [],
+    repoDir,
+  )
   const status = /unavailable|needs_attention/i.test(verdict) || repoBackedCatalogCurrent === false
     ? 'red'
     : staleProcessCount > 0 || stale
@@ -1324,7 +1330,7 @@ function inspectFirstBiteMcpRefreshPlan({
     missingExpectedLaneIds,
     repoBackedCatalogCurrent,
     recommendedSteps: Array.isArray(data.recommendedSteps) ? data.recommendedSteps : [],
-    continuationCommands: Array.isArray(data.continuationCommands) ? data.continuationCommands : [],
+    continuationCommands,
     artifacts: data.artifacts || {},
     safety: data.safety || {},
     summary,
@@ -1334,6 +1340,33 @@ function inspectFirstBiteMcpRefreshPlan({
         ? 'Save work and restart/reload Codex/Cursor, then rerun the refresh plan and capture live loaded-host list_lanes output.'
         : 'Rerun the read-only refresh plan and inspect repo-backed catalog availability before loaded-host MCP claims.',
   }
+}
+
+function scopeRefreshPlanCommands(commands = [], repoDir = null) {
+  if (!repoDir) {
+    return commands
+  }
+
+  return commands.map(command => {
+    if (!/refresh plan/i.test(command?.label || '')) {
+      return command
+    }
+    return {
+      ...command,
+      command: scopeCommandWithEnv(command.command || '', {
+        RESPLIT_CURRENCY_API_REPO: repoDir,
+      }),
+    }
+  })
+}
+
+function scopeCommandWithEnv(command, env = {}) {
+  const prefix = Object.entries(env)
+    .filter(([, value]) => value)
+    .filter(([key]) => !new RegExp(`(?:^|\\s)${key}=`).test(command))
+    .map(([key, value]) => `${key}=${shellQuoteValue(value)}`)
+    .join(' ')
+  return prefix ? `${prefix} ${command}` : command
 }
 
 function inspectFirstBiteCursorReviewScout({
@@ -1770,6 +1803,10 @@ function sourcePromotionPathAction(row) {
 
 function shellQuotePaths(paths) {
   return paths.map(relPath => `'${String(relPath).replace(/'/g, "'\\''")}'`).join(' ')
+}
+
+function shellQuoteValue(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
 }
 
 function readPackageJsonAtRef(repoDir, ref) {

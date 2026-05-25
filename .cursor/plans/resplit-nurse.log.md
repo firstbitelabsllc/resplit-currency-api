@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 10:52 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but the MCP refresh/recovery path now carries the active checkout path instead of letting the next operator accidentally rerun against the stale canonical checkout.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now scopes FirstBite MCP refresh-plan continuation commands with `RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525` when building the cockpit, operator action queue, and evidence-freshness ledger.
+- Fresh proof:
+  - `FIRSTBITE_MCP_REFRESH_PLAN_RUN_ID=codex-fx-refresh-plan-5bf8b78-20260525 RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh --json` -> repo-backed catalog `repo-manifest-v2`, `16/16` declared lane(s), no missing `resplit_currency_api_trust_preflight`; process audit still shows `16/21` stale loaded processes, so host reload remains required.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; loaded MCP action command is now `RESPLIT_CURRENCY_API_REPO='/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525' FIRSTBITE_MCP_REFRESH_PLAN_RUN_ID=handoff-$(date +%Y%m%d-%H%M%S) bash "$HOME/Development/ai-leo/skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh"`.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green: `11` gate(s), `5` action(s), generated HTML sections present.
+  - `node --test tests/reliability-cockpit.test.js` -> `61/61` focused cockpit tests green, including scoped refresh-plan command coverage.
+  - `npm run check` -> strict release validation green and `247/247` tests passed.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `10`, command drift `2`.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+- Boundary: this does not reload the loaded Codex/Cursor MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the GUI's recovery command reproduce the current repo-backed evidence instead of regressing to a stale checkout.
+- Exact next slice: commit/push this scoped-refresh-command hardening, keep `reports/` local, then restart/reload the FirstBite MCP host and capture fresh live loaded-host `list_lanes` proof before trusting loaded-agent execution.
+
 ## 2026-05-25 10:45 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but the repo-backed FirstBite catalog can no longer look green while silently reading the wrong checkout.

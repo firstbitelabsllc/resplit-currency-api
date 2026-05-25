@@ -1229,6 +1229,53 @@ test('inspectFirstBiteMcpRefreshPlan surfaces stale loaded-client process audit'
   assert.match(plan.nextAction, /restart\/reload Codex\/Cursor/)
 })
 
+test('inspectFirstBiteMcpRefreshPlan scopes rerun commands to the active repo path', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-scoped-'))
+  const runDir = path.join(root, '20260525T112208Z-16715')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    runId: '20260525T112208Z-16715',
+    createdAt: '2026-05-25T11:22:10Z',
+    verdict: 'stale_loaded_clients_need_host_app_restart',
+    processAudit: {
+      status: 'stale_processes_visible',
+      process_count: 4,
+      stale_process_count: 2,
+    },
+    repoBackedCatalog: {
+      catalog_version: 'repo-manifest-v2',
+      lane_count: 4,
+      declared_count: 4,
+      repo_keys: ['resplit_currency_api'],
+      lane_keys: ['resplit_currency_api_unit'],
+    },
+    continuationCommands: [
+      {
+        label: 'Rerun stale MCP refresh plan',
+        command: 'FIRSTBITE_MCP_REFRESH_PLAN_RUN_ID=handoff bash "$HOME/Development/ai-leo/skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh"',
+      },
+      {
+        label: 'Refresh host-app MCP clients',
+        command: 'Save work, quit and reopen Codex Desktop/Cursor.',
+      },
+    ],
+  }, null, 2))
+
+  const repoDir = path.join(os.tmpdir(), "resplit fx worktree's path")
+  const plan = inspectFirstBiteMcpRefreshPlan({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: ['resplit_currency_api_unit'],
+    repoDir,
+    generatedAt: '2026-05-25T11:25:10Z',
+  })
+
+  assert.match(plan.continuationCommands[0].command, /^RESPLIT_CURRENCY_API_REPO='/)
+  assert.match(plan.continuationCommands[0].command, /resplit fx worktree'\\''s path/)
+  assert.match(plan.continuationCommands[0].command, /FIRSTBITE_MCP_REFRESH_PLAN_RUN_ID=handoff/)
+  assert.equal(plan.continuationCommands[1].command, 'Save work, quit and reopen Codex Desktop/Cursor.')
+})
+
 test('inspectFirstBiteMcpRefreshPlan accepts manifest-driven repo-backed catalogs without a fixed lane-count floor', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-manifest-floor-'))
   const runDir = path.join(root, '20260525T112208Z-16715')
