@@ -1490,7 +1490,7 @@ function buildLocalCiFindingTaxonomy({
       repo: lane.repo || 'unknown',
       runId: lane.runId || lane.run_id || operatingReadout.runId || null,
       reportPath: lane.reportPath || lane.report_path || operatingReadout.reportPath || null,
-      reason: lane.reason || `rc ${lane.rc ?? 'unknown'}`,
+      reason: lane.reason || lane.diagnostics?.summary || `rc ${lane.rc ?? 'unknown'}`,
       kind: classifyLocalCiLaneFinding(lane),
     })))
   const productFailures = currentRepoFailures.filter(finding => finding.kind === 'product-failure')
@@ -2366,6 +2366,7 @@ function buildPeerExecutionBoundary(m4PeerProbe, m4FreshClonePacket) {
 }
 
 function summarizeOperatingReadoutLane(lane) {
+  const diagnostics = inspectLaneLog(lane.log_path, lane)
   return {
     lane: lane.lane || 'unknown',
     repo: lane.repo || null,
@@ -2374,6 +2375,8 @@ function summarizeOperatingReadoutLane(lane) {
     runId: lane.run_id || null,
     reportPath: lane.report_path || null,
     logPath: lane.log_path || null,
+    reason: lane.reason || diagnostics.summary || null,
+    diagnostics,
   }
 }
 
@@ -4779,6 +4782,11 @@ function extractGenericLaneFailure(text) {
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean)
+  const trustPreflight = lines.find(line => /^trust-preflight:\s+status=/i.test(line))
+  if (trustPreflight) {
+    return trustPreflight.slice(0, 220)
+  }
+
   const signal = lines.find(line => (
     /^Error:/i.test(line)
     || /^npm ERR!/i.test(line)
@@ -6753,7 +6761,7 @@ function renderLocalCiFindingTaxonomy(taxonomy) {
     <table>
       <thead><tr><th>Class</th><th>Status</th><th>Meaning</th><th>Evidence</th><th>Next action</th></tr></thead>
       <tbody>
-        ${categories.length === 0 ? '<tr><td colspan="5">No finding classes were generated.</td></tr>' : categories.map(category => `<tr><td><code>${escapeHtml(category.id || '')}</code><div class="meta">${escapeHtml(category.label || '')}</div></td><td><span class="${escapeHtml(category.status || 'yellow')}">${escapeHtml(category.status || 'unknown')}</span></td><td>${escapeHtml(category.summary || '')}${(category.laneFindings || []).length ? `<div class="meta">${category.laneFindings.map(finding => `<code>${escapeHtml(finding.lane || '')}</code> ${escapeHtml(finding.kind || '')}`).join(' ')}</div>` : ''}${(category.actionIds || []).length ? `<div class="meta">${category.actionIds.map(id => `<code>${escapeHtml(id)}</code>`).join(' ')}</div>` : ''}</td><td>${(category.evidence || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ') || 'none'}</td><td>${escapeHtml(category.nextAction || '')}</td></tr>`).join('\n')}
+        ${categories.length === 0 ? '<tr><td colspan="5">No finding classes were generated.</td></tr>' : categories.map(category => `<tr><td><code>${escapeHtml(category.id || '')}</code><div class="meta">${escapeHtml(category.label || '')}</div></td><td><span class="${escapeHtml(category.status || 'yellow')}">${escapeHtml(category.status || 'unknown')}</span></td><td>${escapeHtml(category.summary || '')}${(category.laneFindings || []).length ? `<div class="meta">${category.laneFindings.map(finding => `<code>${escapeHtml(finding.lane || '')}</code> ${escapeHtml(finding.kind || '')}${finding.reason ? `: ${escapeHtml(finding.reason)}` : ''}`).join(' ')}</div>` : ''}${(category.actionIds || []).length ? `<div class="meta">${category.actionIds.map(id => `<code>${escapeHtml(id)}</code>`).join(' ')}</div>` : ''}</td><td>${(category.evidence || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ') || 'none'}</td><td>${escapeHtml(category.nextAction || '')}</td></tr>`).join('\n')}
       </tbody>
     </table>
   </section>`
@@ -7003,9 +7011,9 @@ function renderFirstBiteOperatingReadout(readout) {
       <div>Next action</div><div>${escapeHtml(readout.nextAction || '')}</div>
     </div>
     <table>
-      <thead><tr><th>Failed lane</th><th>Repo</th><th>Kind</th><th>Status</th><th>Run</th><th>Log</th></tr></thead>
+      <thead><tr><th>Failed lane</th><th>Repo</th><th>Kind</th><th>Status</th><th>Reason</th><th>Run</th><th>Log</th></tr></thead>
       <tbody>
-        ${failedLanes.length === 0 ? '<tr><td colspan="6">No failed lanes in the latest operating readout.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td>${escapeHtml(lane.repo || '')}</td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
+        ${failedLanes.length === 0 ? '<tr><td colspan="7">No failed lanes in the latest operating readout.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td>${escapeHtml(lane.repo || '')}</td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td>${escapeHtml(lane.reason || lane.diagnostics?.summary || '')}</td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
       </tbody>
     </table>`
 }

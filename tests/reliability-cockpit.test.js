@@ -812,6 +812,11 @@ test('inspectLaneLog classifies publish grace and live smoke failures', () => {
   const warned = inspectLaneLog(warnLog, { kind: 'integration', status: 'warn', reason: 'command exited with expected yellow code 1' })
   assert.equal(warned.status, 'yellow')
   assert.match(warned.summary, /expected yellow code 1/)
+  const trustLog = path.join(dir, 'trust-preflight.log')
+  fs.writeFileSync(trustLog, 'trust-preflight: status=red; commands 8 green, 3 yellow, 0 red; cockpit=RED - missing required trust contract\n')
+  const trustDiagnostic = inspectLaneLog(trustLog, { kind: 'integration', status: 'fail' })
+  assert.equal(trustDiagnostic.status, 'red')
+  assert.match(trustDiagnostic.summary, /missing required trust contract/)
   const publishJsonLog = path.join(dir, 'publish-json.log')
   fs.writeFileSync(publishJsonLog, '[FX_PUBLISH] {"error":"cloudflare latest date expected 2026-05-25, got 2026-05-24"}\nsmoke-check-deploy: FAILED\n')
   assert.equal(inspectLaneLog(publishJsonLog).summary, 'Error: cloudflare latest date expected 2026-05-25, got 2026-05-24')
@@ -1523,6 +1528,68 @@ test('inspectFirstBiteOperatingReadout surfaces fleet readiness without hiding n
   assert.match(readout.summary, /17\/18 lane proof/)
   assert.match(readout.summary, /active_ready=false/)
   assert.match(readout.summary, /M4 peer support-only/)
+})
+
+test('inspectFirstBiteOperatingReadout preserves failed lane log diagnostics for taxonomy', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-readout-diagnostic-'))
+  const runDir = path.join(root, 'trust-red')
+  fs.mkdirSync(runDir, { recursive: true })
+  const logPath = path.join(runDir, 'trust-preflight.log')
+  const reportPath = path.join(runDir, 'report.json')
+  const laneReportPath = path.join(runDir, 'firstbite-report.json')
+  fs.writeFileSync(logPath, [
+    'expected_exit_codes=0,1',
+    'yellow_exit_codes=1',
+    'trust-preflight: status=red; commands 8 green, 3 yellow, 0 red; cockpit=RED - missing required trust contract',
+    '===== FINAL SUMMARY =====',
+    'rc=2',
+  ].join('\n'))
+  fs.writeFileSync(reportPath, JSON.stringify({
+    run_id: 'trust-red',
+    created_at: '2026-05-25T19:00:00Z',
+    local_ci: {
+      latest_lane_count: 1,
+      latest_lane_pass_count: 0,
+      latest_lane_fail_count: 1,
+      catalog: {
+        catalog_version: 'repo-manifest-v2',
+        lane_count: 1,
+        declared_count: 1,
+        repo_keys: ['resplit_currency_api'],
+        lane_keys: ['resplit_currency_api_trust_preflight'],
+        manifest_portability: {
+          fresh_clone_ready: true,
+          ready: true,
+        },
+      },
+      latest_lane_proof: [{
+        lane: 'resplit_currency_api_trust_preflight',
+        repo: 'resplit_currency_api',
+        kind: 'integration',
+        status: 'fail',
+        run_id: 'trust-red',
+        report_path: laneReportPath,
+        log_path: logPath,
+      }],
+    },
+  }, null, 2))
+
+  const readout = inspectFirstBiteOperatingReadout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    generatedAt: '2026-05-25T19:05:00Z',
+  })
+  const taxonomy = buildLocalCiFindingTaxonomy({
+    expectedRepo: 'resplit_currency_api',
+    localCi: { operatingReadout: readout },
+  })
+  const proofGap = taxonomy.categories.find(category => category.id === 'proof-gap')
+
+  assert.equal(readout.status, 'red')
+  assert.equal(readout.failedLanes[0].diagnostics.status, 'red')
+  assert.match(readout.failedLanes[0].reason, /missing required trust contract/)
+  assert.match(proofGap.laneFindings[0].reason, /trust-preflight: status=red/)
+  assert.doesNotMatch(proofGap.laneFindings[0].reason, /rc unknown/)
 })
 
 test('inspectFirstBiteOperatingReadout prefers current repo-path reports over newer fleet readouts', () => {

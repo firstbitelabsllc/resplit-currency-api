@@ -143,6 +143,22 @@ test('verifyCockpitReport fails when loaded MCP path binding disappears', () => 
   assert.match(result.report.failures.join('\n'), /loaded MCP live capture contract does not record repo path match status/)
 })
 
+test('verifyCockpitReport fails when trust preflight proof gap reason is opaque', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-opaque-trust-reason-'))
+  const report = buildReport()
+  const proofGap = report.localCi.findingTaxonomy.categories.find(category => category.id === 'proof-gap')
+  proofGap.laneFindings[0].reason = 'rc unknown'
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /trust_preflight proof gap reason is missing or opaque/)
+})
+
 test('verifyCockpitReport fails when loaded MCP operator proof drops repo path binding', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-loaded-proof-path-'))
   const report = buildReport()
@@ -302,7 +318,7 @@ function buildReport() {
               repo: 'resplit_currency_api',
               runId: 'trust-red',
               reportPath: '/tmp/firstbite/report.json',
-              reason: 'command exited with code 2',
+              reason: 'trust-preflight: status=red; commands 8 green, 3 yellow, 0 red; cockpit=RED - missing required trust contract',
               kind: 'proof-gap',
             }],
             actionIds: ['grafana-otel-proof'],
@@ -503,6 +519,7 @@ function buildHtml(report) {
     ...report.localCi.findingTaxonomy.categories.flatMap(category => [
       category.id,
       category.summary,
+      ...(category.laneFindings || []).map(finding => finding.reason),
     ]),
   ].join('\n')
 }

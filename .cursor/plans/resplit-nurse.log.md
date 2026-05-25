@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 16:01 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI found the right class of issue, and the cockpit now preserves the exact failed-lane diagnostic instead of collapsing the FirstBite trust-preflight failure into `rc unknown`.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now parses `trust-preflight: status=...` lines from failed lane logs, stores `reason` plus `diagnostics` on operating-readout failed lanes, and renders the reason in both the Local CI Finding Taxonomy and FirstBite Operating Readout tables. `scripts/verify-reliability-cockpit-report.js` now fails if the `resplit_currency_api_trust_preflight` proof-gap reason is missing, opaque, or omitted from the HTML. Tests cover log parsing, operating-readout taxonomy propagation, and verifier regression.
+- Fresh proof:
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `97/97` focused cockpit/verifier tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated report HEAD matches the current checkout and the real proof-gap reason is `trust-preflight: status=red; commands 8 green, 3 yellow, 0 red; cockpit=RED - missing required trust contract`.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `107/107` cockpit/verifier/completion tests passed.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `npm run check` -> generate green, strict release validation green, and `284/284` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this still does not restart/reload Codex/Cursor, prove the loaded MCP host is bound to this PR worktree, pass `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the GUI answer Leo's local-CI question cleanly: the current red is a launch-trust proof gap with an explicit cockpit contract failure, not a hidden product-lane failure.
+- Exact next slice: commit/push this diagnostic-contract hardening, regenerate the cockpit at the new commit HEAD, run a fresh PR-scoped operating readout so the fleet evidence is not stale, then continue down the local-CI trust rows without mixing loaded-host, clean-source, and external observability gates.
+
 ## 2026-05-25 15:47 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI found a loaded-host trust issue and the cockpit now repeats the checkout-path requirement at the operator level, not only inside the probe JSON: recovery claim, action queue, launch audit, proof acceptance matrix, and verifier all require the loaded `resplit_currency_api` repo path to match the current proof repo path.

@@ -221,6 +221,14 @@ function verifyJsonContract(cockpit) {
     if (proof && !/trust_preflight|Cloudflare|Grafana|proof/i.test(JSON.stringify(proof))) {
       failures.push('local CI finding taxonomy proof-gap row does not name launch proof evidence')
     }
+    const trustPreflightFindings = (proof?.laneFindings || [])
+      .filter(finding => /resplit_currency_api_trust_preflight/.test(String(finding.lane || '')))
+    for (const finding of trustPreflightFindings) {
+      const reason = String(finding.reason || '').trim()
+      if (!reason || /^(rc unknown|rc \d+|command exited(?: with)? code \d+)$/i.test(reason)) {
+        failures.push('local CI finding taxonomy trust_preflight proof gap reason is missing or opaque')
+      }
+    }
   }
   const operatingReadoutScopeContract = cockpit.localCi?.operatingReadoutScopeContract
   if (operatingReadoutScopeContract) {
@@ -479,6 +487,11 @@ function verifyHtmlContract({ cockpit, html }) {
       }
       if (category.summary && !html.includes(escapeForHtmlText(category.summary))) {
         failures.push(`HTML missing local CI finding taxonomy summary: ${category.id}`)
+      }
+      for (const finding of category.laneFindings || []) {
+        if (finding.reason && !html.includes(escapeForHtmlText(finding.reason))) {
+          failures.push(`HTML missing local CI finding taxonomy lane reason: ${finding.lane || category.id}`)
+        }
       }
     }
   }
