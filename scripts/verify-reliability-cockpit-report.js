@@ -50,6 +50,15 @@ const REQUIRED_HTML_LABELS = [
   'Grafana OTEL Smoke',
   'Observability Proof Chain Contract',
 ]
+const REQUIRED_MCP_REFRESH_PLAN_SAFETY = {
+  readOnly: true,
+  killsProcesses: false,
+  restartsApps: false,
+  runsCi: false,
+  mutatesRepos: false,
+  postsSlack: false,
+  secretsIncluded: false,
+}
 
 if (require.main === module) {
   try {
@@ -184,6 +193,21 @@ function verifyJsonContract(cockpit) {
   const mcpRefreshPlan = cockpit.localCi?.mcpRefreshPlan
   const mcpCatalogDelta = cockpit.localCi?.mcpCatalogDelta
   if (mcpRefreshPlan?.status && mcpCatalogDelta?.status) {
+    const safety = mcpRefreshPlan.safety || {}
+    for (const [key, expectedValue] of Object.entries(REQUIRED_MCP_REFRESH_PLAN_SAFETY)) {
+      if (safety[key] !== expectedValue) {
+        failures.push(`MCP refresh plan safety contract ${key} must be ${expectedValue}`)
+      }
+    }
+    for (const command of mcpRefreshPlan.continuationCommands || []) {
+      const label = command.label || 'unnamed'
+      if (!command.runOn) {
+        failures.push(`MCP refresh plan continuation command is missing run target: ${label}`)
+      }
+      if (!command.safety) {
+        failures.push(`MCP refresh plan continuation command is missing safety note: ${label}`)
+      }
+    }
     const refreshRepoBackedLaneCount = numberOrNull(
       mcpRefreshPlan.repoBackedCatalog?.lane_count
       ?? mcpRefreshPlan.repoBackedCatalog?.laneCount,
@@ -531,9 +555,21 @@ function verifyHtmlContract({ cockpit, html }) {
     if (mcpRefreshPlan.summary && !html.includes(escapeForHtmlText(mcpRefreshPlan.summary))) {
       failures.push('HTML missing MCP refresh plan summary')
     }
+    for (const [key, expectedValue] of Object.entries(REQUIRED_MCP_REFRESH_PLAN_SAFETY)) {
+      const safetyText = `${key}=${expectedValue}`
+      if (!html.includes(escapeForHtmlText(safetyText))) {
+        failures.push(`HTML missing MCP refresh plan safety flag: ${safetyText}`)
+      }
+    }
     for (const command of mcpRefreshPlan.continuationCommands || []) {
       if (command.label && !html.includes(escapeForHtmlText(command.label))) {
         failures.push(`HTML missing MCP refresh plan command label: ${command.label}`)
+      }
+      if (command.runOn && !html.includes(escapeForHtmlText(command.runOn))) {
+        failures.push(`HTML missing MCP refresh plan command run target: ${command.label || 'unnamed'}`)
+      }
+      if (command.safety && !html.includes(escapeForHtmlText(command.safety))) {
+        failures.push(`HTML missing MCP refresh plan command safety note: ${command.label || 'unnamed'}`)
       }
       if (command.command && !html.includes(escapeForHtmlText(command.command))) {
         failures.push(`HTML missing MCP refresh plan command: ${command.label || 'unnamed'}`)

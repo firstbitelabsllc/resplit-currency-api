@@ -177,6 +177,58 @@ test('verifyCockpitReport fails when MCP refresh continuation proof names the wr
   assert.match(result.report.failures.join('\n'), /MCP refresh plan continuation command has stale lane_count proof: expectedProof 15, refresh plan 37/)
 })
 
+test('verifyCockpitReport fails when MCP refresh plan safety contract weakens', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-unsafe-mcp-refresh-'))
+  const report = buildReport()
+  report.localCi.mcpRefreshPlan.safety.killsProcesses = true
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /MCP refresh plan safety contract killsProcesses must be false/)
+})
+
+test('verifyCockpitReport fails when MCP refresh continuation command loses handoff metadata', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-mcp-refresh-handoff-'))
+  const report = buildReport()
+  delete report.localCi.mcpRefreshPlan.continuationCommands[0].runOn
+  delete report.localCi.mcpRefreshPlan.continuationCommands[0].safety
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /MCP refresh plan continuation command is missing run target: Prove repo-backed MCP catalog/)
+  assert.match(result.report.failures.join('\n'), /MCP refresh plan continuation command is missing safety note: Prove repo-backed MCP catalog/)
+})
+
+test('verifyCockpitReport fails when MCP refresh safety or run target disappears from HTML', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-mcp-refresh-safety-html-'))
+  const report = buildReport()
+  const html = buildHtml(report)
+    .replace('killsProcesses=false', 'killsProcesses=unknown')
+    .replace('current executor Mac', 'some machine')
+    .replace('read-only local CI catalog probe', 'unknown safety')
+  writeReport(repoDir, report, html)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /HTML missing MCP refresh plan safety flag: killsProcesses=false/)
+  assert.match(result.report.failures.join('\n'), /HTML missing MCP refresh plan command run target: Prove repo-backed MCP catalog/)
+  assert.match(result.report.failures.join('\n'), /HTML missing MCP refresh plan command safety note: Prove repo-backed MCP catalog/)
+})
+
 test('verifyCockpitReport fails when MCP refresh continuation proof disappears from HTML', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-mcp-refresh-html-'))
   const report = buildReport()
@@ -325,6 +377,15 @@ function buildReport() {
       mcpRefreshPlan: {
         status: 'red',
         summary: 'Loaded MCP clients need a host-app restart before they can be trusted.',
+        safety: {
+          readOnly: true,
+          killsProcesses: false,
+          restartsApps: false,
+          runsCi: false,
+          mutatesRepos: false,
+          postsSlack: false,
+          secretsIncluded: false,
+        },
         repoBackedCatalog: {
           catalog_version: 'repo-manifest-v2',
           lane_count: 37,
@@ -332,8 +393,10 @@ function buildReport() {
         },
         continuationCommands: [{
           label: 'Prove repo-backed MCP catalog',
+          runOn: 'current executor Mac',
           command: 'mcp__firstbite_local_ci.list_lanes {}',
           expectedProof: 'catalog_version=repo-manifest-v2 and lane_count=37',
+          safety: 'read-only local CI catalog probe',
         }],
       },
       loadedMcpCaptureContract: {
@@ -637,10 +700,13 @@ function buildHtml(report) {
     ...report.localCi.operatingReadoutScopeContract.acceptedProof,
     ...report.localCi.operatingReadoutScopeContract.rejectedProof,
     report.localCi.mcpRefreshPlan.summary,
+    ...Object.entries(report.localCi.mcpRefreshPlan.safety).map(([key, value]) => `${key}=${value}`),
     ...report.localCi.mcpRefreshPlan.continuationCommands.flatMap(command => [
       command.label,
+      command.runOn,
       command.command,
       command.expectedProof,
+      command.safety,
     ]),
     'Local CI Finding Taxonomy',
     ...report.localCi.findingTaxonomy.categories.flatMap(category => [

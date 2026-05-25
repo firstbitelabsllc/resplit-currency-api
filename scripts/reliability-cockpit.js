@@ -7438,6 +7438,7 @@ function renderFirstBiteMcpRefreshPlan(plan) {
   const continuationProofDrift = (plan.continuationProofDrift || []).length > 0
     ? plan.continuationProofDrift.map(row => `${row.label}: expected ${row.expectedLaneCount}, catalog ${row.catalogLaneCount}`).join('; ')
     : 'none'
+  const safety = formatFirstBiteMcpRefreshPlanSafety(plan.safety || {})
   const steps = (plan.recommendedSteps || []).slice(0, 5)
   const continuationCommands = plan.continuationCommands || []
 
@@ -7452,6 +7453,7 @@ function renderFirstBiteMcpRefreshPlan(plan) {
       <div>Repo-backed catalog</div><div>${escapeHtml(plan.repoBackedCatalog?.catalog_version || 'unknown')} · ${escapeHtml(String(plan.repoBackedCatalog?.declared_count ?? 'unknown'))}/${escapeHtml(String(plan.repoBackedCatalog?.lane_count ?? 'unknown'))} declared lane(s)</div>
       <div>Missing current manifest lanes</div><div><code>${escapeHtml(missingExpected)}</code></div>
       <div>Continuation proof drift</div><div><code>${escapeHtml(continuationProofDrift)}</code></div>
+      <div>Safety</div><div><code>${escapeHtml(safety)}</code></div>
       <div>Report</div><div><code>${escapeHtml(plan.reportPath || 'missing')}</code></div>
       <div>Summary</div><div><code>${escapeHtml(plan.summaryPath || 'missing')}</code></div>
       <div>Next action</div><div>${escapeHtml(plan.nextAction || '')}</div>
@@ -7464,6 +7466,18 @@ function renderFirstBiteMcpRefreshPlan(plan) {
         ${continuationCommands.map(command => `<tr><td><code>${escapeHtml(command.label || 'unnamed')}</code><div class="meta"><code>${escapeHtml(command.command || '')}</code></div></td><td>${escapeHtml(command.runOn || 'unknown')}</td><td>${escapeHtml(command.safety || 'unknown')}</td><td>${escapeHtml(command.expectedProof || '')}</td></tr>`).join('\n')}
       </tbody>
     </table>` : '<p class="meta">No continuation commands recorded.</p>'}`
+}
+
+function formatFirstBiteMcpRefreshPlanSafety(safety = {}) {
+  return [
+    'readOnly',
+    'killsProcesses',
+    'restartsApps',
+    'runsCi',
+    'mutatesRepos',
+    'postsSlack',
+    'secretsIncluded',
+  ].map(key => `${key}=${safety[key] === undefined ? 'unknown' : String(safety[key])}`).join(', ')
 }
 
 function renderLoadedMcpCaptureContract(contract) {

@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 17:42 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI is now better aligned with the Vidux cockpit plan: the FirstBite MCP refresh plan cannot lose its read-only safety contract or its machine/owner handoff fields without failing verification.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` renders a top-level MCP refresh-plan `Safety` row (`readOnly=true`, `killsProcesses=false`, `restartsApps=false`, `runsCi=false`, `mutatesRepos=false`, `postsSlack=false`, `secretsIncluded=false`). `scripts/verify-reliability-cockpit-report.js` now rejects weakened safety flags, missing continuation-command run targets, missing continuation-command safety notes, and generated HTML that hides those fields. `tests/verify-reliability-cockpit-report.test.js` adds regressions for all three failure modes.
+- Fresh proof:
+  - `node --test tests/verify-reliability-cockpit-report.test.js` -> `20/20` tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `107/107` tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated cockpit report HEAD matches the current checkout and includes the MCP refresh safety contract.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `122/122` tests passed.
+  - `npm run check` -> generate green, strict release validation green, and `296/296` tests passed.
+- Boundary: this still does not restart/reload Codex/Cursor, clear `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the GUI safer for the local-CI handoff by distinguishing read-only proofs from host-app restart work and preventing an unsafe refresh instruction from looking valid.
+- Exact next slice: commit/push this MCP refresh safety contract, prove stale cockpit detection fires after the commit HEAD changes, regenerate cockpit at the new commit HEAD, then rerun current-source FirstBite proof/readout for that head before moving to loaded-host recapture or external observability.
+
 ## 2026-05-25 17:30 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The MCP refresh-plan consistency check is now visible in the operator GUI, not only machine-checked in JSON.
