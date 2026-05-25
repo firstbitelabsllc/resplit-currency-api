@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 16:37 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. After the `origin/main` merge commit, I reran current-source FirstBite proof at `01ca2b31c6bd` and refreshed the PR-scoped operating readout. Local CI now proves `4/4` FX lane proof rows came from the current merge commit; the only current FX lane failure is `resplit_currency_api_trust_preflight`.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` no longer tells the operator to rerun current-source lane proof when the `lane-proof-source` row is already green. The row now says current-source proof is present and directs the operator to fix non-green lane results, with a test covering that green-state copy.
+- Fresh proof:
+  - `cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 npm run --silent call -- run_lanes '{"mode":"execute","group":"resplit_currency_api_all","worktree":true,"source_ref":"01ca2b31c6bd","run_id":"verify-resplit-currency-api-current-source-01ca2b31c6bd-20260525"}'` -> `overall=fail`; `resplit_currency_api_unit`, `resplit_currency_api_integration`, and `resplit_currency_api_ui` passed; `resplit_currency_api_trust_preflight` failed red with `trust-preflight: status=red; commands 11 green, 3 yellow, 1 red; cockpit=RED - missing required trust contract`.
+  - `RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh --run-id fx-pr-worktree-20260525-1636` -> report `/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-pr-worktree-20260525-1636/report.json`; `declared_lanes=16/16`, `local_ci=15/19 pass fail=4`.
+  - Regenerated cockpit: `operatingReadoutScopeContract.rows[lane-proof-source].status=green`; proof is `4/4 expected lane proof(s) match current HEAD 01ca2b31c6bd`; next action is now `Current-source lane proof is present; fix any non-green lane result before treating local CI as launch-ready, and rerun this proof after the source HEAD changes.`
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `108/108` tests passed.
+  - `npm run reliability:cockpit:verify` -> green; generated report HEAD matches `01ca2b31c6bd`.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `npm run check` -> generate green, strict release validation green, and `285/285` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this does not clear launch trust. It proves the local-CI GUI is now current-source aligned after the merge and exposes the true remaining FX lane failure without telling operators to rerun already-current proof. Loaded MCP host recapture, clean landed-source FirstBite, M4 peer execution, Cloudflare destination read, and non-skipped Grafana smoke remain separate proof gates.
+- Exact next slice: fix or further decompose the current-source `resplit_currency_api_trust_preflight` red lane, starting with the completion-audit/source-contract blockers, while keeping docs-only Grafana proof and loaded-host proof separate.
+
 ## 2026-05-25 16:31 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. `origin/main` advanced to `179a3f7455c` via PR #11 (`feat: prove resplit fx grafana otel`) while this PR was open, and GitHub correctly marked PR #10 dirty. I merged main into the PR worktree and resolved the trust-preflight/Wrangler conflicts without weakening the local-CI/current-source contracts.

@@ -1470,7 +1470,9 @@ function buildOperatingReadoutScopeContract({
       proof: laneProofSourceStatus === 'green'
         ? `${currentLaneProofCount}/${laneProofExpectedCount} expected lane proof(s) match current HEAD ${currentRepoHead || 'missing'}`
         : `${currentLaneProofCount}/${laneProofExpectedCount} expected lane proof(s) match current HEAD ${currentRepoHead || 'missing'}${laneProofSourceGaps.length ? `; non-current ${laneProofSourceGaps.join(', ')}` : ''}`,
-      nextAction: `Run current-source FirstBite lane proof before using latest_lane_proof as launch evidence. Run: ${laneProofCommand}; then refresh the readout with: ${scopedCommand}`,
+      nextAction: laneProofSourceStatus === 'green'
+        ? 'Current-source lane proof is present; fix any non-green lane result before treating local CI as launch-ready, and rerun this proof after the source HEAD changes.'
+        : `Run current-source FirstBite lane proof before using latest_lane_proof as launch evidence. Run: ${laneProofCommand}; then refresh the readout with: ${scopedCommand}`,
     }),
     operatingReadoutScopeRow({
       id: 'proof-only-lanes',
