@@ -2,6 +2,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 const {
   REPORT_BASENAME,
 } = require('./reliability-cockpit.js')
@@ -33,6 +34,9 @@ if (require.main === module) {
     } else {
       process.stdout.write(`completion-audit: ${result.report.status} ${result.report.summary}\n`)
       process.stdout.write(`completion-audit: cockpit ${result.report.cockpitPath}\n`)
+      if (result.report.reportFreshness.status !== 'green') {
+        process.stdout.write(`- report-freshness [${result.report.reportFreshness.status}] ${result.report.reportFreshness.summary}\n`)
+      }
       for (const blocker of result.report.blockers.slice(0, 8)) {
         process.stdout.write(`- ${blocker.id} [${blocker.status}] ${blocker.nextAction}\n`)
       }
@@ -63,6 +67,7 @@ function auditCockpitCompletion(argv, deps = {}) {
     cockpit,
     cockpitPath,
     checkedAt: deps.now ? deps.now() : new Date().toISOString(),
+    currentRepoState: deps.repoState || getCurrentRepoState(repoDir),
   })
 
   return { options, report }
@@ -102,12 +107,13 @@ function parseArgs(argv) {
   return options
 }
 
-function buildCompletionAudit({ cockpit, cockpitPath, checkedAt }) {
+function buildCompletionAudit({ cockpit, cockpitPath, checkedAt, currentRepoState = null }) {
   const launchAudit = cockpit?.trustModel?.launchTrustAudit || {}
   const rows = Array.isArray(launchAudit.rows) ? launchAudit.rows : []
   const proofAcceptanceMatrix = cockpit?.trustModel?.proofAcceptanceMatrix || {}
   const proofRows = Array.isArray(proofAcceptanceMatrix.rows) ? proofAcceptanceMatrix.rows : []
   const contracts = Array.isArray(cockpit?.trustModel?.contracts) ? cockpit.trustModel.contracts : []
+  const reportFreshness = buildReportFreshness(cockpit, currentRepoState)
   const rowById = new Map(rows.map(row => [row.id, row]))
   const proofRowById = new Map(proofRows.map(row => [row.id, row]))
   const missingRows = EXPECTED_LAUNCH_AUDIT_IDS.filter(id => !rowById.has(id))
@@ -118,6 +124,7 @@ function buildCompletionAudit({ cockpit, cockpitPath, checkedAt }) {
   const launchBoundaryBlockerCount = incompleteRows.length + missingRows.length
   const proofBoundaryBlockerCount = incompleteProofRows.length + missingProofRows.length
   const failures = [
+    ...(reportFreshness.status === 'green' ? [] : [`cockpit report freshness: ${reportFreshness.summary}`]),
     ...missingRows.map(id => `missing launch audit row: ${id}`),
     ...incompleteRows.map(row => `${row.id}: ${row.status || 'missing'} (${row.surface || 'unknown surface'})`),
     ...missingProofRows.map(id => `missing proof acceptance row: ${id}`),
@@ -125,6 +132,7 @@ function buildCompletionAudit({ cockpit, cockpitPath, checkedAt }) {
     ...nonGreenContracts.map(contract => `${contract.gate}: ${contract.status || 'missing'}`),
   ]
   const status = cockpit?.verdict?.status === 'green'
+    && reportFreshness.status === 'green'
     && launchAudit.status === 'green'
     && proofAcceptanceMatrix.status === 'green'
     && missingRows.length === 0
@@ -140,9 +148,10 @@ function buildCompletionAudit({ cockpit, cockpitPath, checkedAt }) {
     status,
     summary: status === 'green'
       ? `Launch completion audit is green: ${rows.length} launch boundary(s), ${proofRows.length} proof boundary(s), and ${contracts.length} trust contract(s) are claim-allowed.`
-      : `Launch completion blocked: ${launchBoundaryBlockerCount} non-green/missing launch boundary(s), ${proofBoundaryBlockerCount} non-green/missing proof boundary(s), ${nonGreenContracts.length} non-green trust contract(s).`,
+      : `Launch completion blocked: ${reportFreshness.status === 'green' ? 0 : 1} stale/missing cockpit report(s), ${launchBoundaryBlockerCount} non-green/missing launch boundary(s), ${proofBoundaryBlockerCount} non-green/missing proof boundary(s), ${nonGreenContracts.length} non-green trust contract(s).`,
     cockpitPath,
     cockpitVerdict: cockpit?.verdict || null,
+    reportFreshness,
     launchTrustAudit: {
       status: launchAudit.status || 'missing',
       summary: launchAudit.summary || 'Launch Trust Audit section is missing or incomplete.',
@@ -191,6 +200,72 @@ function buildCompletionAudit({ cockpit, cockpitPath, checkedAt }) {
   }
 }
 
+function buildReportFreshness(cockpit, currentRepoState = null) {
+  const reportGit = cockpit?.repo?.git || {}
+  const reportHead = normalizeShortSha(reportGit.head)
+  const currentHead = normalizeShortSha(currentRepoState?.head)
+  const reportBranch = reportGit.branch || null
+  const currentBranch = currentRepoState?.branch || null
+
+  if (!reportHead || !currentHead) {
+    return {
+      status: 'red',
+      summary: `Cockpit report head is not comparable: report ${reportHead || 'missing'}, current ${currentHead || 'missing'}. Regenerate reports before launch claims.`,
+      reportHead,
+      currentHead,
+      reportBranch,
+      currentBranch,
+      generatedAt: cockpit?.generatedAt || null,
+    }
+  }
+
+  if (reportHead !== currentHead) {
+    return {
+      status: 'red',
+      summary: `Cockpit report is stale: report HEAD ${reportHead}, current HEAD ${currentHead}. Run npm run reliability:cockpit before using completion proof.`,
+      reportHead,
+      currentHead,
+      reportBranch,
+      currentBranch,
+      generatedAt: cockpit?.generatedAt || null,
+    }
+  }
+
+  return {
+    status: 'green',
+    summary: `Cockpit report matches current checkout HEAD ${currentHead}.`,
+    reportHead,
+    currentHead,
+    reportBranch,
+    currentBranch,
+    generatedAt: cockpit?.generatedAt || null,
+  }
+}
+
+function getCurrentRepoState(repoDir) {
+  return {
+    head: gitOutput(repoDir, ['rev-parse', '--short=12', 'HEAD']),
+    branch: gitOutput(repoDir, ['rev-parse', '--abbrev-ref', 'HEAD']),
+  }
+}
+
+function gitOutput(repoDir, args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: repoDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  } catch {
+    return null
+  }
+}
+
+function normalizeShortSha(value) {
+  const text = String(value || '').trim()
+  return /^[0-9a-f]{7,40}$/i.test(text) ? text.slice(0, 12) : ''
+}
+
 function readRequiredText(filePath, readFile) {
   try {
     return readFile(filePath, 'utf8')
@@ -221,5 +296,6 @@ module.exports = {
   EXPECTED_PROOF_ACCEPTANCE_IDS,
   auditCockpitCompletion,
   buildCompletionAudit,
+  buildReportFreshness,
   parseArgs,
 }

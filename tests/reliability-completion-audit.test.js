@@ -9,6 +9,7 @@ const {
   EXPECTED_PROOF_ACCEPTANCE_IDS,
   auditCockpitCompletion,
   buildCompletionAudit,
+  buildReportFreshness,
   parseArgs,
 } = require('../scripts/reliability-completion-audit.js')
 
@@ -23,14 +24,34 @@ test('buildCompletionAudit passes only when every launch boundary, proof boundar
   const report = buildCompletionAudit({
     checkedAt: '2026-05-25T15:00:00.000Z',
     cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    currentRepoState: matchingRepoState(),
     cockpit: buildCockpit(),
   })
 
   assert.equal(report.status, 'green')
   assert.match(report.summary, /Launch completion audit is green/)
+  assert.equal(report.reportFreshness.status, 'green')
   assert.equal(report.blockers.length, 0)
   assert.equal(report.proofBlockers.length, 0)
   assert.equal(report.nonGreenContracts.length, 0)
+})
+
+test('buildCompletionAudit blocks stale generated cockpit reports', () => {
+  const cockpit = buildCockpit()
+  cockpit.repo.git.head = '111111111111'
+
+  const report = buildCompletionAudit({
+    checkedAt: '2026-05-25T15:00:00.000Z',
+    cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    currentRepoState: { head: '222222222222', branch: 'codex/fx-otel-grafana-config-20260525' },
+    cockpit,
+  })
+
+  assert.equal(report.status, 'red')
+  assert.equal(report.reportFreshness.status, 'red')
+  assert.match(report.reportFreshness.summary, /Cockpit report is stale/)
+  assert.match(report.failures.join('\n'), /cockpit report freshness/)
+  assert.match(report.summary, /1 stale\/missing cockpit report/)
 })
 
 test('buildCompletionAudit blocks launch trust when loaded host and Grafana proof are not green', () => {
@@ -68,6 +89,7 @@ test('buildCompletionAudit blocks launch trust when loaded host and Grafana proo
   const report = buildCompletionAudit({
     checkedAt: '2026-05-25T15:00:00.000Z',
     cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    currentRepoState: matchingRepoState(),
     cockpit,
   })
 
@@ -89,6 +111,7 @@ test('auditCockpitCompletion reads the report from disk', () => {
 
   const result = auditCockpitCompletion(['--repo', repoDir], {
     now: () => '2026-05-25T15:00:00.000Z',
+    repoState: { head: '23cae94d3d40', branch: 'codex/fx-otel-grafana-config-20260525' },
   })
 
   assert.equal(result.report.status, 'green')
@@ -104,6 +127,7 @@ test('buildCompletionAudit treats missing launch audit rows as launch-blocking',
   const report = buildCompletionAudit({
     checkedAt: '2026-05-25T15:00:00.000Z',
     cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    currentRepoState: matchingRepoState(),
     cockpit,
   })
 
@@ -121,6 +145,7 @@ test('buildCompletionAudit treats missing proof acceptance rows as launch-blocki
   const report = buildCompletionAudit({
     checkedAt: '2026-05-25T15:00:00.000Z',
     cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    currentRepoState: matchingRepoState(),
     cockpit,
   })
 
@@ -144,6 +169,7 @@ test('buildCompletionAudit blocks completion when only the proof matrix is red',
   const report = buildCompletionAudit({
     checkedAt: '2026-05-25T15:00:00.000Z',
     cockpitPath: '/tmp/reports/resplit-fx-reliability-cockpit.json',
+    currentRepoState: matchingRepoState(),
     cockpit,
   })
 
@@ -154,8 +180,36 @@ test('buildCompletionAudit blocks completion when only the proof matrix is red',
   assert.match(report.summary, /1 non-green\/missing proof boundary/)
 })
 
+test('buildReportFreshness accepts matching short or full checkout SHAs', () => {
+  const reportFreshness = buildReportFreshness(buildCockpit(), {
+    head: '23cae94d3d405135a24d891dc9ed28ffa270ef51',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+  })
+
+  assert.equal(reportFreshness.status, 'green')
+  assert.equal(reportFreshness.reportHead, '23cae94d3d40')
+  assert.equal(reportFreshness.currentHead, '23cae94d3d40')
+})
+
+test('buildReportFreshness rejects missing git state', () => {
+  const reportFreshness = buildReportFreshness(buildCockpit(), {
+    head: null,
+    branch: null,
+  })
+
+  assert.equal(reportFreshness.status, 'red')
+  assert.match(reportFreshness.summary, /not comparable/)
+})
+
 function buildCockpit() {
   return {
+    generatedAt: '2026-05-25T15:00:00.000Z',
+    repo: {
+      git: {
+        head: '23cae94d3d40',
+        branch: 'codex/fx-otel-grafana-config-20260525',
+      },
+    },
     verdict: {
       status: 'green',
       label: 'GREEN - current local trust gates are declared and proven',
@@ -230,4 +284,11 @@ function setAuditRow(cockpit, id, patch) {
 function setProofRow(cockpit, id, patch) {
   const row = cockpit.trustModel.proofAcceptanceMatrix.rows.find(candidate => candidate.id === id)
   Object.assign(row, patch)
+}
+
+function matchingRepoState() {
+  return {
+    head: '23cae94d3d40',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+  }
 }
