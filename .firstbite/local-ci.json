@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "repo": "resplit_currency_api",
+  "display": "Resplit FX",
+  "localCi": {
+    "owner": "repo",
+    "lanes": {
+      "resplit_currency_api_unit": {
+        "kind": "unit",
+        "command": "npm ci && npm run test",
+        "timeoutMs": 1200000
+      },
+      "resplit_currency_api_integration": {
+        "kind": "integration",
+        "command": "npm ci && SKIP_WORKER_SMOKE_CHECK=1 npm run smoke:deploy",
+        "timeoutMs": 900000,
+        "note": "Read-only smoke against deployed static package endpoints; skips Worker runtime health by default."
+      },
+      "resplit_currency_api_ui": {
+        "kind": "ui",
+        "command": "npm ci && node --test tests/fx-worker-routes.test.js tests/fx-worker-canary.test.js",
+        "timeoutMs": 1200000,
+        "note": "Local Worker route/canary smoke; this repo has no browser UI surface."
+      }
+    }
+  }
+}
