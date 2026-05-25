@@ -1,5 +1,22 @@
 # Resplit Nurse Log
 
+## 2026-05-25 11:30 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but loaded-MCP evidence freshness is now freshly captured and no longer masks the real host-reload blocker.
+- Shipped delta pending source promotion: `tests/reliability-cockpit.test.js` now covers the post-recapture state where the loaded MCP probe is fresh/green for evidence freshness but still red for catalog trust. The operator queue must not re-add `loaded-mcp-recapture`; it must keep only `loaded-mcp-refresh` blocked on Codex/Cursor host reload.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the current Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`.
+  - `node scripts/capture-loaded-mcp-probe.js --repo /Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525` with the live tool output -> `reports/firstbite-loaded-mcp-lanes.json`; freshness green (`0m old`), catalog red (`repo missing`, `4/4` expected FX lanes missing).
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> cockpit report contract green: `11` gate(s), `5` action(s), generated HTML sections present; loaded-MCP actions now contain only `loaded-mcp-refresh` with `canRunNow=false`.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run check` -> strict release validation green and `250/250` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `1`, hold-by-default `10`, command drift `2`; generated `reports/` remain hold-by-default.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+  - `node --test tests/reliability-cockpit.test.js` -> `64/64` focused cockpit tests green.
+- Boundary: this does not reload the MCP host, prove loaded-agent execution, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It proves the current loaded host is freshly inspected and still stale.
+- Exact next slice: push this regression guard, then restart/reload Codex/Cursor FirstBite MCP host and capture a new live `list_lanes` artifact before trusting loaded-agent execution.
+
 ## 2026-05-25 11:23 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, and the cockpit now separates a runnable loaded-MCP evidence recapture from the blocked loaded-MCP host reload.

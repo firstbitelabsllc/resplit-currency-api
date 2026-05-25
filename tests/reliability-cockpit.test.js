@@ -3231,6 +3231,34 @@ test('buildOperatorActionQueue separates loaded MCP recapture from host reload',
   assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').blockedBy, /restarting\/reloading Codex\/Cursor/)
 })
 
+test('buildOperatorActionQueue does not recapture fresh loaded MCP evidence again', () => {
+  const actions = buildOperatorActionQueue({
+    contracts: [{
+      gate: 'Loaded MCP host catalog',
+      status: 'red',
+      current: 'Loaded MCP host catalog is missing current lanes for resplit_currency_api.',
+    }],
+    localCi: {
+      loadedMcpProbe: {
+        status: 'red',
+        path: '/tmp/firstbite-loaded-mcp-lanes.json',
+        freshnessStatus: 'green',
+        freshnessSummary: 'Loaded MCP probe artifact is fresh: 0m old.',
+        summary: 'Loaded MCP catalog is missing resplit_currency_api lanes.',
+        restartHint: 'MCP clients keep long-lived stdio processes; restart Codex/Cursor.',
+      },
+      mcpRefreshPlan: {
+        staleProcessCount: 16,
+        summary: 'FirstBite MCP refresh plan: stale_loaded_clients_need_host_app_restart.',
+      },
+    },
+  })
+
+  assert.equal(actions.find(action => action.id === 'loaded-mcp-recapture'), undefined)
+  assert.equal(actions.find(action => action.id === 'loaded-mcp-refresh').canRunNow, false)
+  assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').blockedBy, /restarting\/reloading Codex\/Cursor/)
+})
+
 test('buildOperatorRecoveryFlow separates runnable work from dependencies', () => {
   const flow = buildOperatorRecoveryFlow([
     {
