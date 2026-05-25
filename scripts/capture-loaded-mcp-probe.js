@@ -191,7 +191,7 @@ function resolveInputText({ options, repoDir, outputPath, deps = {} }) {
     throw new Error('Pass --input <file>, --reuse-existing, or pipe the MCP list_lanes JSON into stdin.')
   }
 
-  const text = fs.readFileSync(0, 'utf8')
+  const text = readStdinText()
   if (!String(text || '').trim()) {
     throw new Error('empty MCP list_lanes input. Pipe live mcp__firstbite_local_ci.list_lanes JSON, pass --input <file>, or use --reuse-existing to refresh the previous artifact without proving a host restart.')
   }
@@ -199,6 +199,26 @@ function resolveInputText({ options, repoDir, outputPath, deps = {} }) {
     text,
     reusedExisting: false,
   }
+}
+
+function readStdinText() {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      return fs.readFileSync(0, 'utf8')
+    } catch (error) {
+      if (error?.code !== 'EAGAIN') {
+        throw error
+      }
+      sleepMs(20)
+    }
+  }
+  return fs.readFileSync(0, 'utf8')
+}
+
+function sleepMs(ms) {
+  const buffer = new SharedArrayBuffer(4)
+  const view = new Int32Array(buffer)
+  Atomics.wait(view, 0, 0, ms)
 }
 
 function parsePayloadText(text) {

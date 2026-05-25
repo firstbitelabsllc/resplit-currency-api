@@ -3193,6 +3193,9 @@ function inspectLoadedMcpProbe({
     allLaneIds: [],
     laneCount: 0,
     loadedLaneIds: [],
+    expectedGroupKey: expectedRepo ? `${expectedRepo}_all` : null,
+    expectedGroupLaneIds: [],
+    missingExpectedGroupLaneIds: expectedLaneIds,
     missingLaneIds: expectedLaneIds,
     restartHint: 'MCP clients keep long-lived stdio processes; restart Codex/Cursor if this catalog is missing current repo-manifest lanes.',
   }
@@ -3242,6 +3245,9 @@ function inspectLoadedMcpProbe({
     .filter(laneId => lanes[laneId]?.repo === expectedRepo || expectedLaneIds.includes(laneId))
     .sort()
   const missingLaneIds = expectedLaneIds.filter(laneId => !lanes[laneId])
+  const expectedGroupKey = expectedRepo ? `${expectedRepo}_all` : null
+  const expectedGroupLaneIds = normalizeGroupLaneIds(groups[expectedGroupKey])
+  const missingExpectedGroupLaneIds = expectedLaneIds.filter(laneId => !expectedGroupLaneIds.includes(laneId))
   const checkedAt = artifact.checkedAt || payload.catalog?.loaded_at || artifact.generatedAt || null
   const ageMinutes = ageMinutesBetween(checkedAt, generatedAt)
   const freshness = classifyLoadedMcpProbeFreshness({ checkedAt, ageMinutes })
@@ -3249,12 +3255,12 @@ function inspectLoadedMcpProbe({
   const source = artifact.source || 'loaded MCP list_lanes probe'
   const status = !expectedRepo || expectedLaneIds.length === 0
     ? 'yellow'
-    : repoPresent && missingLaneIds.length === 0
+    : repoPresent && missingLaneIds.length === 0 && missingExpectedGroupLaneIds.length === 0
       ? 'green'
       : 'red'
   const summary = status === 'green'
-    ? `Loaded MCP probe sees ${expectedRepo} and ${loadedLaneIds.length}/${expectedLaneIds.length} expected lane(s).`
-    : `Loaded MCP host catalog is missing current lanes for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s).`
+    ? `Loaded MCP probe sees ${expectedRepo}, ${loadedLaneIds.length}/${expectedLaneIds.length} expected lane(s), and ${expectedGroupKey} includes every expected lane.`
+    : `Loaded MCP host catalog is missing current lanes for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s), group ${expectedGroupKey || 'unknown'} missing ${missingExpectedGroupLaneIds.length}/${expectedLaneIds.length} expected lane(s).`
 
   return {
     ...statusBase,
@@ -3271,10 +3277,23 @@ function inspectLoadedMcpProbe({
     allLaneIds,
     laneCount: allLaneIds.length,
     loadedLaneIds,
+    expectedGroupKey,
+    expectedGroupLaneIds,
+    missingExpectedGroupLaneIds,
     missingLaneIds,
     summary,
     restartHint: payload.catalog?.restart_hint || statusBase.restartHint,
   }
+}
+
+function normalizeGroupLaneIds(group) {
+  if (Array.isArray(group)) {
+    return group.filter(Boolean).sort()
+  }
+  if (group && typeof group === 'object' && Array.isArray(group.lanes)) {
+    return group.lanes.filter(Boolean).sort()
+  }
+  return []
 }
 
 function classifyLoadedMcpProbeFreshness({ checkedAt, ageMinutes } = {}) {
@@ -3334,6 +3353,9 @@ function inspectRepoBackedMcpCatalog({
     allLaneIds: [],
     laneCount: 0,
     loadedLaneIds: [],
+    expectedGroupKey: expectedRepo ? `${expectedRepo}_all` : null,
+    expectedGroupLaneIds: [],
+    missingExpectedGroupLaneIds: expectedLaneIds,
     missingLaneIds: expectedLaneIds,
     manifestPortability: null,
     manifestStates: [],
@@ -3392,6 +3414,9 @@ function inspectRepoBackedMcpCatalog({
     .filter(laneId => lanes[laneId]?.repo === expectedRepo || expectedLaneIds.includes(laneId))
     .sort()
   const missingLaneIds = expectedLaneIds.filter(laneId => !lanes[laneId])
+  const expectedGroupKey = expectedRepo ? `${expectedRepo}_all` : null
+  const expectedGroupLaneIds = normalizeGroupLaneIds(groups[expectedGroupKey])
+  const missingExpectedGroupLaneIds = expectedLaneIds.filter(laneId => !expectedGroupLaneIds.includes(laneId))
   const checkedAt = artifact.checkedAt || catalog.loaded_at || artifact.generatedAt || null
   const catalogVersion = catalog.catalog_version || artifact.catalogVersion || null
   const catalogCurrent = catalogVersion === 'repo-manifest-v2'
@@ -3402,9 +3427,9 @@ function inspectRepoBackedMcpCatalog({
     ? 'yellow'
     : repoPathMismatch
       ? 'red'
-      : repoPresent && missingLaneIds.length === 0 && catalogCurrent && !repoPathUnknown
+      : repoPresent && missingLaneIds.length === 0 && missingExpectedGroupLaneIds.length === 0 && catalogCurrent && !repoPathUnknown
       ? 'green'
-      : repoPresent && missingLaneIds.length === 0
+      : repoPresent && missingLaneIds.length === 0 && missingExpectedGroupLaneIds.length === 0
         ? 'yellow'
         : 'red'
   const portability = catalog.manifest_portability || null
@@ -3422,7 +3447,7 @@ function inspectRepoBackedMcpCatalog({
     ? `Repo-backed FirstBite MCP sees ${catalogVersion} with ${laneCount} lane(s); ${expectedRepo} has ${loadedLaneIds.length}/${expectedLaneIds.length} expected lane(s).${repoPathText}${portabilityText}`
     : repoPathMismatch
       ? `Repo-backed FirstBite MCP catalog is reading the wrong checkout for ${expectedRepo}: ${repoPathText.trim()}`
-      : `Repo-backed FirstBite MCP catalog is not current for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s); catalog ${catalogVersion || 'unknown'}.${repoPathText}`
+      : `Repo-backed FirstBite MCP catalog is not current for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s); group ${expectedGroupKey || 'unknown'} missing ${missingExpectedGroupLaneIds.length}/${expectedLaneIds.length} expected lane(s); catalog ${catalogVersion || 'unknown'}.${repoPathText}`
 
   return {
     ...statusBase,
@@ -3439,6 +3464,9 @@ function inspectRepoBackedMcpCatalog({
     allLaneIds,
     laneCount,
     loadedLaneIds,
+    expectedGroupKey,
+    expectedGroupLaneIds,
+    missingExpectedGroupLaneIds,
     missingLaneIds,
     manifestPortability: portability,
     manifestStates,
@@ -3465,6 +3493,7 @@ function buildMcpCatalogDelta({
     missingGroupsInLoaded: [],
     missingLanesInLoaded: [],
     missingExpectedLanesInLoaded: expectedLaneIds,
+    missingExpectedGroupLaneIdsInLoaded: expectedLaneIds,
     summary: 'Loaded-vs-repo-backed MCP catalog delta could not be computed.',
     nextAction: 'Capture both loaded MCP and repo-backed MCP list_lanes outputs before trusting host/catalog boundaries.',
   }
@@ -3483,8 +3512,13 @@ function buildMcpCatalogDelta({
   const missingGroupsInLoaded = arrayDifference(repoBackedGroups, loadedGroups)
   const missingLanesInLoaded = arrayDifference(repoBackedLanes, loadedLanes)
   const missingExpectedLanesInLoaded = expectedLaneIds.filter(laneId => !loadedLanes.includes(laneId))
+  const missingExpectedGroupLaneIdsInLoaded = Array.isArray(loadedMcpProbe.missingExpectedGroupLaneIds)
+    ? loadedMcpProbe.missingExpectedGroupLaneIds
+    : []
   const expectedRepoMissing = Boolean(expectedRepo && !loadedRepos.includes(expectedRepo))
-  const red = expectedRepoMissing || missingExpectedLanesInLoaded.length > 0
+  const red = expectedRepoMissing
+    || missingExpectedLanesInLoaded.length > 0
+    || missingExpectedGroupLaneIdsInLoaded.length > 0
   const yellow = loadedMcpProbe.freshnessStatus !== 'green'
     || missingReposInLoaded.length > 0
     || missingGroupsInLoaded.length > 0
@@ -3492,7 +3526,7 @@ function buildMcpCatalogDelta({
   const status = red ? 'red' : yellow ? 'yellow' : 'green'
   const summary = status === 'green'
     ? `Loaded MCP host matches the repo-backed catalog for ${expectedRepo || 'expected repo'}: ${loadedMcpProbe.laneCount ?? 'unknown'} lane(s).`
-    : `Loaded MCP host differs from repo-backed catalog: missing ${missingReposInLoaded.length} repo(s), ${missingExpectedLanesInLoaded.length}/${expectedLaneIds.length} expected FX lane(s), ${missingGroupsInLoaded.length} group(s), and ${missingLanesInLoaded.length} total lane(s).`
+    : `Loaded MCP host differs from repo-backed catalog: missing ${missingReposInLoaded.length} repo(s), ${missingExpectedLanesInLoaded.length}/${expectedLaneIds.length} expected FX lane(s), ${missingExpectedGroupLaneIdsInLoaded.length}/${expectedLaneIds.length} expected FX group lane(s), ${missingGroupsInLoaded.length} group(s), and ${missingLanesInLoaded.length} total lane(s).`
 
   return {
     status,
@@ -3508,6 +3542,7 @@ function buildMcpCatalogDelta({
     missingGroupsInLoaded,
     missingLanesInLoaded,
     missingExpectedLanesInLoaded,
+    missingExpectedGroupLaneIdsInLoaded,
     summary,
     nextAction: status === 'green'
       ? 'Keep using loaded MCP host only while this delta and freshness remain green.'

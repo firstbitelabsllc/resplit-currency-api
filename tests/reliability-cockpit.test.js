@@ -1737,6 +1737,13 @@ test('inspectLoadedMcpProbe marks old probe artifacts as stale evidence', () => 
   fs.writeFileSync(probePath, JSON.stringify({
     checkedAt: '2026-05-25T00:00:00.000Z',
     repos: { resplit_currency_api: { path: '/repo' } },
+    groups: {
+      resplit_currency_api_all: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_ui',
+      ],
+    },
     lanes: {
       resplit_currency_api_unit: { repo: 'resplit_currency_api' },
       resplit_currency_api_integration: { repo: 'resplit_currency_api' },
@@ -1764,6 +1771,13 @@ test('inspectLoadedMcpProbe accepts a current repo-manifest catalog', () => {
     source: 'repo-backed package:list_lanes',
     catalog: { catalog_version: 'repo-manifest-v2', restart_hint: 'restart host app' },
     repos: { resplit_currency_api: { path: '/repo' } },
+    groups: {
+      resplit_currency_api_all: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_ui',
+      ],
+    },
     lanes: {
       resplit_currency_api_unit: { repo: 'resplit_currency_api' },
       resplit_currency_api_integration: { repo: 'resplit_currency_api' },
@@ -1781,7 +1795,49 @@ test('inspectLoadedMcpProbe accepts a current repo-manifest catalog', () => {
   assert.equal(probe.status, 'green')
   assert.equal(probe.repoPresent, true)
   assert.deepEqual(probe.missingLaneIds, [])
+  assert.deepEqual(probe.missingExpectedGroupLaneIds, [])
   assert.equal(probe.catalogVersion, 'repo-manifest-v2')
+})
+
+test('inspectLoadedMcpProbe rejects catalogs whose all-group skips an expected lane', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-mcp-probe-group-'))
+  const probePath = path.join(dir, 'firstbite-loaded-mcp-lanes.json')
+  fs.writeFileSync(probePath, JSON.stringify({
+    checkedAt: '2026-05-25T00:00:00.000Z',
+    source: 'codex-mcp-tool:list_lanes',
+    catalog: { catalog_version: 'repo-manifest-v2' },
+    repos: { resplit_currency_api: { path: '/repo' } },
+    groups: {
+      resplit_currency_api_all: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_ui',
+      ],
+    },
+    lanes: {
+      resplit_currency_api_unit: { repo: 'resplit_currency_api' },
+      resplit_currency_api_integration: { repo: 'resplit_currency_api' },
+      resplit_currency_api_trust_preflight: { repo: 'resplit_currency_api' },
+      resplit_currency_api_ui: { repo: 'resplit_currency_api' },
+    },
+  }))
+
+  const probe = inspectLoadedMcpProbe({
+    probePath,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    generatedAt: '2026-05-25T00:05:00.000Z',
+  })
+
+  assert.equal(probe.status, 'red')
+  assert.deepEqual(probe.missingLaneIds, [])
+  assert.deepEqual(probe.missingExpectedGroupLaneIds, ['resplit_currency_api_trust_preflight'])
+  assert.match(probe.summary, /group resplit_currency_api_all missing 1\/4/)
 })
 
 test('inspectRepoBackedMcpCatalog reports current package catalog and portability', () => {
@@ -1804,6 +1860,13 @@ test('inspectRepoBackedMcpCatalog reports current package catalog and portabilit
             ],
           },
           repos: { resplit_currency_api: { path: '/repo' } },
+          groups: {
+            resplit_currency_api_all: [
+              'resplit_currency_api_unit',
+              'resplit_currency_api_integration',
+              'resplit_currency_api_ui',
+            ],
+          },
           lanes: {
             resplit_currency_api_unit: { repo: 'resplit_currency_api' },
             resplit_currency_api_integration: { repo: 'resplit_currency_api' },
@@ -2116,6 +2179,44 @@ test('buildMcpCatalogDelta explains loaded host drift against repo-backed catalo
   assert.deepEqual(delta.missingGroupsInLoaded, ['resplit_currency_api_all'])
   assert.match(delta.summary, /missing 1 repo/)
   assert.match(delta.nextAction, /Restart or reload/)
+})
+
+test('buildMcpCatalogDelta rejects loaded all-group drift even when lanes exist', () => {
+  const expectedLaneIds = [
+    'resplit_currency_api_unit',
+    'resplit_currency_api_integration',
+    'resplit_currency_api_trust_preflight',
+    'resplit_currency_api_ui',
+  ]
+  const delta = buildMcpCatalogDelta({
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds,
+    loadedMcpProbe: {
+      status: 'red',
+      freshnessStatus: 'green',
+      checkedAt: '2026-05-25T08:00:00.000Z',
+      laneCount: 16,
+      catalogVersion: 'repo-manifest-v2',
+      repoKeys: ['resplit_currency_api'],
+      groupKeys: ['resplit_currency_api_all'],
+      allLaneIds: expectedLaneIds,
+      missingExpectedGroupLaneIds: ['resplit_currency_api_trust_preflight'],
+    },
+    repoBackedMcpProbe: {
+      status: 'green',
+      checkedAt: '2026-05-25T08:00:00.000Z',
+      laneCount: 16,
+      catalogVersion: 'repo-manifest-v2',
+      repoKeys: ['resplit_currency_api'],
+      groupKeys: ['resplit_currency_api_all'],
+      allLaneIds: expectedLaneIds,
+    },
+  })
+
+  assert.equal(delta.status, 'red')
+  assert.deepEqual(delta.missingExpectedLanesInLoaded, [])
+  assert.deepEqual(delta.missingExpectedGroupLaneIdsInLoaded, ['resplit_currency_api_trust_preflight'])
+  assert.match(delta.summary, /expected FX group lane/)
 })
 
 test('computeRisks flags loaded MCP catalog drift from probe artifacts', () => {
@@ -2526,6 +2627,13 @@ test('buildReport joins manifest, nurse, inbox, ledger, and MCP proof', () => {
     source: 'codex-mcp-tool:list_lanes',
     catalog: { catalog_version: 'repo-manifest-v2' },
     repos: { resplit_currency_api: { path: repoDir } },
+    groups: {
+      resplit_currency_api_all: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_ui',
+      ],
+    },
     lanes: {
       resplit_currency_api_unit: { repo: 'resplit_currency_api' },
       resplit_currency_api_integration: { repo: 'resplit_currency_api' },
