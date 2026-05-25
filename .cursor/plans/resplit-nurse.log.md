@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 17:54 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI found another trust gap in the OTEL/Grafana surface: manual Tempo/Loki match fields were visible in the cockpit even when no structured `tempo-query` or `loki-query` JSON check existed, which could make diagnostic evidence look like launch proof.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now keeps manual or legacy Tempo/Loki matches yellow with explicit `diagnostic evidence only` proof text until structured Grafana query checks exist. `scripts/verify-reliability-cockpit-report.js` rejects non-green Tempo/Loki rows that use old `matched by artifact fields` proof language. Tests cover both the cockpit model and verifier regression.
+- Fresh proof:
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `109/109` tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated cockpit report HEAD matched the current checkout and rendered manual Tempo/Loki matches as yellow diagnostic evidence with structured-query checks still missing.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `124/124` tests passed.
+  - `npm run check` -> generate green, strict release validation green, and `298/298` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this still does not restart/reload Codex/Cursor, clear `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite, prove M4 peer execution, prove Cloudflare destination delivery, or prove non-skipped Grafana Tempo/Loki JSON evidence. It only prevents manual OTEL notes from being laundered into green query proof.
+- Exact next slice: commit/push this Grafana proof-language hardening, prove stale cockpit detection fires after the commit HEAD changes, regenerate cockpit at the new commit HEAD, rerun current-source FirstBite proof/readout, and keep the loaded-host MCP boundary red until the host reload proves the repo-backed `37/37` catalog.
+
 ## 2026-05-25 17:42 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI is now better aligned with the Vidux cockpit plan: the FirstBite MCP refresh plan cannot lose its read-only safety contract or its machine/owner handoff fields without failing verification.

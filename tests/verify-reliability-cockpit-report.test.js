@@ -85,6 +85,23 @@ test('verifyCockpitReport fails when JSON loses the proof acceptance matrix', ()
   assert.match(result.report.failures.join('\n'), /proof acceptance matrix rows are missing/)
 })
 
+test('verifyCockpitReport fails when non-green Grafana query rows use match-like artifact proof', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-grafana-query-language-'))
+  const report = buildReport()
+  const tempo = report.telemetry.observabilityProofChain.required.find(row => row.id === 'tempo-query')
+  tempo.status = 'yellow'
+  tempo.proof = 'Tempo matched by artifact fields.'
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /observability proof chain tempo-query uses match-like proof language without structured green check/)
+})
+
 test('verifyCockpitReport fails when JSON loses a recovery boundary claim', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-boundary-claim-'))
   const report = buildReport()

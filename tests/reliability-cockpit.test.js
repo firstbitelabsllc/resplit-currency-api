@@ -766,6 +766,46 @@ test('buildObservabilityProofChain rejects config-only and skipped-trigger proof
   assert.match(chain.rejectedProof.join(' '), /skip-trigger/)
 })
 
+test('buildObservabilityProofChain keeps manual Tempo and Loki matches diagnostic without structured checks', () => {
+  const chain = buildObservabilityProofChain({
+    telemetry: {
+      observability: {
+        enabled: true,
+        logsEnabled: true,
+        tracesEnabled: true,
+      },
+      cloudflare: {
+        destinations: {
+          status: 'yellow',
+          summary: 'Missing Cloudflare read config.',
+        },
+      },
+      grafana: {
+        evidence: {
+          status: 'yellow',
+          checkedAt: '2026-05-25T00:00:00.000Z',
+          ageMinutes: 5,
+          tempoMatched: true,
+          lokiMatched: true,
+          checks: [],
+          summary: 'manual Grafana proof note found; JSON proof is still required for green.',
+        },
+      },
+    },
+  })
+
+  const tempo = chain.required.find(row => row.id === 'tempo-query')
+  const loki = chain.required.find(row => row.id === 'loki-query')
+
+  assert.equal(chain.status, 'yellow')
+  assert.equal(tempo.status, 'yellow')
+  assert.equal(loki.status, 'yellow')
+  assert.match(tempo.proof, /diagnostic evidence only/)
+  assert.match(tempo.proof, /structured tempo-query check is missing/)
+  assert.match(loki.proof, /structured loki-query check is missing/)
+  assert.doesNotMatch(chain.currentInvalidReason, /matched by artifact fields/)
+})
+
 test('buildObservabilityProofChain turns green only with full Cloudflare and Grafana chain', () => {
   const chain = buildObservabilityProofChain({
     telemetry: {

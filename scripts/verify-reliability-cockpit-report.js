@@ -333,6 +333,14 @@ function verifyJsonContract(cockpit) {
         failures.push(`observability proof chain missing row: ${id}`)
       }
     }
+    for (const row of observabilityProofChain.required || []) {
+      const rowStatus = ['green', 'yellow', 'red', 'missing'].includes(row.status) ? row.status : 'yellow'
+      if (['tempo-query', 'loki-query'].includes(row.id)
+        && rowStatus !== 'green'
+        && /matched by artifact fields/i.test(row.proof || '')) {
+        failures.push(`observability proof chain ${row.id} uses match-like proof language without structured green check`)
+      }
+    }
     const accepted = (observabilityProofChain.acceptedProof || []).join(' ')
     const rejected = (observabilityProofChain.rejectedProof || []).join(' ')
     if (!/Cloudflare|worker-trigger|grafana-read-config|tempo-query|loki-query|fresh/i.test(accepted)) {

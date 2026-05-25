@@ -3364,10 +3364,23 @@ function buildObservabilityProofChain({ telemetry = {} } = {}) {
   const byId = new Map(checks.map(check => [String(check.id || '').toLowerCase(), check]))
   const checkStatus = id => normalizeStatus(byId.get(id)?.status || 'missing')
   const checkProof = id => byId.get(id)?.proof || byId.get(id)?.nextAction || ''
+  const queryStatus = (id, matched) => {
+    const status = checkStatus(id)
+    return status === 'missing' && matched ? 'yellow' : status
+  }
+  const queryProof = ({ id, matched, service, missingProof }) => {
+    const proof = checkProof(id)
+    if (proof) {
+      return proof
+    }
+    return matched
+      ? `${service} matched only in manual or legacy artifact fields; structured ${id} check is missing, so this is diagnostic evidence only.`
+      : missingProof
+  }
   const workerTriggerStatus = checkStatus('worker-trigger')
   const grafanaReadConfigStatus = checkStatus('grafana-read-config')
-  const tempoQueryStatus = checkStatus('tempo-query')
-  const lokiQueryStatus = checkStatus('loki-query')
+  const tempoQueryStatus = queryStatus('tempo-query', evidence.tempoMatched)
+  const lokiQueryStatus = queryStatus('loki-query', evidence.lokiMatched)
   const cloudflareStatus = normalizeStatus(cloudflare.status || 'missing')
   const grafanaStatus = normalizeStatus(evidence.status || 'missing')
   const configStatus = telemetry.observability?.enabled
@@ -3412,15 +3425,25 @@ function buildObservabilityProofChain({ telemetry = {} } = {}) {
     observabilityChainRow({
       id: 'tempo-query',
       label: 'Tempo trace query',
-      status: evidence.tempoMatched ? tempoQueryStatus : 'yellow',
-      proof: checkProof('tempo-query') || (evidence.tempoMatched ? 'Tempo matched by artifact fields.' : 'Tempo match missing.'),
+      status: tempoQueryStatus,
+      proof: queryProof({
+        id: 'tempo-query',
+        matched: evidence.tempoMatched,
+        service: 'Tempo',
+        missingProof: 'Tempo match missing.',
+      }),
       nextAction: 'Query Tempo for the Worker-trigger trace id.',
     }),
     observabilityChainRow({
       id: 'loki-query',
       label: 'Loki log query',
-      status: evidence.lokiMatched ? lokiQueryStatus : 'yellow',
-      proof: checkProof('loki-query') || (evidence.lokiMatched ? 'Loki matched by artifact fields.' : 'Loki match missing.'),
+      status: lokiQueryStatus,
+      proof: queryProof({
+        id: 'loki-query',
+        matched: evidence.lokiMatched,
+        service: 'Loki',
+        missingProof: 'Loki match missing.',
+      }),
       nextAction: 'Query Loki for the same Worker-trigger window.',
     }),
     observabilityChainRow({
@@ -3439,8 +3462,8 @@ function buildObservabilityProofChain({ telemetry = {} } = {}) {
     grafanaStatus,
     workerTriggerStatus,
     grafanaReadConfigStatus,
-    evidence.tempoMatched ? tempoQueryStatus : 'yellow',
-    evidence.lokiMatched ? lokiQueryStatus : 'yellow',
+    tempoQueryStatus,
+    lokiQueryStatus,
     freshnessStatus,
   ])
   const gaps = required
