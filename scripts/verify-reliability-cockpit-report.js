@@ -5,6 +5,10 @@ const path = require('node:path')
 const {
   REPORT_BASENAME,
 } = require('./reliability-cockpit.js')
+const {
+  buildReportFreshness,
+  getCurrentRepoState,
+} = require('./reliability-completion-audit.js')
 
 const DEFAULT_OUTPUT_DIR = 'reports'
 const REQUIRED_CONTRACT_GATES = [
@@ -77,7 +81,9 @@ function verifyCockpitReport(argv, deps = {}) {
   const jsonText = readRequiredText(jsonPath, readFile)
   const html = readRequiredText(htmlPath, readFile)
   const cockpit = JSON.parse(jsonText)
+  const reportFreshness = buildReportFreshness(cockpit, deps.repoState || getCurrentRepoState(repoDir))
   const failures = [
+    ...verifyReportFreshness(reportFreshness),
     ...verifyJsonContract(cockpit),
     ...verifyHtmlContract({ cockpit, html }),
   ]
@@ -86,11 +92,12 @@ function verifyCockpitReport(argv, deps = {}) {
     checkedAt: deps.now ? deps.now() : new Date().toISOString(),
     status,
     summary: status === 'green'
-      ? `Cockpit report contract is intact: ${REQUIRED_CONTRACT_GATES.length} gate(s), ${REQUIRED_OPERATOR_ACTIONS.length} action(s), and generated HTML sections are present.`
+      ? `Cockpit report contract is intact: ${REQUIRED_CONTRACT_GATES.length} gate(s), ${REQUIRED_OPERATOR_ACTIONS.length} action(s), generated HTML sections are present, and report HEAD matches the current checkout.`
       : `Cockpit report contract failed with ${failures.length} issue(s).`,
     jsonPath,
     htmlPath,
     verdict: cockpit.verdict || null,
+    reportFreshness,
     failures,
   }
 
@@ -227,6 +234,14 @@ function verifyHtmlContract({ cockpit, html }) {
   return failures
 }
 
+function verifyReportFreshness(reportFreshness) {
+  if (reportFreshness.status === 'green') {
+    return []
+  }
+
+  return [`report freshness failed: ${reportFreshness.summary}`]
+}
+
 function readRequiredText(filePath, readFile) {
   try {
     return readFile(filePath, 'utf8')
@@ -256,7 +271,7 @@ function helpText() {
   return [
     'Usage: node scripts/verify-reliability-cockpit-report.js [--repo <dir>] [--json]',
     '',
-    'Verifies the generated reliability cockpit JSON and HTML still expose the launch-trust contract.',
+    'Verifies the generated reliability cockpit JSON and HTML still expose the launch-trust contract and match the current checkout.',
     'Run npm run reliability:cockpit before this verifier to refresh reports/resplit-fx-reliability-cockpit.{json,html}.',
     '',
   ].join('\n')
@@ -270,4 +285,5 @@ module.exports = {
   verifyCockpitReport,
   verifyHtmlContract,
   verifyJsonContract,
+  verifyReportFreshness,
 }

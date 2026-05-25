@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 12:45 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit verifier now rejects stale generated reports by reusing the same checkout-HEAD freshness contract as the completion audit, so `npm run reliability:cockpit:verify` cannot pass a structurally intact GUI/report that was generated for an older commit.
+- Shipped delta pending source promotion: `scripts/verify-reliability-cockpit-report.js` records `reportFreshness`, fails red on stale or non-comparable report HEADs, and includes freshness in `--json` output. `scripts/reliability-completion-audit.js` now exports the shared current-repo-state helper. `tests/verify-reliability-cockpit-report.test.js` covers stale report rejection, missing git state, and the green freshness case.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the current Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded-agent execution remains red.
+  - `node --test tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `17/17` verifier/completion tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `85/85` cockpit/verifier/completion tests passed.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green with freshness proof: report HEAD matches the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `npm run check` -> generate green, strict release validation green, and `262/262` tests passed.
+- Boundary: this does not restart/reload Codex/Cursor, prove the live loaded MCP tool is current, land the source bundle to `origin/main`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It closes the verifier-level stale-report gap so old generated cockpit artifacts cannot be reused as current trust evidence.
+- Exact next slice: commit/push this verifier hardening, regenerate the cockpit on the new commit head, then reload the long-lived Codex/Cursor FirstBite MCP host and recapture live loaded `list_lanes`.
+
 ## 2026-05-25 12:40 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The completion audit now rejects stale generated cockpit reports by comparing the cockpit JSON's recorded git HEAD with the current checkout HEAD before any launch claim can pass.

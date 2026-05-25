@@ -297,5 +297,6 @@ module.exports = {
   auditCockpitCompletion,
   buildCompletionAudit,
   buildReportFreshness,
+  getCurrentRepoState,
   parseArgs,
 }

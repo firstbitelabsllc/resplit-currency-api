@@ -12,6 +12,11 @@ const {
   verifyCockpitReport,
 } = require('../scripts/verify-reliability-cockpit-report.js')
 
+const CURRENT_REPO_STATE = {
+  head: 'de99b14671dd',
+  branch: 'codex/fx-otel-grafana-config-20260525',
+}
+
 test('parseArgs points at the generated reliability cockpit artifacts', () => {
   const options = parseArgs([])
 
@@ -26,10 +31,12 @@ test('verifyCockpitReport accepts a report with every operator trust surface vis
 
   const result = verifyCockpitReport(['--repo', repoDir], {
     now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
   })
 
   assert.equal(result.report.status, 'green')
   assert.match(result.report.summary, /Cockpit report contract is intact/)
+  assert.equal(result.report.reportFreshness.status, 'green')
 })
 
 test('verifyCockpitReport fails when generated HTML drops a critical section', () => {
@@ -40,6 +47,7 @@ test('verifyCockpitReport fails when generated HTML drops a critical section', (
 
   const result = verifyCockpitReport(['--repo', repoDir], {
     now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
   })
 
   assert.equal(result.report.status, 'red')
@@ -55,6 +63,7 @@ test('verifyCockpitReport fails when JSON loses the Grafana operator action', ()
 
   const result = verifyCockpitReport(['--repo', repoDir], {
     now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
   })
 
   assert.equal(result.report.status, 'red')
@@ -69,14 +78,49 @@ test('verifyCockpitReport fails when JSON loses the proof acceptance matrix', ()
 
   const result = verifyCockpitReport(['--repo', repoDir], {
     now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
   })
 
   assert.equal(result.report.status, 'red')
   assert.match(result.report.failures.join('\n'), /proof acceptance matrix rows are missing/)
 })
 
+test('verifyCockpitReport fails when the generated report head is stale', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-stale-head-'))
+  const report = buildReport()
+  report.repo.git.head = '111111111111'
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.equal(result.report.reportFreshness.status, 'red')
+  assert.match(result.report.failures.join('\n'), /Cockpit report is stale: report HEAD 111111111111/)
+})
+
+test('verifyCockpitReport fails when current git state cannot be read', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-git-'))
+  writeReport(repoDir, buildReport())
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: { head: null, branch: null },
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.equal(result.report.reportFreshness.status, 'red')
+  assert.match(result.report.failures.join('\n'), /Cockpit report head is not comparable/)
+})
+
 function buildReport() {
   return {
+    generatedAt: '2026-05-25T14:10:00.000Z',
+    repo: {
+      git: { ...CURRENT_REPO_STATE },
+    },
     verdict: {
       status: 'red',
       label: 'RED - missing required trust contract',
