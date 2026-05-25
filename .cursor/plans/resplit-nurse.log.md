@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 14:29 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit now has a first-class Loaded MCP Live Capture Contract, so loaded-agent proof must name the exact live MCP tool source, reject repo-backed/reused artifacts, prove `repo-manifest-v2`, include every current `resplit_currency_api` lane, and prove `resplit_currency_api_all` contains every expected lane.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` derives `localCi.loadedMcpCaptureContract`, renders it in the GUI, tightens loaded-probe source classification to explicit `mcp__firstbite_local_ci.list_lanes` sources, and threads the contract into risks, trust contracts, launch audit, and proof acceptance. `scripts/verify-reliability-cockpit-report.js` now fails if the GUI/report drops the live capture contract or stops showing accepted/rejected loaded MCP sources.
+- Fresh proof:
+  - Regenerated cockpit: `loadedMcpCaptureContract.status=red`, current source `repo-backed-cli:list_lanes-current-primary-checkouts`, missing `resplit_currency_api_trust_preflight` from both direct lanes and `resplit_currency_api_all`.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/capture-loaded-mcp-probe.test.js` -> `87/87` focused cockpit/verifier/probe tests passed.
+  - `npm run reliability:cockpit:verify` -> green with Loaded MCP Live Capture Contract present and report HEAD matching the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). The `proof:loaded-agent-mcp` row now requires live `mcp__firstbite_local_ci.list_lanes` source plus `repo-manifest-v2`, all FX lanes, and all-group membership.
+  - `npm run check` -> generate green, strict release validation green, and `269/269` tests passed.
+- Boundary: this still does not restart/reload Codex/Cursor, prove the live loaded MCP host is current, land the source bundle to `origin/main`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the GUI/verifier reject adjacent loaded-MCP evidence as launch proof by construction.
+- Exact next slice: commit/push this Loaded MCP Live Capture Contract hardening, regenerate the cockpit on the new commit head, then reload the long-lived Codex/Cursor FirstBite MCP host and recapture true loaded-client `mcp__firstbite_local_ci.list_lanes`.
+
 ## 2026-05-25 12:53 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit now has machine-readable Recovery Boundary Claims inside `trustModel.operatorRecoveryFlow`, so each active recovery boundary says which launch claim is blocked, which proof would unblock it, and which action IDs own that proof.

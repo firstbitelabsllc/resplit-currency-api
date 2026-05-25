@@ -10,6 +10,7 @@ const {
   buildAgentActivityMatrix,
   buildEvidenceFreshnessLedger,
   buildLaunchTrustAudit,
+  buildLoadedMcpCaptureContract,
   buildMcpCatalogDelta,
   buildOperatorActionQueue,
   buildOperatorRecoveryFlow,
@@ -1707,7 +1708,7 @@ test('inspectLoadedMcpProbe detects stale in-process lane catalogs', () => {
   const probePath = path.join(dir, 'firstbite-loaded-mcp-lanes.json')
   fs.writeFileSync(probePath, JSON.stringify({
     checkedAt: '2026-05-25T00:00:00.000Z',
-    source: 'codex-mcp-tool:list_lanes',
+    source: 'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
     content: [{
       type: 'text',
       text: JSON.stringify({
@@ -1849,12 +1850,75 @@ test('inspectLoadedMcpProbe rejects repo-backed diagnostic sources even when lan
   assert.match(probe.summary, /source red/)
 })
 
+test('buildLoadedMcpCaptureContract requires live loaded-client source and all-group proof', () => {
+  const contract = buildLoadedMcpCaptureContract({
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    loadedMcpProbe: {
+      status: 'red',
+      freshnessStatus: 'green',
+      source: 'repo-backed-cli:list_lanes-current-primary-checkouts',
+      sourceStatus: 'red',
+      sourceSummary: 'Loaded MCP probe source is diagnostic repo-backed evidence.',
+      summary: 'Loaded MCP catalog source is red.',
+      missingLaneIds: [],
+      missingExpectedGroupLaneIds: ['resplit_currency_api_trust_preflight'],
+    },
+    mcpCatalogDelta: {
+      status: 'red',
+      summary: 'Loaded MCP host differs from repo-backed catalog.',
+    },
+  })
+
+  assert.equal(contract.status, 'red')
+  assert.match(contract.summary, /not admissible/)
+  assert.match(contract.acceptedSources.join(' '), /mcp__firstbite_local_ci\.list_lanes/)
+  assert.match(contract.rejectedSources.join(' '), /repo-backed/)
+  assert.match(contract.rejectedSources.join(' '), /previous-loaded-mcp-artifact/)
+  assert.match(contract.rejectedSources.join(' '), /--reuse-existing/)
+  assert.equal(contract.expectedGroupKey, 'resplit_currency_api_all')
+  assert.deepEqual(contract.missingExpectedGroupLaneIds, ['resplit_currency_api_trust_preflight'])
+  assert.match(contract.currentInvalidReason, /diagnostic repo-backed evidence/)
+  assert.match(contract.captureCommand, /--source codex-mcp-tool:mcp__firstbite_local_ci\.list_lanes/)
+})
+
+test('buildLoadedMcpCaptureContract accepts fresh live loaded MCP evidence', () => {
+  const contract = buildLoadedMcpCaptureContract({
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: ['resplit_currency_api_unit'],
+    loadedMcpProbe: {
+      status: 'green',
+      freshnessStatus: 'green',
+      source: 'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+      sourceStatus: 'green',
+      sourceSummary: 'Loaded MCP probe source is live loaded-client evidence.',
+      summary: 'Loaded MCP probe sees resplit_currency_api.',
+      missingLaneIds: [],
+      missingExpectedGroupLaneIds: [],
+    },
+    mcpCatalogDelta: {
+      status: 'green',
+      summary: 'Loaded MCP host matches the repo-backed catalog.',
+    },
+  })
+
+  assert.equal(contract.status, 'green')
+  assert.match(contract.summary, /admissible/)
+  assert.deepEqual(contract.missingLaneIds, [])
+  assert.deepEqual(contract.missingExpectedGroupLaneIds, [])
+})
+
 test('inspectLoadedMcpProbe rejects catalogs whose all-group skips an expected lane', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-mcp-probe-group-'))
   const probePath = path.join(dir, 'firstbite-loaded-mcp-lanes.json')
   fs.writeFileSync(probePath, JSON.stringify({
     checkedAt: '2026-05-25T00:00:00.000Z',
-    source: 'codex-mcp-tool:list_lanes',
+    source: 'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
     catalog: { catalog_version: 'repo-manifest-v2' },
     repos: { resplit_currency_api: { path: '/repo' } },
     groups: {
@@ -2714,7 +2778,7 @@ test('buildReport joins manifest, nurse, inbox, ledger, and MCP proof', () => {
   fs.writeFileSync(path.join(repoDir, 'wrangler.jsonc'), JSON.stringify({ name: 'resplit-fx' }))
   fs.writeFileSync(path.join(repoDir, 'reports', 'firstbite-loaded-mcp-lanes.json'), JSON.stringify({
     checkedAt: '2026-05-24T23:58:00.000Z',
-    source: 'codex-mcp-tool:list_lanes',
+    source: 'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
     catalog: { catalog_version: 'repo-manifest-v2' },
     repos: { resplit_currency_api: { path: repoDir } },
     groups: {
@@ -3448,7 +3512,7 @@ test('buildProofAcceptanceMatrix blocks adjacent proof from becoming launch proo
       {
         id: 'loaded-mcp-refresh',
         boundary: 'local-agent-host',
-        evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2 and all current resplit_currency_api lanes present.',
+        evidenceRequired: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.',
       },
       {
         id: 'grafana-otel-proof',
@@ -3467,7 +3531,8 @@ test('buildProofAcceptanceMatrix blocks adjacent proof from becoming launch proo
   assert.equal(loaded.claimAllowed, false)
   assert.match(loaded.acceptedProof, /diagnostic evidence only/)
   assert.match(loaded.rejectedProof, /Do not claim Codex\/Cursor loaded MCP/)
-  assert.match(loaded.nextValidProof, /Fresh loaded-host list_lanes/)
+  assert.match(loaded.nextValidProof, /mcp__firstbite_local_ci\.list_lanes/)
+  assert.match(loaded.nextValidProof, /resplit_currency_api_all/)
   assert.equal(loaded.actionId, 'loaded-mcp-refresh')
   assert.equal(repoBacked.claimAllowed, true)
   assert.match(repoBacked.acceptedProof, /control-plane source of truth/)
@@ -4071,6 +4136,25 @@ test('renderHtml escapes dynamic values', () => {
         path: '/tmp/<loaded-probe>.json',
         restartHint: '<loaded-probe-restart>',
       },
+      loadedMcpCaptureContract: {
+        status: 'red',
+        summary: '<capture-summary>',
+        acceptedSources: ['codex-mcp-tool:mcp__firstbite_local_ci.list_lanes', '<accepted-source>'],
+        rejectedSources: ['repo-backed package:list_lanes', 'previous-loaded-mcp-artifact:<path>', '--reuse-existing', '<rejected-source>'],
+        requiredProbeSourcePattern: '<source-pattern>',
+        requiredTool: 'mcp__firstbite_local_ci.list_lanes',
+        captureCommand: '<capture-command>',
+        verifyCommand: '<verify-command>',
+        expectedRepo: '<capture-repo>',
+        expectedGroupKey: '<capture-group>',
+        missingLaneIds: ['<capture-missing-lane>'],
+        missingExpectedGroupLaneIds: ['<capture-missing-group-lane>'],
+        currentSource: '<capture-current-source>',
+        currentSourceStatus: 'red',
+        currentSourceSummary: '<capture-source-summary>',
+        currentInvalidReason: '<capture-invalid-reason>',
+        captureSteps: ['<capture-step>'],
+      },
       sourcePromotionPacket: {
         status: 'red',
         summary: '<packet-summary>',
@@ -4344,6 +4428,13 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /&lt;forbidden-boundary-claim&gt;/)
   assert.match(html, /&lt;boundary-required-proof&gt;/)
   assert.match(html, /Loaded MCP Proof Source/)
+  assert.match(html, /Loaded MCP Live Capture Contract/)
+  assert.match(html, /&lt;capture-summary&gt;/)
+  assert.match(html, /mcp__firstbite_local_ci\.list_lanes/)
+  assert.match(html, /previous-loaded-mcp-artifact/)
+  assert.match(html, /--reuse-existing/)
+  assert.match(html, /&lt;capture-invalid-reason&gt;/)
+  assert.match(html, /&lt;capture-step&gt;/)
   assert.match(html, /&lt;loaded-source-summary&gt;/)
   assert.match(html, /&lt;loaded-probe-source-summary&gt;/)
   assert.match(html, /&lt;missing-group-lane&gt;/)

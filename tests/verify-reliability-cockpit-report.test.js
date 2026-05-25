@@ -144,6 +144,9 @@ function buildReport() {
     localCi: {
       loadedMcpProbe: {
         status: 'red',
+        source: 'repo-backed-cli:list_lanes-current-primary-checkouts',
+        sourceStatus: 'red',
+        sourceSummary: 'Loaded MCP probe source is diagnostic repo-backed evidence.',
         missingLaneIds: [
           'resplit_currency_api_unit',
           'resplit_currency_api_integration',
@@ -153,6 +156,19 @@ function buildReport() {
       },
       mcpCatalogDelta: {
         status: 'red',
+      },
+      loadedMcpCaptureContract: {
+        status: 'red',
+        acceptedSources: [
+          'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+          'cursor-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+        ],
+        rejectedSources: [
+          'repo-backed package:list_lanes',
+          'previous-loaded-mcp-artifact:<path>',
+          '--reuse-existing',
+        ],
+        currentInvalidReason: 'Loaded MCP probe source is diagnostic repo-backed evidence.',
       },
     },
     telemetry: {
@@ -208,7 +224,7 @@ function buildReport() {
             claimAllowed: false,
             actionIds: ['loaded-mcp-refresh'],
             forbiddenClaim: 'Do not claim the loaded Codex/Cursor MCP host can execute FX lanes from a repo-backed package catalog or stale loaded-host probe.',
-            requiredProof: 'Fresh loaded-host list_lanes after Codex/Cursor restart or reload showing repo-manifest-v2 and all current resplit_currency_api lanes.',
+            requiredProof: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes after Codex/Cursor restart or reload, captured with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, showing repo-manifest-v2 and all current resplit_currency_api lanes plus the resplit_currency_api_all group.',
             currentBlocker: 'Loaded MCP host catalog is missing current lanes.',
             nextAction: 'Save work and restart/reload Codex/Cursor.',
           },
@@ -252,7 +268,7 @@ function buildReport() {
             rejectedProof: 'Do not claim Codex/Cursor loaded MCP can execute or even see FX lanes from the current host process.',
             currentEvidence: 'reports/firstbite-loaded-mcp-lanes.json',
             currentGap: 'missing current FX lanes',
-            nextValidProof: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2 and all current resplit_currency_api lanes present.',
+            nextValidProof: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.',
             actionId: 'loaded-mcp-refresh',
           },
           {
@@ -281,6 +297,10 @@ function buildHtml(report) {
     ...REQUIRED_CONTRACT_GATES,
     ...report.trustModel.operatorRecoveryFlow.boundaryClaims.map(claim => claim.boundary),
     ...report.localCi.loadedMcpProbe.missingLaneIds,
+    report.localCi.loadedMcpProbe.sourceSummary,
+    report.localCi.loadedMcpCaptureContract.currentInvalidReason,
+    ...report.localCi.loadedMcpCaptureContract.acceptedSources,
+    ...report.localCi.loadedMcpCaptureContract.rejectedSources,
   ].join('\n')
 }
 

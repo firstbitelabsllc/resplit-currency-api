@@ -41,6 +41,7 @@ const REQUIRED_HTML_LABELS = [
   'Evidence Freshness Ledger',
   'FirstBite Local CI',
   'Loaded MCP Host Probe',
+  'Loaded MCP Live Capture Contract',
   'Loaded MCP Proof Source',
   'Loaded MCP Catalog Delta',
   'Cloudflare OTEL Destinations',
@@ -174,6 +175,9 @@ function verifyJsonContract(cockpit) {
   if (cockpit.localCi?.loadedMcpProbe?.status && !cockpit.localCi?.mcpCatalogDelta?.status) {
     failures.push('loaded MCP probe exists but MCP catalog delta is missing')
   }
+  if (cockpit.localCi?.loadedMcpProbe?.status && !cockpit.localCi?.loadedMcpCaptureContract?.status) {
+    failures.push('loaded MCP probe exists but live capture contract is missing')
+  }
 
   if (cockpit.telemetry?.grafana && !cockpit.telemetry?.cloudflare?.destinations) {
     failures.push('Grafana evidence exists but Cloudflare destination boundary is missing')
@@ -195,8 +199,11 @@ function verifyJsonContract(cockpit) {
       if (loaded?.claimAllowed !== false) {
         failures.push('loaded MCP proof row must reject launch claims while loaded host probe is red')
       }
-      if (!/Fresh loaded-host list_lanes|Restart|reload/i.test(loaded?.nextValidProof || '')) {
-        failures.push('loaded MCP proof row does not name fresh loaded-host list_lanes or host reload proof')
+      const nextValidProof = loaded?.nextValidProof || ''
+      if (!/mcp__firstbite_local_ci\.list_lanes/i.test(nextValidProof)
+        || !/codex-mcp-tool|cursor-mcp-tool/i.test(nextValidProof)
+        || !/repo-manifest-v2/i.test(nextValidProof)) {
+        failures.push('loaded MCP proof row does not name live loaded-client list_lanes source and repo-manifest proof')
       }
     }
 
@@ -295,6 +302,30 @@ function verifyHtmlContract({ cockpit, html }) {
   }
 
   if (cockpit.localCi?.loadedMcpProbe?.status === 'red') {
+    const captureContract = cockpit.localCi.loadedMcpCaptureContract
+    if (!captureContract) {
+      failures.push('HTML/JSON missing loaded MCP live capture contract while loaded host probe is red')
+    } else {
+      const acceptedSources = (captureContract.acceptedSources || []).join(' ')
+      const rejectedSources = (captureContract.rejectedSources || []).join(' ')
+      if (!/mcp__firstbite_local_ci\.list_lanes/.test(acceptedSources)) {
+        failures.push('loaded MCP live capture contract does not name the live MCP list_lanes source')
+      }
+      if (!/repo-backed|previous-loaded-mcp-artifact|--reuse-existing/i.test(rejectedSources)) {
+        failures.push('loaded MCP live capture contract does not reject repo-backed or reused artifact sources')
+      }
+      if (captureContract.currentInvalidReason && !html.includes(escapeForHtmlText(captureContract.currentInvalidReason))) {
+        failures.push('HTML missing loaded MCP live capture invalid reason')
+      }
+      if (!html.includes('Loaded MCP Live Capture Contract')) {
+        failures.push('HTML missing loaded MCP live capture section')
+      }
+      for (const source of captureContract.acceptedSources || []) {
+        if (!html.includes(escapeForHtmlText(source))) {
+          failures.push(`HTML missing loaded MCP accepted source: ${source}`)
+        }
+      }
+    }
     const missingExpected = cockpit.localCi.loadedMcpProbe.missingLaneIds || []
     if (missingExpected.length > 0 && !missingExpected.every(laneId => html.includes(escapeForHtmlText(laneId)))) {
       failures.push('HTML missing one or more loaded MCP missing-lane IDs')

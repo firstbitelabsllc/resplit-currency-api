@@ -32,6 +32,19 @@ const FIRSTBITE_MCP_REFRESH_PLAN_FRESHNESS_LIMIT_MINUTES = 60
 const FIRSTBITE_CURSOR_REVIEW_FRESHNESS_LIMIT_MINUTES = 60
 const MAX_MCP_HISTORY = 8
 const MAX_AGENT_ACTIVITY_ROWS = 8
+const LOADED_MCP_ACCEPTED_SOURCES = [
+  'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+  'cursor-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+  'claude-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+  'mcp__firstbite_local_ci.list_lanes',
+]
+const LOADED_MCP_REJECTED_SOURCES = [
+  'repo-backed package:list_lanes',
+  'repo-backed-cli:list_lanes-current-primary-checkouts',
+  'previous-loaded-mcp-artifact:<path>',
+  'local-cli:list_lanes',
+  '--reuse-existing',
+]
 const RECOVERY_BOUNDARY_CLAIM_RULES = {
   'local-ci': {
     label: 'Clean FirstBite local CI',
@@ -41,7 +54,7 @@ const RECOVERY_BOUNDARY_CLAIM_RULES = {
   'local-agent-host': {
     label: 'Loaded Codex/Cursor MCP host',
     forbiddenClaim: 'Do not claim the loaded Codex/Cursor MCP host can execute FX lanes from a repo-backed package catalog or stale loaded-host probe.',
-    requiredProof: 'Fresh loaded-host list_lanes after Codex/Cursor restart or reload showing repo-manifest-v2 and all current resplit_currency_api lanes.',
+    requiredProof: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes after Codex/Cursor restart or reload, captured with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes or cursor-mcp-tool:mcp__firstbite_local_ci.list_lanes, showing repo-manifest-v2 and all current resplit_currency_api lanes plus the resplit_currency_api_all group.',
   },
   'external-observability': {
     label: 'OTEL/Grafana telemetry',
@@ -294,6 +307,12 @@ function buildReport({
   const localCi = inspectLocalCiManifest(manifest, manifestPath, mcpProof, generatedAt, loadedMcpProbe, trackedSource, repoBackedMcpCatalog, git)
   localCi.operatingReadout = operatingReadout
   localCi.mcpRefreshPlan = mcpRefreshPlan
+  localCi.loadedMcpCaptureContract = buildLoadedMcpCaptureContract({
+    loadedMcpProbe: localCi.loadedMcpProbe,
+    mcpCatalogDelta: localCi.mcpCatalogDelta,
+    expectedRepo: manifest?.repo,
+    expectedLaneIds: Object.keys(manifest?.localCi?.lanes || {}),
+  })
   localCi.runnerControlPlane = runnerControlPlane
   localCi.reviewScoutProducerControlPlane = reviewScoutProducerControlPlane
   localCi.sourcePromotionBundle = buildSourcePromotionBundle({
@@ -3292,9 +3311,9 @@ function inspectLoadedMcpProbe({
 
 function classifyLoadedMcpProbeSource(source) {
   const normalized = String(source || '').trim()
-  if (/^(codex|cursor|claude)-mcp-tool:/i.test(normalized)
+  if (/^(codex|cursor|claude)-mcp-tool:mcp__firstbite_local_ci\.list_lanes$/i.test(normalized)
     || /^mcp__firstbite_local_ci\.list_lanes$/i.test(normalized)
-    || /^loaded-(codex|cursor|claude)-mcp:/i.test(normalized)) {
+    || /^loaded-(codex|cursor|claude)-mcp:mcp__firstbite_local_ci\.list_lanes$/i.test(normalized)) {
     return {
       status: 'green',
       summary: `Loaded MCP probe source is live loaded-client evidence: ${normalized}.`,
@@ -3588,6 +3607,64 @@ function buildMcpCatalogDelta({
     nextAction: status === 'green'
       ? 'Keep using loaded MCP host only while this delta and freshness remain green.'
       : 'Restart or reload the Codex/Cursor MCP host, capture mcp__firstbite_local_ci.list_lanes again, and require this delta to clear before trusting loaded-host execution.',
+  }
+}
+
+function buildLoadedMcpCaptureContract({
+  loadedMcpProbe = {},
+  mcpCatalogDelta = {},
+  expectedRepo,
+  expectedLaneIds = [],
+} = {}) {
+  const expectedGroupKey = expectedRepo ? `${expectedRepo}_all` : null
+  const missingLaneIds = Array.isArray(loadedMcpProbe.missingLaneIds) ? loadedMcpProbe.missingLaneIds : expectedLaneIds
+  const missingGroupLaneIds = Array.isArray(loadedMcpProbe.missingExpectedGroupLaneIds)
+    ? loadedMcpProbe.missingExpectedGroupLaneIds
+    : Array.isArray(mcpCatalogDelta.missingExpectedGroupLaneIdsInLoaded)
+      ? mcpCatalogDelta.missingExpectedGroupLaneIdsInLoaded
+      : expectedLaneIds
+  const invalidReasons = [
+    loadedMcpProbe.status && loadedMcpProbe.status !== 'green' ? loadedMcpProbe.summary : '',
+    loadedMcpProbe.freshnessStatus && loadedMcpProbe.freshnessStatus !== 'green' ? loadedMcpProbe.freshnessSummary : '',
+    loadedMcpProbe.sourceStatus && loadedMcpProbe.sourceStatus !== 'green' ? loadedMcpProbe.sourceSummary : '',
+    mcpCatalogDelta.status && mcpCatalogDelta.status !== 'green' ? mcpCatalogDelta.summary : '',
+  ].filter(Boolean)
+  const status = loadedMcpProbe.status === 'green'
+    && loadedMcpProbe.freshnessStatus === 'green'
+    && loadedMcpProbe.sourceStatus === 'green'
+    && mcpCatalogDelta.status === 'green'
+    && missingLaneIds.length === 0
+    && missingGroupLaneIds.length === 0
+    ? 'green'
+    : 'red'
+
+  return {
+    status,
+    summary: status === 'green'
+      ? `Loaded MCP live capture is admissible for ${expectedRepo || 'the expected repo'}: source, freshness, lane catalog, and group membership are green.`
+      : `Loaded MCP live capture is not admissible: ${invalidReasons[0] || 'live loaded-client list_lanes proof is missing or incomplete.'}`,
+    acceptedSources: LOADED_MCP_ACCEPTED_SOURCES,
+    rejectedSources: LOADED_MCP_REJECTED_SOURCES,
+    requiredProbeSourcePattern: '^(codex|cursor|claude)-mcp-tool:mcp__firstbite_local_ci\\.list_lanes$|^mcp__firstbite_local_ci\\.list_lanes$',
+    requiredTool: 'mcp__firstbite_local_ci.list_lanes',
+    captureCommand: 'npm run mcp:loaded-probe -- --input /tmp/firstbite-loaded-mcp.json --source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+    verifyCommand: 'npm run reliability:cockpit && npm run reliability:cockpit:verify && npm run reliability:completion-audit',
+    expectedRepo: expectedRepo || null,
+    expectedGroupKey,
+    expectedLaneIds,
+    missingLaneIds,
+    missingExpectedGroupLaneIds: missingGroupLaneIds,
+    currentSource: loadedMcpProbe.source || 'missing',
+    currentSourceStatus: loadedMcpProbe.sourceStatus || 'missing',
+    currentSourceSummary: loadedMcpProbe.sourceSummary || 'Loaded MCP probe source is missing.',
+    currentInvalidReason: invalidReasons.join(' | ') || '',
+    captureSteps: [
+      'Save work and restart/reload Codex or Cursor so the long-lived MCP host process exits.',
+      'From the loaded client, run MCP tool mcp__firstbite_local_ci.list_lanes and preserve the exact JSON result.',
+      'Write that tool result to /tmp/firstbite-loaded-mcp.json without substituting repo-backed CLI output.',
+      'Run npm run mcp:loaded-probe -- --input /tmp/firstbite-loaded-mcp.json --source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes.',
+      'Run npm run reliability:cockpit && npm run reliability:cockpit:verify && npm run reliability:completion-audit.',
+    ],
   }
 }
 
@@ -4380,6 +4457,13 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger, review
       detail: loadedMcpProbe.freshnessSummary,
     })
   }
+  if (localCi.loadedMcpCaptureContract?.status && localCi.loadedMcpCaptureContract.status !== 'green') {
+    risks.push({
+      status: localCi.loadedMcpCaptureContract.status,
+      label: 'Loaded MCP live capture contract gap',
+      detail: localCi.loadedMcpCaptureContract.summary,
+    })
+  }
 
   const repoBackedMcpProbe = localCi.repoBackedMcpProbe
   if (repoBackedMcpProbe?.status === 'red') {
@@ -4456,6 +4540,7 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
   const cloudflareDestinations = telemetry?.cloudflare?.destinations
   const loadedMcp = localCi?.loadedMcpProbe
   const repoBackedMcp = localCi?.repoBackedMcpProbe
+  const loadedMcpCaptureContract = localCi?.loadedMcpCaptureContract
   const mcpRefreshPlan = localCi?.mcpRefreshPlan
   const trackedSource = localCi?.trackedSource
   const cleanProofReadiness = localCi?.cleanProofReadiness
@@ -4543,19 +4628,20 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
     },
     {
       gate: 'Loaded MCP host catalog',
-      status: loadedMcp?.status || 'yellow',
+      status: worstStatus([loadedMcp?.status || 'yellow', loadedMcpCaptureContract?.status]),
       current: [
         loadedMcp?.summary || 'No loaded-host MCP probe artifact was found.',
+        loadedMcpCaptureContract?.summary || '',
         mcpRefreshPlan?.status && mcpRefreshPlan.status !== 'missing' ? `Refresh packet: ${mcpRefreshPlan.summary}` : '',
       ].filter(Boolean).join(' '),
       proof: loadedMcp?.status && loadedMcp.status !== 'missing'
         ? loadedMcp.path
         : mcpRefreshPlan?.reportPath || 'reports/firstbite-loaded-mcp-lanes.json',
       nextAction: loadedMcp?.status === 'green'
-        ? 'Use the in-app MCP tool only while its catalog age and lane count remain current.'
+        ? 'Use the in-app MCP tool only while live source, catalog age, lane count, and group membership remain current.'
         : mcpRefreshPlan?.staleProcessCount > 0
           ? 'Save work and restart/reload Codex/Cursor, rerun the refresh plan, then capture a fresh live loaded-host list_lanes artifact.'
-        : 'Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes.',
+        : 'Restart or reload Codex/Cursor MCP host, capture a fresh live mcp__firstbite_local_ci.list_lanes artifact, and require all resplit_currency_api lanes plus all-group membership.',
     },
     {
       gate: 'Repo-backed MCP package',
@@ -4720,7 +4806,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       command: 'npm run mcp:loaded-probe -- --input /tmp/firstbite-loaded-mcp.json',
       blocker: loadedMcp.freshnessSummary || loadedMcp.summary || 'Loaded MCP probe freshness is unknown.',
       nextAction: 'Run live mcp__firstbite_local_ci.list_lanes from the loaded host, save the JSON, then capture it; this refreshes evidence only and does not prove a host reload.',
-      evidenceRequired: 'A fresh loaded-host list_lanes artifact. If resplit_currency_api is still missing, the loaded MCP catalog gate remains red.',
+      evidenceRequired: 'A fresh live loaded-host mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes or cursor-mcp-tool:mcp__firstbite_local_ci.list_lanes. If resplit_currency_api is still missing, the loaded MCP catalog gate remains red.',
       unblocks: 'Loaded MCP evidence freshness',
       canRunNow: true,
       boundary: 'local-agent-host-evidence',
@@ -4742,7 +4828,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       nextAction: mcpRefreshPlan.staleProcessCount > 0
         ? 'Save work and restart/reload Codex/Cursor, then rerun the refresh plan and capture live list_lanes output into the loaded-host probe artifact.'
         : 'Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.',
-      evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2 and all current resplit_currency_api lanes present.',
+      evidenceRequired: 'Fresh live loaded-client mcp__firstbite_local_ci.list_lanes artifact with source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes or cursor-mcp-tool:mcp__firstbite_local_ci.list_lanes, repo-manifest-v2, all current resplit_currency_api lanes present, and resplit_currency_api_all containing every expected lane.',
       unblocks: 'In-app local coding agent trust',
       canRunNow: !loadedMcpBlockedBy,
       blockedBy: loadedMcpBlockedBy,
@@ -5268,6 +5354,7 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
         byGate.get('Loaded MCP host catalog')?.status,
         localCi?.mcpCatalogDelta?.status,
         localCi?.loadedMcpProbe?.freshnessStatus,
+        localCi?.loadedMcpCaptureContract?.status,
       ]),
       allowedWhenGreen: 'The loaded in-app MCP host can be trusted to expose the current repo-backed FirstBite catalog and FX lanes.',
       forbiddenUntilGreen: 'Do not claim Codex/Cursor loaded MCP can execute or even see FX lanes from the current host process.',
@@ -5275,6 +5362,7 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
       gap: joinEvidence([
         localCi?.loadedMcpProbe?.summary,
         localCi?.mcpCatalogDelta?.summary,
+        localCi?.loadedMcpCaptureContract?.summary,
       ]),
       nextAction: localCi?.mcpCatalogDelta?.nextAction || byGate.get('Loaded MCP host catalog')?.nextAction || 'Restart/reload the MCP host and capture live list_lanes.',
     }),
@@ -6034,6 +6122,7 @@ function renderLocalCiProof(localCi) {
       ${renderReviewScoutProducerControlPlane(localCi.reviewScoutProducerControlPlane)}
       ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
       ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
+      ${renderLoadedMcpCaptureContract(localCi.loadedMcpCaptureContract)}
       ${renderFirstBiteMcpRefreshPlan(localCi.mcpRefreshPlan)}
       ${renderLoadedMcpProbe(localCi.loadedMcpProbe)}
       ${renderTrackedSourceContract(localCi.trackedSource)}
@@ -6069,6 +6158,7 @@ function renderLocalCiProof(localCi) {
     ${renderCurrentManifestProof(localCi.currentManifestProof)}
     ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
     ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
+    ${renderLoadedMcpCaptureContract(localCi.loadedMcpCaptureContract)}
     ${renderFirstBiteMcpRefreshPlan(localCi.mcpRefreshPlan)}
     ${renderLoadedMcpProbe(localCi.loadedMcpProbe)}
     ${renderTrackedSourceContract(localCi.trackedSource)}
@@ -6457,6 +6547,39 @@ function renderFirstBiteMcpRefreshPlan(plan) {
     </div>`
 }
 
+function renderLoadedMcpCaptureContract(contract) {
+  if (!contract) {
+    return ''
+  }
+
+  const statusClass = contract.status === 'green' ? 'green' : 'red'
+  const accepted = (contract.acceptedSources || []).length > 0 ? contract.acceptedSources.join(', ') : 'none'
+  const rejected = (contract.rejectedSources || []).length > 0 ? contract.rejectedSources.join(', ') : 'none'
+  const missingLaneIds = (contract.missingLaneIds || []).length > 0 ? contract.missingLaneIds.join(', ') : 'none'
+  const missingGroupLaneIds = (contract.missingExpectedGroupLaneIds || []).length > 0
+    ? contract.missingExpectedGroupLaneIds.join(', ')
+    : 'none'
+  const steps = contract.captureSteps || []
+
+  return `<h2>Loaded MCP Live Capture Contract</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${statusClass}">${escapeHtml(contract.status || 'unknown')}</span> ${escapeHtml(contract.summary || '')}</div>
+      <div>Required tool</div><div><code>${escapeHtml(contract.requiredTool || 'mcp__firstbite_local_ci.list_lanes')}</code></div>
+      <div>Accepted sources</div><div><code>${escapeHtml(accepted)}</code></div>
+      <div>Rejected sources</div><div><code>${escapeHtml(rejected)}</code></div>
+      <div>Source pattern</div><div><code>${escapeHtml(contract.requiredProbeSourcePattern || '')}</code></div>
+      <div>Current source</div><div><span class="${escapeHtml(contract.currentSourceStatus || 'red')}">${escapeHtml(contract.currentSourceStatus || 'unknown')}</span> <code>${escapeHtml(contract.currentSource || 'missing')}</code><div class="meta">${escapeHtml(contract.currentSourceSummary || '')}</div></div>
+      <div>Expected repo</div><div><code>${escapeHtml(contract.expectedRepo || 'unknown')}</code></div>
+      <div>Expected all-group</div><div><code>${escapeHtml(contract.expectedGroupKey || 'unknown')}</code></div>
+      <div>Missing lanes</div><div><code>${escapeHtml(missingLaneIds)}</code></div>
+      <div>Missing all-group lanes</div><div><code>${escapeHtml(missingGroupLaneIds)}</code></div>
+      <div>Current invalid reason</div><div>${escapeHtml(contract.currentInvalidReason || 'none')}</div>
+      <div>Capture command</div><div><code>${escapeHtml(contract.captureCommand || '')}</code></div>
+      <div>Verify command</div><div><code>${escapeHtml(contract.verifyCommand || '')}</code></div>
+      <div>Capture steps</div><div>${steps.length ? `<ul>${steps.map(step => `<li>${escapeHtml(step)}</li>`).join('\n')}</ul>` : 'none'}</div>
+    </div>`
+}
+
 function renderLoadedMcpProbe(probe) {
   if (!probe) {
     return ''
@@ -6808,6 +6931,7 @@ module.exports = {
   buildAgentActivityMatrix,
   buildEvidenceFreshnessLedger,
   buildLaunchTrustAudit,
+  buildLoadedMcpCaptureContract,
   buildMcpCatalogDelta,
   buildProofAcceptanceMatrix,
   buildReport,
