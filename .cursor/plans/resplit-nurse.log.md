@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 09:50 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean landed-source local-CI execution, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and review-scout producer durability remain separate required trust contracts.
+- Shipped delta pending source promotion: the reliability cockpit now has a first-class `Review Scout Producer Control Plane` section. It inspects the producer script in `ai-leo` across the working tree, `HEAD`, `origin/main`, and `origin/codex/local-ci-handoff-hardening-20260525`, then turns "branch/local support exists but origin/main is missing it" into a yellow trust contract, operator action, evidence-freshness row, launch-audit row, and HTML section.
+- Fresh proof:
+  - `mcp__firstbite_local_ci.list_lanes` still lists only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so the loaded in-app MCP host boundary remains red/missing.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract`; review-scout producer durability is yellow with `durableSupports=false` and `producerBranchSupports=true`.
+  - `npm run check` -> strict release validation green and `233/233` tests passed.
+  - `bash /Users/leokwan/Development/ai-leo/skills/ledger/scripts/audit_ledger_quality.sh` -> `0 failure(s), 0 warning(s)`.
+  - `/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive` -> healthy; `88 entries/24h`, `0 failures`, `4` actionable review scouts still visible.
+- Boundary: this makes the GUI honest about the producer-side durability gap; it does not land the `ai-leo` review-scout script on `origin/main`, restart/reload the loaded MCP host, prove clean landed-source `resplit_currency_api_all`, or prove Cloudflare/Grafana delivery. After this source commit, rerun the canonical review scout from the final PR head before treating review-scout branch/head match as current proof.
+- Exact next slice: land the review-scout producer patch on `ai-leo origin/main`, rerun the canonical review scout from current PR head, restart/reload Codex/Cursor FirstBite MCP host and capture `reports/firstbite-loaded-mcp-lanes.json`, then run clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 08:10 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and canonical coding-agent review-scout scope remain separate required trust contracts.

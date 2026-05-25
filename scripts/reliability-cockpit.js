@@ -20,6 +20,8 @@ const DEFAULT_FIRSTBITE_LOCAL_CI_DIR = path.join(os.homedir(), 'Development', 'a
 const FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH = 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs'
 const FIRSTBITE_RUNNER_README_RELATIVE_PATH = 'skills/resplit-watch/mcp/firstbite-local-ci/README.md'
 const FIRSTBITE_WARN_EXIT_BRANCH_REF = 'origin/codex/firstbite-mcp-warn-exits-20260525'
+const FIRSTBITE_REVIEW_SCOUT_SCRIPT_RELATIVE_PATH = 'skills/resplit-watch/scripts/firstbite-cursor-review.sh'
+const FIRSTBITE_REVIEW_SCOUT_PRODUCER_BRANCH_REF = 'origin/codex/local-ci-handoff-hardening-20260525'
 const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
 const DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-operating-readout')
 const DEFAULT_FIRSTBITE_MCP_REFRESH_PLAN_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-mcp-refresh-plan')
@@ -176,6 +178,7 @@ function buildReport({
   repoBackedMcpProbe,
   repoBackedMcpPackageDir,
   firstBiteRunnerControlPlane,
+  firstBiteReviewScoutProducerControlPlane,
   aiLeoRepoDir,
   operatingReadoutRoot,
   mcpRefreshPlanRoot,
@@ -243,6 +246,9 @@ function buildReport({
     aiLeoRepoDir: aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR,
     packageDir: repoBackedMcpPackageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
   })
+  const reviewScoutProducerControlPlane = firstBiteReviewScoutProducerControlPlane || inspectFirstBiteReviewScoutProducerControlPlane({
+    aiLeoRepoDir: aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR,
+  })
   const reviewScout = inspectFirstBiteCursorReviewScout({
     reportRoot: cursorReviewRoot || DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR,
     expectedRepo: manifest?.repo,
@@ -256,6 +262,7 @@ function buildReport({
   localCi.operatingReadout = operatingReadout
   localCi.mcpRefreshPlan = mcpRefreshPlan
   localCi.runnerControlPlane = runnerControlPlane
+  localCi.reviewScoutProducerControlPlane = reviewScoutProducerControlPlane
   localCi.sourcePromotionBundle = buildSourcePromotionBundle({
     repoDir,
     trackedSource: localCi.trackedSource,
@@ -1896,6 +1903,166 @@ function inspectFirstBiteRunnerControlPlane({
     prSupports,
     supportTokens,
     rows,
+  }
+}
+
+function inspectFirstBiteReviewScoutProducerControlPlane({
+  aiLeoRepoDir = DEFAULT_AI_LEO_REPO_DIR,
+  scriptRelativePath = FIRSTBITE_REVIEW_SCOUT_SCRIPT_RELATIVE_PATH,
+  producerBranchRef = FIRSTBITE_REVIEW_SCOUT_PRODUCER_BRANCH_REF,
+} = {}) {
+  const scriptPath = path.join(aiLeoRepoDir, scriptRelativePath)
+  const supportTokens = [
+    'MANIFEST_LOCAL_CI_REPO_KEY',
+    'MANIFEST_LOCAL_CI_LANE_KEYS_JSON',
+    'LOCAL_CI_REPO_KEY',
+    'LEDGER_REPO_PATH',
+    'local_ci_repo_key',
+  ]
+  const tokenLabels = {
+    MANIFEST_LOCAL_CI_REPO_KEY: 'manifest repo key',
+    MANIFEST_LOCAL_CI_LANE_KEYS_JSON: 'manifest lane keys',
+    LOCAL_CI_REPO_KEY: 'canonical local-CI repo key',
+    LEDGER_REPO_PATH: 'canonical ledger repo path',
+    local_ci_repo_key: 'report repo key field',
+  }
+  const rows = [
+    inspectReviewScoutProducerSource({
+      id: 'workingTree',
+      label: 'Working tree script',
+      ref: 'working tree',
+      text: readTextIfExists(scriptPath),
+      source: scriptPath,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `firstbite-cursor-review.sh not found at ${scriptPath}`,
+    }),
+    inspectReviewScoutProducerSource({
+      id: 'head',
+      label: 'ai-leo HEAD',
+      ref: 'HEAD',
+      text: gitTextAtRef(aiLeoRepoDir, 'HEAD', scriptRelativePath),
+      source: `${aiLeoRepoDir}:HEAD:${scriptRelativePath}`,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `HEAD does not contain ${scriptRelativePath}`,
+    }),
+    inspectReviewScoutProducerSource({
+      id: 'originMain',
+      label: 'ai-leo origin/main',
+      ref: 'origin/main',
+      text: gitTextAtRef(aiLeoRepoDir, 'origin/main', scriptRelativePath),
+      source: `${aiLeoRepoDir}:origin/main:${scriptRelativePath}`,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `origin/main does not contain ${scriptRelativePath}`,
+    }),
+    inspectReviewScoutProducerSource({
+      id: 'producerBranch',
+      label: 'producer feature branch',
+      ref: producerBranchRef,
+      text: gitTextAtRef(aiLeoRepoDir, producerBranchRef, scriptRelativePath),
+      source: `${aiLeoRepoDir}:${producerBranchRef}:${scriptRelativePath}`,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `${producerBranchRef} does not contain ${scriptRelativePath}`,
+    }),
+  ]
+
+  const workingTree = rows.find(row => row.id === 'workingTree')
+  const head = rows.find(row => row.id === 'head')
+  const originMain = rows.find(row => row.id === 'originMain')
+  const producerBranch = rows.find(row => row.id === 'producerBranch')
+  const dirty = [gitPathStatus(aiLeoRepoDir, scriptRelativePath)].filter(Boolean)
+  const branch = gitRefShort(aiLeoRepoDir, 'HEAD')
+  const originMainHead = gitRefShort(aiLeoRepoDir, 'origin/main')
+  const producerBranchHead = gitRefShort(aiLeoRepoDir, producerBranchRef)
+  const activeSupports = Boolean(workingTree?.supports)
+  const headSupports = Boolean(head?.supports)
+  const durableSupports = Boolean(originMain?.supports)
+  const producerBranchSupports = Boolean(producerBranch?.supports)
+  let status = 'red'
+  if (activeSupports && durableSupports) {
+    status = 'green'
+  } else if (activeSupports || durableSupports || producerBranchSupports) {
+    status = 'yellow'
+  }
+  let summary = 'Active review-scout producer does not emit canonical repo-key and manifest-lane proof.'
+  if (activeSupports && durableSupports && headSupports) {
+    summary = 'Review-scout producer canonical repo-key support is landed on ai-leo origin/main and present in the active script.'
+  } else if (activeSupports && durableSupports) {
+    summary = 'Review-scout producer canonical repo-key support is landed on ai-leo origin/main and present in the active script; local ai-leo HEAD is stale or divergent.'
+  } else if (durableSupports) {
+    summary = 'Review-scout producer canonical repo-key support is landed on ai-leo origin/main, but the active script is stale.'
+  } else if (activeSupports || producerBranchSupports) {
+    summary = 'Review-scout producer canonical repo-key support exists locally or on the producer branch, but is not landed on ai-leo origin/main.'
+  }
+  const nextAction = activeSupports && durableSupports
+    ? 'Rerun the review scout after every PR source commit and keep local_ci_repo_key matched to the repo manifest.'
+    : durableSupports
+      ? 'Update the active ai-leo review-scout script from origin/main, then rerun the canonical review scout from the current checkout.'
+      : activeSupports || producerBranchSupports
+        ? 'Land the review-scout producer patch on ai-leo origin/main, then rerun the canonical review scout from the current checkout.'
+        : 'Port canonical repo-key and manifest-lane support into firstbite-cursor-review.sh before trusting review-scout scope.'
+
+  return {
+    status,
+    summary,
+    nextAction,
+    aiLeoRepoDir,
+    scriptRelativePath,
+    producerBranchRef,
+    branch,
+    originMainHead,
+    producerBranchHead,
+    dirty,
+    activeSupports,
+    headSupports,
+    durableSupports,
+    producerBranchSupports,
+    supportTokens,
+    rows,
+  }
+}
+
+function inspectReviewScoutProducerSource({
+  id,
+  label,
+  ref,
+  text,
+  source,
+  supportTokens = [],
+  tokenLabels = {},
+  missingWhenAbsent,
+}) {
+  if (!text) {
+    return {
+      id,
+      label,
+      ref,
+      source,
+      status: 'red',
+      supports: false,
+      present: false,
+      missingTokens: supportTokens,
+      summary: missingWhenAbsent || `${label} is missing.`,
+    }
+  }
+
+  const missingTokens = supportTokens.filter(token => !text.includes(token))
+  const supports = missingTokens.length === 0
+  return {
+    id,
+    label,
+    ref,
+    source,
+    status: supports ? 'green' : 'red',
+    supports,
+    present: true,
+    missingTokens,
+    summary: supports
+      ? `${label} emits canonical review-scout repo-key proof.`
+      : `${label} is missing ${missingTokens.map(token => tokenLabels[token] || token).join(', ')}.`,
   }
 }
 
@@ -3816,6 +3983,14 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger, review
     })
   }
 
+  if (localCi.reviewScoutProducerControlPlane?.status && localCi.reviewScoutProducerControlPlane.status !== 'green') {
+    risks.push({
+      status: localCi.reviewScoutProducerControlPlane.status,
+      label: 'Review-scout producer durability gap',
+      detail: localCi.reviewScoutProducerControlPlane.summary,
+    })
+  }
+
   const peerBoundary = localCi.operatingReadout?.peerExecutionBoundary
   if (peerBoundary?.status && peerBoundary.status !== 'green' && peerBoundary.status !== 'missing') {
     risks.push({
@@ -3922,6 +4097,7 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
   const sourcePromotionBundle = localCi?.sourcePromotionBundle
   const operatingReadout = localCi?.operatingReadout
   const runnerControlPlane = localCi?.runnerControlPlane
+  const reviewScoutProducerControlPlane = localCi?.reviewScoutProducerControlPlane
   const peerBoundary = operatingReadout?.peerExecutionBoundary
 
   const contracts = [
@@ -3970,6 +4146,13 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
       current: runnerControlPlane?.summary || 'FirstBite runner package durability was not inspected.',
       proof: runnerControlPlane?.serverRelativePath || FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH,
       nextAction: runnerControlPlane?.nextAction || 'Prove expected/yellow exit support is landed in ai-leo and loaded by the MCP host.',
+    },
+    {
+      gate: 'Review-scout producer durability',
+      status: reviewScoutProducerControlPlane?.status || 'yellow',
+      current: reviewScoutProducerControlPlane?.summary || 'Review-scout producer durability was not inspected.',
+      proof: reviewScoutProducerControlPlane?.scriptRelativePath || FIRSTBITE_REVIEW_SCOUT_SCRIPT_RELATIVE_PATH,
+      nextAction: reviewScoutProducerControlPlane?.nextAction || 'Prove firstbite-cursor-review.sh emits canonical repo-key proof and is landed on ai-leo origin/main.',
     },
   ]
 
@@ -4074,6 +4257,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const mcpRefreshPlan = localCi.mcpRefreshPlan || {}
   const operatingReadout = localCi.operatingReadout || {}
   const runnerControlPlane = localCi.runnerControlPlane || {}
+  const reviewScoutProducerControlPlane = localCi.reviewScoutProducerControlPlane || {}
   const cloudflareDestinations = telemetry.cloudflare?.destinations || {}
   const grafanaEvidence = telemetry.grafana?.evidence || {}
   const actions = []
@@ -4131,6 +4315,25 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       canRunNow: Boolean(runnerControlPlane.activeSupports || runnerControlPlane.prSupports),
       blockedBy: runnerControlPlane.activeSupports || runnerControlPlane.prSupports ? '' : 'Runner support is not present locally or on the PR branch.',
       boundary: 'local-agent-control-plane',
+    }))
+  }
+
+  if (contractNeedsAction(byGate.get('Review-scout producer durability'))) {
+    actions.push(operatorAction({
+      id: 'review-scout-producer-durability',
+      priority: 3,
+      owner: 'ai-leo review scout',
+      gate: 'Review-scout producer durability',
+      status: byGate.get('Review-scout producer durability')?.status || reviewScoutProducerControlPlane.status || 'yellow',
+      proof: reviewScoutProducerControlPlane.scriptRelativePath || FIRSTBITE_REVIEW_SCOUT_SCRIPT_RELATIVE_PATH,
+      command: `cd /Users/leokwan/Development/ai-leo && git branch -r --contains ${reviewScoutProducerControlPlane.producerBranchHead || 'HEAD'}`,
+      blocker: reviewScoutProducerControlPlane.summary || byGate.get('Review-scout producer durability')?.current || 'Review-scout producer durability was not inspected.',
+      nextAction: reviewScoutProducerControlPlane.nextAction || byGate.get('Review-scout producer durability')?.nextAction || 'Land canonical repo-key support in firstbite-cursor-review.sh, then rerun the scout.',
+      evidenceRequired: 'ai-leo origin/main contains firstbite-cursor-review.sh canonical repo-key support, and a fresh scout packet records repo=resplit-currency-api plus local_ci_repo_key=resplit_currency_api.',
+      unblocks: 'Local coding-agent review trust',
+      canRunNow: Boolean(reviewScoutProducerControlPlane.activeSupports || reviewScoutProducerControlPlane.producerBranchSupports),
+      blockedBy: reviewScoutProducerControlPlane.activeSupports || reviewScoutProducerControlPlane.producerBranchSupports ? '' : 'Producer support is not present locally or on the known feature branch.',
+      boundary: 'local-agent-review',
     }))
   }
 
@@ -4459,6 +4662,19 @@ function buildEvidenceFreshnessLedger({
       missingSummary: 'FirstBite runner control plane proof is missing.',
     }),
     buildEvidenceFreshnessRow({
+      id: 'review-scout-producer-control-plane',
+      surface: 'Review-scout producer control plane',
+      artifact: localCi?.reviewScoutProducerControlPlane?.scriptRelativePath || FIRSTBITE_REVIEW_SCOUT_SCRIPT_RELATIVE_PATH,
+      secondaryArtifact: localCi?.reviewScoutProducerControlPlane?.aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR,
+      checkedAt: generatedAt,
+      ageMinutes: 0,
+      trustStatus: localCi?.reviewScoutProducerControlPlane?.status || 'missing',
+      summary: localCi?.reviewScoutProducerControlPlane?.summary || 'Review-scout producer control plane was not inspected.',
+      nextAction: localCi?.reviewScoutProducerControlPlane?.nextAction || 'Land canonical repo-key support in ai-leo and rerun the review scout.',
+      missingStatus: 'red',
+      missingSummary: 'Review-scout producer control-plane proof is missing.',
+    }),
+    buildEvidenceFreshnessRow({
       id: 'cloudflare-otel-destinations',
       surface: 'Cloudflare OTEL destinations',
       artifact: cloudflareDestinations?.latestPath || path.join(repoDir || '', DEFAULT_OUTPUT_DIR, CLOUDFLARE_OTEL_DESTINATIONS_BASENAME),
@@ -4623,6 +4839,18 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
       evidence: byGate.get('FirstBite runner durability')?.proof || localCi?.runnerControlPlane?.serverRelativePath || FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH,
       gap: byGate.get('FirstBite runner durability')?.current || localCi?.runnerControlPlane?.summary || 'FirstBite runner durability proof missing.',
       nextAction: byGate.get('FirstBite runner durability')?.nextAction || localCi?.runnerControlPlane?.nextAction || 'Land ai-leo runner support and restart loaded MCP host.',
+    }),
+    trustAuditRow({
+      id: 'review-scout-producer-durability',
+      surface: 'Review-scout producer durability',
+      boundary: 'local-agent-review',
+      owner: 'ai-leo review scout',
+      status: byGate.get('Review-scout producer durability')?.status || localCi?.reviewScoutProducerControlPlane?.status || 'yellow',
+      allowedWhenGreen: 'firstbite-cursor-review.sh is landed on ai-leo origin/main and emits canonical repo-key plus manifest-lane proof.',
+      forbiddenUntilGreen: 'Do not treat a current review-scout packet as durable producer behavior if the script support only exists locally or on a feature branch.',
+      evidence: byGate.get('Review-scout producer durability')?.proof || localCi?.reviewScoutProducerControlPlane?.scriptRelativePath || FIRSTBITE_REVIEW_SCOUT_SCRIPT_RELATIVE_PATH,
+      gap: byGate.get('Review-scout producer durability')?.current || localCi?.reviewScoutProducerControlPlane?.summary || 'Review-scout producer durability proof missing.',
+      nextAction: byGate.get('Review-scout producer durability')?.nextAction || localCi?.reviewScoutProducerControlPlane?.nextAction || 'Land review-scout producer support in ai-leo and rerun the scout.',
     }),
     trustAuditRow({
       id: 'peer-execution',
@@ -5247,6 +5475,7 @@ function renderLocalCiProof(localCi) {
       ${renderSourcePromotionPacket(localCi.sourcePromotionPacket)}
       ${renderFirstBiteOperatingReadout(localCi.operatingReadout)}
       ${renderFirstBiteRunnerControlPlane(localCi.runnerControlPlane)}
+      ${renderReviewScoutProducerControlPlane(localCi.reviewScoutProducerControlPlane)}
       ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
       ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
       ${renderFirstBiteMcpRefreshPlan(localCi.mcpRefreshPlan)}
@@ -5280,6 +5509,7 @@ function renderLocalCiProof(localCi) {
     ${renderSourcePromotionPacket(localCi.sourcePromotionPacket)}
     ${renderFirstBiteOperatingReadout(localCi.operatingReadout)}
     ${renderFirstBiteRunnerControlPlane(localCi.runnerControlPlane)}
+    ${renderReviewScoutProducerControlPlane(localCi.reviewScoutProducerControlPlane)}
     ${renderCurrentManifestProof(localCi.currentManifestProof)}
     ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
     ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
@@ -5501,6 +5731,32 @@ function renderFirstBiteRunnerControlPlane(controlPlane) {
       <thead><tr><th>Boundary</th><th>Status</th><th>Supports warn exits</th><th>Ref</th><th>Missing tokens</th><th>Source</th><th>Summary</th></tr></thead>
       <tbody>
         ${rows.length === 0 ? '<tr><td colspan="7">No FirstBite runner control-plane rows were generated.</td></tr>' : rows.map(row => `<tr><td>${escapeHtml(row.label || row.id || '')}</td><td><span class="${escapeHtml(row.status || 'yellow')}">${escapeHtml(row.status || 'unknown')}</span></td><td>${row.supports ? '<span class="green">yes</span>' : '<span class="red">no</span>'}</td><td><code>${escapeHtml(row.ref || '')}</code></td><td><code>${escapeHtml((row.missingTokens || []).join(', ') || 'none')}</code></td><td><code>${escapeHtml(row.source || '')}</code></td><td>${escapeHtml(row.summary || '')}</td></tr>`).join('\n')}
+      </tbody>
+    </table>`
+}
+
+function renderReviewScoutProducerControlPlane(controlPlane) {
+  if (!controlPlane) {
+    return ''
+  }
+
+  const statusClass = controlPlane.status === 'green' ? 'green' : controlPlane.status === 'red' ? 'red' : 'yellow'
+  const dirty = (controlPlane.dirty || []).length > 0 ? controlPlane.dirty.join('; ') : 'clean for producer script'
+  const rows = controlPlane.rows || []
+
+  return `<h2>Review Scout Producer Control Plane</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${statusClass}">${escapeHtml(controlPlane.status || 'unknown')}</span> ${escapeHtml(controlPlane.summary || '')}</div>
+      <div>ai-leo repo</div><div><code>${escapeHtml(controlPlane.aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR)}</code></div>
+      <div>Script path</div><div><code>${escapeHtml(controlPlane.scriptRelativePath || FIRSTBITE_REVIEW_SCOUT_SCRIPT_RELATIVE_PATH)}</code></div>
+      <div>Refs</div><div>HEAD <code>${escapeHtml(controlPlane.branch || 'unknown')}</code> · origin/main <code>${escapeHtml(controlPlane.originMainHead || 'unknown')}</code> · producer branch <code>${escapeHtml(controlPlane.producerBranchHead || 'missing')}</code></div>
+      <div>Producer file status</div><div><code>${escapeHtml(dirty)}</code></div>
+      <div>Next action</div><div>${escapeHtml(controlPlane.nextAction || '')}</div>
+    </div>
+    <table>
+      <thead><tr><th>Boundary</th><th>Status</th><th>Emits repo key proof</th><th>Ref</th><th>Missing tokens</th><th>Source</th><th>Summary</th></tr></thead>
+      <tbody>
+        ${rows.length === 0 ? '<tr><td colspan="7">No review-scout producer control-plane rows were generated.</td></tr>' : rows.map(row => `<tr><td>${escapeHtml(row.label || row.id || '')}</td><td><span class="${escapeHtml(row.status || 'yellow')}">${escapeHtml(row.status || 'unknown')}</span></td><td>${row.supports ? '<span class="green">yes</span>' : '<span class="red">no</span>'}</td><td><code>${escapeHtml(row.ref || '')}</code></td><td><code>${escapeHtml((row.missingTokens || []).join(', ') || 'none')}</code></td><td><code>${escapeHtml(row.source || '')}</code></td><td>${escapeHtml(row.summary || '')}</td></tr>`).join('\n')}
       </tbody>
     </table>`
 }
@@ -5989,6 +6245,7 @@ module.exports = {
   evaluateMcpProofFreshness,
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
+  inspectFirstBiteReviewScoutProducerControlPlane,
   inspectFirstBiteRunnerControlPlane,
   inspectFirstBiteCursorReviewScout,
   inspectFirstBiteMcpRefreshPlan,

@@ -23,6 +23,7 @@ const {
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
   inspectFirstBiteCursorReviewScout,
+  inspectFirstBiteReviewScoutProducerControlPlane,
   inspectFirstBiteRunnerControlPlane,
   inspectFirstBiteMcpRefreshPlan,
   inspectFirstBiteOperatingReadout,
@@ -1550,6 +1551,55 @@ test('inspectFirstBiteRunnerControlPlane treats origin/main plus active package 
   assert.equal(controlPlane.rows.find(row => row.id === 'originMain').status, 'green')
 })
 
+test('inspectFirstBiteReviewScoutProducerControlPlane separates branch support from ai-leo origin/main', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-leo-review-scout-producer-'))
+  const scriptRel = 'skills/resplit-watch/scripts/firstbite-cursor-review.sh'
+  const scriptPath = path.join(repoDir, scriptRel)
+  const git = args => execFileSync('git', args, {
+    cwd: repoDir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const writeScript = text => {
+    fs.mkdirSync(path.dirname(scriptPath), { recursive: true })
+    fs.writeFileSync(scriptPath, text)
+  }
+  const supportedScript = [
+    'MANIFEST_LOCAL_CI_REPO_KEY="$(jq -r \'.repo // empty\' "$REPO/.firstbite/local-ci.json")"',
+    'MANIFEST_LOCAL_CI_LANE_KEYS_JSON="$(jq -c \'(.localCi.lanes // {}) | keys\' "$REPO/.firstbite/local-ci.json")"',
+    'LOCAL_CI_REPO_KEY="$MANIFEST_LOCAL_CI_REPO_KEY"',
+    'LEDGER_REPO_PATH="$DEV_ROOT/$REPO_NAME"',
+    '--arg local_ci_repo_key "$LOCAL_CI_REPO_KEY"',
+  ].join('\n')
+
+  git(['init', '-b', 'main'])
+  git(['config', 'user.email', 'test@example.com'])
+  git(['config', 'user.name', 'Test Runner'])
+  writeScript('REPO_NAME="$(basename "$REPO")"\n')
+  git(['add', scriptRel])
+  git(['commit', '-m', 'unsupported review scout producer'])
+  git(['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+  writeScript(supportedScript)
+  git(['add', scriptRel])
+  git(['commit', '-m', 'support canonical review scout producer'])
+  git(['update-ref', 'refs/remotes/origin/codex/local-ci-handoff-hardening-20260525', 'HEAD'])
+
+  const controlPlane = inspectFirstBiteReviewScoutProducerControlPlane({
+    aiLeoRepoDir: repoDir,
+  })
+
+  assert.equal(controlPlane.status, 'yellow')
+  assert.equal(controlPlane.activeSupports, true)
+  assert.equal(controlPlane.headSupports, true)
+  assert.equal(controlPlane.durableSupports, false)
+  assert.equal(controlPlane.producerBranchSupports, true)
+  assert.match(controlPlane.summary, /not landed on ai-leo origin\/main/)
+  assert.match(controlPlane.nextAction, /Land the review-scout producer patch/)
+  assert.equal(controlPlane.rows.find(row => row.id === 'workingTree').status, 'green')
+  assert.equal(controlPlane.rows.find(row => row.id === 'originMain').status, 'red')
+  assert.deepEqual(controlPlane.rows.find(row => row.id === 'producerBranch').missingTokens, [])
+})
+
 test('buildMcpCatalogDelta explains loaded host drift against repo-backed catalog', () => {
   const delta = buildMcpCatalogDelta({
     expectedRepo: 'resplit_currency_api',
@@ -2375,6 +2425,12 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
         serverRelativePath: 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs',
         nextAction: 'merge ai-leo PR #11 and restart host',
       },
+      reviewScoutProducerControlPlane: {
+        status: 'yellow',
+        summary: 'Review-scout producer support exists on producer branch, not origin/main.',
+        scriptRelativePath: 'skills/resplit-watch/scripts/firstbite-cursor-review.sh',
+        nextAction: 'land review-scout producer patch and rerun scout',
+      },
       loadedMcpProbe: {
         status: 'red',
         summary: 'Loaded MCP catalog is missing resplit_currency_api lanes',
@@ -2409,7 +2465,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     ledger: { health: { status: 'green', summary: 'healthy' } },
   })
 
-  assert.equal(contracts.length, 15)
+  assert.equal(contracts.length, 16)
   assert.deepEqual(contracts.map(contract => contract.gate), [
     'Primary checkout',
     'Tracked local-CI contract',
@@ -2417,6 +2473,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     'Source promotion bundle',
     'FirstBite operating readout',
     'FirstBite runner durability',
+    'Review-scout producer durability',
     'M4 peer execution boundary',
     'Selected local-CI proof',
     'Loaded MCP host catalog',
@@ -2432,11 +2489,13 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
   assert.equal(contracts.find(contract => contract.gate === 'Source promotion bundle').status, 'red')
   assert.equal(contracts.find(contract => contract.gate === 'FirstBite operating readout').status, 'yellow')
   assert.equal(contracts.find(contract => contract.gate === 'FirstBite runner durability').status, 'yellow')
+  assert.equal(contracts.find(contract => contract.gate === 'Review-scout producer durability').status, 'yellow')
   assert.equal(contracts.find(contract => contract.gate === 'M4 peer execution boundary').status, 'yellow')
   assert.match(contracts.find(contract => contract.gate === 'Clean proof targetability').nextAction, /sync tracked source/)
   assert.match(contracts.find(contract => contract.gate === 'Source promotion bundle').nextAction, /land bundle/)
   assert.match(contracts.find(contract => contract.gate === 'FirstBite operating readout').nextAction, /failed lane/)
   assert.match(contracts.find(contract => contract.gate === 'FirstBite runner durability').nextAction, /PR #11/)
+  assert.match(contracts.find(contract => contract.gate === 'Review-scout producer durability').nextAction, /review-scout producer/)
   assert.match(contracts.find(contract => contract.gate === 'M4 peer execution boundary').current, /support-only/)
   assert.equal(contracts.find(contract => contract.gate === 'M4 peer execution boundary').proof, '/tmp/m4/fresh-clone-commands.sh')
   assert.match(contracts.find(contract => contract.gate === 'Loaded MCP host catalog').nextAction, /Restart or reload/)
@@ -2651,6 +2710,15 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
         prSupports: true,
         nextAction: 'merge ai-leo PR #11 and restart host',
       },
+      reviewScoutProducerControlPlane: {
+        status: 'yellow',
+        summary: 'Review-scout producer support exists on producer branch, not origin/main.',
+        scriptRelativePath: 'skills/resplit-watch/scripts/firstbite-cursor-review.sh',
+        activeSupports: true,
+        producerBranchSupports: true,
+        producerBranchHead: 'abc1234',
+        nextAction: 'land review-scout producer patch and rerun scout',
+      },
       repoBackedMcpProbe: { status: 'green', summary: 'repo-backed ok' },
       mcpProof: { latest: { reportPath: '/tmp/report.json' } },
     },
@@ -2698,6 +2766,15 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
         prSupports: true,
         nextAction: 'merge ai-leo PR #11 and restart host',
       },
+      reviewScoutProducerControlPlane: {
+        status: 'yellow',
+        summary: 'Review-scout producer support exists on producer branch, not origin/main.',
+        scriptRelativePath: 'skills/resplit-watch/scripts/firstbite-cursor-review.sh',
+        activeSupports: true,
+        producerBranchSupports: true,
+        producerBranchHead: 'abc1234',
+        nextAction: 'land review-scout producer patch and rerun scout',
+      },
       operatingReadout: {
         status: 'yellow',
         summary: '17/18 lane proof(s) pass; non-FX lane failed',
@@ -2738,6 +2815,7 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
     'source-promotion-review',
     'clean-firstbite-proof',
     'firstbite-runner-durability',
+    'review-scout-producer-durability',
     'loaded-mcp-refresh',
     'cloudflare-otel-destinations',
     'grafana-otel-proof',
@@ -2752,6 +2830,8 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
   assert.match(actions.find(action => action.id === 'clean-firstbite-proof').command, /firstbite clean command/)
   assert.equal(actions.find(action => action.id === 'firstbite-runner-durability').canRunNow, true)
   assert.match(actions.find(action => action.id === 'firstbite-runner-durability').nextAction, /PR #11/)
+  assert.equal(actions.find(action => action.id === 'review-scout-producer-durability').canRunNow, true)
+  assert.match(actions.find(action => action.id === 'review-scout-producer-durability').nextAction, /review-scout producer/)
   assert.equal(actions.find(action => action.id === 'loaded-mcp-refresh').canRunNow, true)
   assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').command, /--reuse-existing/)
   assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').nextAction, /host restart/)
@@ -3007,6 +3087,28 @@ test('renderHtml escapes dynamic values', () => {
           supports: false,
           missingTokens: ['<runner-token>'],
           summary: '<runner-row-summary>',
+        }],
+      },
+      reviewScoutProducerControlPlane: {
+        status: 'yellow',
+        summary: '<producer-summary>',
+        nextAction: '<producer-next>',
+        aiLeoRepoDir: '/tmp/<ai-leo>',
+        scriptRelativePath: '<producer-script>',
+        producerBranchRef: '<producer-branch>',
+        branch: '<producer-head>',
+        originMainHead: '<producer-origin>',
+        producerBranchHead: '<producer-branch-head>',
+        dirty: ['<producer-dirty>'],
+        rows: [{
+          id: '<producer-row>',
+          label: '<producer-label>',
+          ref: '<producer-ref>',
+          source: '/tmp/<producer-source>',
+          status: 'red',
+          supports: false,
+          missingTokens: ['<producer-token>'],
+          summary: '<producer-row-summary>',
         }],
       },
       mcpCatalogDelta: {
@@ -3279,6 +3381,9 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /FirstBite Runner Control Plane/)
   assert.match(html, /&lt;runner-summary&gt;/)
   assert.match(html, /&lt;runner-token&gt;/)
+  assert.match(html, /Review Scout Producer Control Plane/)
+  assert.match(html, /&lt;producer-summary&gt;/)
+  assert.match(html, /&lt;producer-token&gt;/)
   assert.match(html, /M4 peer boundary/)
   assert.match(html, /&lt;m4-boundary&gt;/)
   assert.match(html, /&lt;m4-commands&gt;/)
