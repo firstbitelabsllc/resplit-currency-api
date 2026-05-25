@@ -1,5 +1,23 @@
 # Resplit Nurse Log
 
+## 2026-05-25 11:23 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, and the cockpit now separates a runnable loaded-MCP evidence recapture from the blocked loaded-MCP host reload.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` adds `loaded-mcp-recapture` as a `canRunNow=true` evidence-refresh action when the loaded-host probe is missing/stale, while keeping `loaded-mcp-refresh` red and `canRunNow=false` until Codex/Cursor actually reloads the long-lived MCP host.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the current Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded-agent execution remains red.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `63/63` focused cockpit tests green.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; `loaded-mcp-recapture` is yellow/run-now for stale evidence only, and `loaded-mcp-refresh` remains red/after-dependency for Codex/Cursor host reload.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green: `11` gate(s), `5` action(s), generated HTML sections present.
+  - `npm run check` -> strict release validation green and `249/249` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `10`, command drift `2`; generated `reports/` remain hold-by-default.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+- Boundary: this does not recapture the loaded-host artifact, reload the loaded MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It prevents the GUI from conflating "refresh stale evidence" with "trust this host is reloaded."
+- Exact next slice: commit/push this recapture-vs-reload split, rerun the read-only review scout from the final PR head, then either capture fresh live loaded-host `list_lanes` evidence or restart/reload Codex/Cursor and recapture before trusting loaded-agent execution.
+
 ## 2026-05-25 11:14 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, and the loaded Codex/Cursor MCP host is now explicitly modeled as a host-reload dependency instead of a runnable same-process action.

@@ -4529,6 +4529,24 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
     }))
   }
 
+  if (loadedMcpProbeNeedsRecapture(loadedMcp)) {
+    actions.push(operatorAction({
+      id: 'loaded-mcp-recapture',
+      priority: 3,
+      owner: 'Codex/Cursor MCP host',
+      gate: 'Loaded MCP probe freshness',
+      status: loadedMcp.status === 'missing' ? 'yellow' : loadedMcp.freshnessStatus || 'yellow',
+      proof: loadedMcp.path || 'reports/firstbite-loaded-mcp-lanes.json',
+      command: 'npm run mcp:loaded-probe -- --input /tmp/firstbite-loaded-mcp.json',
+      blocker: loadedMcp.freshnessSummary || loadedMcp.summary || 'Loaded MCP probe freshness is unknown.',
+      nextAction: 'Run live mcp__firstbite_local_ci.list_lanes from the loaded host, save the JSON, then capture it; this refreshes evidence only and does not prove a host reload.',
+      evidenceRequired: 'A fresh loaded-host list_lanes artifact. If resplit_currency_api is still missing, the loaded MCP catalog gate remains red.',
+      unblocks: 'Loaded MCP evidence freshness',
+      canRunNow: true,
+      boundary: 'local-agent-host-evidence',
+    }))
+  }
+
   if (contractNeedsAction(byGate.get('Loaded MCP host catalog'))) {
     actions.push(operatorAction({
       id: 'loaded-mcp-refresh',
@@ -4685,6 +4703,18 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   }
 
   return actions.sort((a, b) => a.priority - b.priority)
+}
+
+function loadedMcpProbeNeedsRecapture(loadedMcp = {}) {
+  if (!loadedMcp || Object.keys(loadedMcp).length === 0) {
+    return false
+  }
+
+  if (loadedMcp.status === 'missing') {
+    return true
+  }
+
+  return Boolean(loadedMcp.freshnessStatus && loadedMcp.freshnessStatus !== 'green')
 }
 
 function loadedMcpHostReloadBlocker({ loadedMcp = {}, mcpRefreshPlan = {} } = {}) {
