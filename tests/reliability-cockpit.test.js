@@ -651,6 +651,110 @@ test('buildSourcePromotionBundle turns dirty cockpit source into a tracked-sourc
   assert.match(bundle.nextAction, /land the listed current-only and modified/)
 })
 
+test('buildSourcePromotionBundle stays green after source lands even when clean proof is still red', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-promotion-landed-'))
+  const git = (...args) => {
+    require('node:child_process').execFileSync('git', args, {
+      cwd: repoDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  }
+  const writeText = (relPath, content = '') => {
+    const absPath = path.join(repoDir, relPath)
+    fs.mkdirSync(path.dirname(absPath), { recursive: true })
+    fs.writeFileSync(absPath, content)
+  }
+  const writeJson = (relPath, value) => writeText(relPath, `${JSON.stringify(value, null, 2)}\n`)
+
+  git('init')
+  git('config', 'user.email', 'test@example.com')
+  git('config', 'user.name', 'Test User')
+
+  const manifest = {
+    repo: 'resplit_currency_api',
+    localCi: {
+      lanes: {
+        resplit_currency_api_unit: {
+          command: 'npm ci && npm run generate && npm run test',
+        },
+        resplit_currency_api_integration: {
+          command: 'npm ci && npm run check:publish',
+        },
+        resplit_currency_api_ui: {
+          command: 'npm ci && npm run smoke:deploy',
+        },
+      },
+    },
+  }
+  const packageJson = {
+    scripts: {
+      generate: 'node currscript.js',
+      validate: 'node scripts/validate-package.js',
+      test: 'node --test tests/*.test.js',
+      'smoke:deploy': 'node scripts/smoke-check-deploy.js',
+      check: 'npm run generate && npm run validate && npm run test',
+      'check:publish': 'npm run generate && npm run validate && npm run test',
+      'reliability:cockpit': 'node scripts/reliability-cockpit.js',
+      'source:promotion-packet': 'node scripts/source-promotion-packet.js',
+    },
+  }
+
+  writeJson('.firstbite/local-ci.json', manifest)
+  writeJson('.firstbite/source-promotion-decisions.json', { version: 1, decisions: [] })
+  writeJson('package.json', packageJson)
+  for (const relPath of [
+    'currscript.js',
+    'scripts/reliability-cockpit.js',
+    'tests/reliability-cockpit.test.js',
+    'scripts/source-promotion-packet.js',
+    'tests/source-promotion-packet.test.js',
+    'scripts/trust-preflight.js',
+    'tests/trust-preflight.test.js',
+    'scripts/capture-loaded-mcp-probe.js',
+    'tests/capture-loaded-mcp-probe.test.js',
+    'scripts/verify-grafana-otel-smoke.js',
+    'tests/verify-grafana-otel-smoke.test.js',
+    'scripts/audit-history-backfill-sources.js',
+    'tests/audit-history-backfill-sources.test.js',
+    'scripts/smoke-check-deploy.js',
+    'tests/smoke-check-deploy.test.js',
+    'scripts/validate-package.js',
+    'tests/validate-package.test.js',
+  ]) {
+    writeText(relPath, '')
+  }
+  git('add', '.')
+  git('commit', '-m', 'land source-promotion surface')
+  git('branch', 'origin/main')
+
+  const trackedSource = inspectTrackedSourceContract({
+    repoDir,
+    manifest,
+    packageJson,
+    manifestPath: path.join(repoDir, '.firstbite', 'local-ci.json'),
+  })
+  const bundle = buildSourcePromotionBundle({
+    repoDir,
+    trackedSource,
+    cleanProofReadiness: {
+      status: 'red',
+      commands: { cleanWorktree: 'firstbite clean command' },
+    },
+  })
+
+  assert.equal(trackedSource.status, 'green')
+  assert.equal(bundle.status, 'green')
+  assert.equal(bundle.summary, 'Source promotion bundle is tracked; clean worktree proof can target the current cockpit and local-CI contract.')
+  assert.equal(bundle.nextAction, 'Run the clean worktree FirstBite command and attach the new report.')
+  assert.equal(bundle.counts.currentOnlyFiles, 0)
+  assert.equal(bundle.counts.modifiedFiles, 0)
+  assert.equal(bundle.counts.missingOriginFiles, 0)
+  assert.equal(bundle.counts.commandDrift, 0)
+  assert.deepEqual(bundle.recommendedPaths, [])
+  assert.equal(bundle.commands.cleanProofAfterPromotion, 'firstbite clean command')
+  assert.ok(bundle.files.every(row => row.action === 'already tracked'))
+})
+
 test('inspectFirstBiteOperatingReadout surfaces fleet readiness without hiding non-FX failures', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-readout-'))
   const runDir = path.join(root, '20260525T064939Z-31520')

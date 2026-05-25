@@ -922,10 +922,8 @@ function buildSourcePromotionBundle({ repoDir, trackedSource = null, cleanProofR
     || missingOriginFiles.length > 0
     || commandDrift.some(row => row.status === 'red')
     || trackedSource?.status === 'red'
-    || cleanProofReadiness?.status === 'red'
   const yellow = commandDrift.length > 0
     || trackedSource?.status === 'yellow'
-    || cleanProofReadiness?.status === 'yellow'
   const status = red ? 'red' : yellow ? 'yellow' : 'green'
   const summary = status === 'green'
     ? 'Source promotion bundle is tracked; clean worktree proof can target the current cockpit and local-CI contract.'
