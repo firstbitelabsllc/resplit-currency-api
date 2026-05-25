@@ -203,6 +203,18 @@ function verifyJsonContract(cockpit) {
   if (cockpit.localCi?.operatingReadout?.status && !cockpit.localCi?.operatingReadoutScopeContract?.status) {
     failures.push('FirstBite operating readout exists but scope contract is missing')
   }
+  const preflight = cockpit.trustModel?.preflight
+  if (preflight?.status === 'red') {
+    const redCommands = (preflight.commands || []).filter(command => command.status === 'red')
+    const diagnostics = preflight.commandDiagnostics || []
+    for (const command of redCommands) {
+      const diagnostic = diagnostics.find(item => item.id === command.id)
+      const diagnosticText = `${diagnostic?.summary || ''} ${(diagnostic?.signals || []).join(' ')} ${(diagnostic?.blockers || []).map(blocker => `${blocker.id} ${blocker.status} ${blocker.detail}`).join(' ')}`
+      if (!diagnostic || !/red|blocked|completion-audit|Missing|FAILED|Error/i.test(diagnosticText)) {
+        failures.push(`trust preflight red command lacks actionable diagnostics: ${command.id || 'unknown'}`)
+      }
+    }
+  }
   const findingTaxonomy = cockpit.localCi?.findingTaxonomy
   if (!findingTaxonomy?.status) {
     failures.push('local CI finding taxonomy is missing')
@@ -496,6 +508,24 @@ function verifyHtmlContract({ cockpit, html }) {
       for (const finding of category.laneFindings || []) {
         if (finding.reason && !html.includes(escapeForHtmlText(finding.reason))) {
           failures.push(`HTML missing local CI finding taxonomy lane reason: ${finding.lane || category.id}`)
+        }
+      }
+    }
+  }
+
+  const preflight = cockpit.trustModel?.preflight
+  const commandDiagnostics = preflight?.commandDiagnostics || []
+  if (commandDiagnostics.length > 0) {
+    if (!html.includes('Trust Preflight Command Details')) {
+      failures.push('HTML missing trust preflight command diagnostics section')
+    }
+    for (const diagnostic of commandDiagnostics) {
+      if (diagnostic.summary && !html.includes(escapeForHtmlText(diagnostic.summary))) {
+        failures.push(`HTML missing trust preflight command diagnostic summary: ${diagnostic.id || 'unknown'}`)
+      }
+      for (const blocker of diagnostic.blockers || []) {
+        if (blocker.id && !html.includes(escapeForHtmlText(blocker.id))) {
+          failures.push(`HTML missing trust preflight command blocker: ${blocker.id}`)
         }
       }
     }

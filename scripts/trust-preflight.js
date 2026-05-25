@@ -12,6 +12,8 @@ const {
 const DEFAULT_OUTPUT_DIR = 'reports'
 const DEFAULT_MARKDOWN_BASENAME = 'resplit-fx-trust-preflight.md'
 const OUTPUT_TAIL_LIMIT = 4000
+const DIAGNOSTIC_SIGNAL_LIMIT = 8
+const DIAGNOSTIC_LINE_LIMIT = 240
 
 if (require.main === module) {
   runTrustPreflight(process.argv.slice(2)).then(result => {
@@ -21,6 +23,9 @@ if (require.main === module) {
       process.stdout.write(`trust-preflight: ${result.report.summary.headline}\n`)
       process.stdout.write(`trust-preflight: wrote ${result.report.outputPath}\n`)
       process.stdout.write(`trust-preflight: wrote ${result.report.markdownPath}\n`)
+      for (const line of formatPreflightDiagnosticLines(result.report)) {
+        process.stdout.write(`${line}\n`)
+      }
     }
     process.exitCode = exitCodeForStatus(result.report.status)
   }).catch(error => {
@@ -277,6 +282,7 @@ function buildTrustPreflightReport({
   cockpit,
 }) {
   const commandCounts = countByStatus(commands)
+  const commandDiagnostics = summarizeCommandDiagnostics(commands)
   const status = commands.some(command => command.status === 'red') || cockpit?.verdict?.status === 'red'
     ? 'red'
     : commands.some(command => command.status === 'yellow') || cockpit?.verdict?.status === 'yellow'
@@ -298,6 +304,8 @@ function buildTrustPreflightReport({
     summary: {
       headline,
       commandCounts,
+      commandDiagnostics,
+      blockingCommands: commandDiagnostics.filter(command => command.status === 'red'),
     },
     commands,
   }
@@ -329,6 +337,7 @@ function readCockpitSummary(repoDir) {
 }
 
 function renderMarkdown(report) {
+  const commandDiagnostics = report.summary?.commandDiagnostics || []
   const lines = [
     '# Resplit FX Trust Preflight',
     '',
@@ -342,6 +351,18 @@ function renderMarkdown(report) {
     '| Check | Status | Exit | Expected | Yellow | Command |',
     '|---|---:|---:|---|---|---|',
     ...report.commands.map(command => `| ${escapeMarkdown(command.label)} | ${command.status} | ${command.rc} | ${(command.expectedExitCodes || []).join(', ')} | ${(command.yellowExitCodes || []).join(', ') || 'none'} | \`${escapeMarkdown(command.command)}\` |`),
+    '',
+    '## Non-Green Command Details',
+    '',
+    commandDiagnostics.length === 0
+      ? 'All command exits were green.'
+      : '| Check | Status | Exit | Summary | Blocking rows |\n|---|---:|---:|---|---|\n'
+        + commandDiagnostics.map(command => {
+          const blockers = (command.blockers || [])
+            .map(blocker => `${blocker.id} [${blocker.status}] ${blocker.detail}`)
+            .join('; ') || 'none'
+          return `| ${escapeMarkdown(command.label || command.id)} | ${command.status} | ${command.rc} | ${escapeMarkdown(command.summary)} | ${escapeMarkdown(blockers)} |`
+        }).join('\n'),
     '',
     '## Trust Contracts',
     '',
@@ -358,6 +379,87 @@ function countByStatus(commands) {
     counts[command.status] = (counts[command.status] || 0) + 1
     return counts
   }, {})
+}
+
+function summarizeCommandDiagnostics(commands) {
+  return commands
+    .filter(command => command.status && command.status !== 'green')
+    .map(command => {
+      const output = [command.stdoutTail, command.stderrTail].filter(Boolean).join('\n')
+      const blockers = extractBlockingRows(output)
+      const signals = extractDiagnosticSignals(output)
+      const summary = signals[0]
+        || blockers[0]?.detail
+        || `${command.label || command.id || 'Command'} exited ${command.rc ?? 'unknown'}.`
+      return {
+        id: command.id || 'unknown',
+        label: command.label || command.id || 'unknown',
+        command: command.command || '',
+        status: command.status,
+        rc: command.rc,
+        summary,
+        signals,
+        blockers,
+      }
+    })
+}
+
+function extractBlockingRows(output) {
+  return String(output || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .map(line => {
+      const match = line.match(/^-\s+(.+?)\s+\[(red|yellow|green)\]\s+(.+)$/i)
+      if (!match) {
+        return null
+      }
+      return {
+        id: truncateDiagnosticLine(match[1]),
+        status: match[2].toLowerCase(),
+        detail: truncateDiagnosticLine(match[3]),
+      }
+    })
+    .filter(Boolean)
+    .filter(row => row.status === 'red' || row.status === 'yellow')
+    .slice(0, DIAGNOSTIC_SIGNAL_LIMIT)
+}
+
+function extractDiagnosticSignals(output) {
+  const seen = new Set()
+  const signals = []
+  for (const rawLine of String(output || '').split(/\r?\n/)) {
+    const line = truncateDiagnosticLine(rawLine)
+    if (!line || seen.has(line)) {
+      continue
+    }
+    if (/^>/.test(line) || /^npm\s+(ERR!|WARN)/i.test(line)) {
+      continue
+    }
+    if (/completion-audit:|trust-preflight:|smoke-check-deploy:|FAILED|Error:|Missing|blocked|red|yellow/i.test(line)) {
+      seen.add(line)
+      signals.push(line)
+    }
+    if (signals.length >= DIAGNOSTIC_SIGNAL_LIMIT) {
+      break
+    }
+  }
+  return signals
+}
+
+function formatPreflightDiagnosticLines(report) {
+  const diagnostics = report.summary?.commandDiagnostics || []
+  const shouldPrintYellow = report.status === 'yellow'
+  return diagnostics
+    .filter(command => command.status === 'red' || shouldPrintYellow)
+    .flatMap(command => {
+      const lines = [
+        `trust-preflight: ${command.status} command ${command.id} exited ${command.rc ?? 'unknown'}: ${command.summary}`,
+      ]
+      for (const blocker of (command.blockers || []).slice(0, 4)) {
+        lines.push(`trust-preflight: blocker ${blocker.id} [${blocker.status}] ${blocker.detail}`)
+      }
+      return lines
+    })
 }
 
 function readJsonIfExists(filePath) {
@@ -389,6 +491,11 @@ function tail(value) {
   return text.slice(-OUTPUT_TAIL_LIMIT)
 }
 
+function truncateDiagnosticLine(value) {
+  const line = String(value || '').trim().replace(/\s+/g, ' ')
+  return line.length <= DIAGNOSTIC_LINE_LIMIT ? line : `${line.slice(0, DIAGNOSTIC_LINE_LIMIT - 3)}...`
+}
+
 function escapeMarkdown(value) {
   return String(value ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ')
 }
@@ -398,7 +505,9 @@ module.exports = {
   buildTrustPreflightReport,
   classifyCommandResult,
   exitCodeForStatus,
+  formatPreflightDiagnosticLines,
   parseArgs,
   renderMarkdown,
   runTrustPreflight,
+  summarizeCommandDiagnostics,
 }

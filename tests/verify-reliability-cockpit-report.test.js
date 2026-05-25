@@ -159,6 +159,36 @@ test('verifyCockpitReport fails when trust preflight proof gap reason is opaque'
   assert.match(result.report.failures.join('\n'), /trust_preflight proof gap reason is missing or opaque/)
 })
 
+test('verifyCockpitReport fails when trust preflight red command diagnostics disappear', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-preflight-diagnostics-'))
+  const report = buildReport()
+  report.trustModel.preflight.commandDiagnostics = []
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /trust preflight red command lacks actionable diagnostics: completion-audit/)
+})
+
+test('verifyCockpitReport fails when trust preflight command details are omitted from HTML', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-preflight-html-'))
+  const report = buildReport()
+  const html = buildHtml(report).replace('Trust Preflight Command Details', 'Trust Preflight Commands')
+  writeReport(repoDir, report, html)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /HTML missing trust preflight command diagnostics section/)
+})
+
 test('verifyCockpitReport fails when loaded MCP operator proof drops repo path binding', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-loaded-proof-path-'))
   const report = buildReport()
@@ -390,6 +420,29 @@ function buildReport() {
       },
     },
     trustModel: {
+      preflight: {
+        status: 'red',
+        summary: 'status=red; commands 11 green, 3 yellow, 1 red; cockpit=RED - missing required trust contract',
+        commands: [{
+          id: 'completion-audit',
+          label: 'Launch completion audit',
+          command: 'npm run reliability:completion-audit',
+          status: 'red',
+          rc: 2,
+          expectedExitCodes: [0, 2],
+          yellowExitCodes: [],
+        }],
+        commandDiagnostics: [{
+          id: 'completion-audit',
+          label: 'Launch completion audit',
+          command: 'npm run reliability:completion-audit',
+          status: 'red',
+          rc: 2,
+          summary: 'completion-audit: red Launch completion blocked.',
+          signals: ['completion-audit: red Launch completion blocked.'],
+          blockers: [{ id: 'source-contract', status: 'red', detail: 'Source bundle is not on origin/main.' }],
+        }],
+      },
       contracts: REQUIRED_CONTRACT_GATES.map(gate => ({ gate, status: 'yellow' })),
       operatorActions: REQUIRED_OPERATOR_ACTIONS.map(id => ({ id, status: 'yellow' })),
       operatorRecoveryFlow: {
@@ -524,6 +577,12 @@ function buildHtml(report) {
       category.id,
       category.summary,
       ...(category.laneFindings || []).map(finding => finding.reason),
+    ]),
+    'Trust Preflight Command Details',
+    ...report.trustModel.preflight.commandDiagnostics.flatMap(diagnostic => [
+      diagnostic.summary,
+      ...(diagnostic.blockers || []).map(blocker => blocker.id),
+      ...(diagnostic.blockers || []).map(blocker => blocker.detail),
     ]),
   ].join('\n')
 }

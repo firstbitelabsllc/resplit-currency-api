@@ -9,6 +9,7 @@ const {
   buildTrustPreflightReport,
   classifyCommandResult,
   exitCodeForStatus,
+  formatPreflightDiagnosticLines,
   parseArgs,
   renderMarkdown,
   runTrustPreflight,
@@ -110,6 +111,47 @@ test('buildTrustPreflightReport keeps cockpit red as the overall result', () => 
   assert.equal(report.status, 'red')
   assert.match(report.summary.headline, /cockpit=RED/)
   assert.match(renderMarkdown(report), /Loaded MCP host catalog/)
+})
+
+test('buildTrustPreflightReport promotes red command output into actionable diagnostics', () => {
+  const completionAudit = classifyCommandResult({
+    id: 'completion-audit',
+    label: 'Launch completion audit',
+    command: 'npm run reliability:completion-audit',
+    rc: 2,
+    expectedExitCodes: [0, 2],
+    redExitCodes: [2],
+    durationMs: 10,
+    stdout: [
+      'completion-audit: red Launch completion blocked: 0 stale/missing cockpit report(s), 2 non-green trust contract(s).',
+      '- source-contract [red] Source bundle has not landed on origin/main.',
+      '- proof:otel-grafana-proof [yellow] Tempo and Loki proof are still missing.',
+    ].join('\n'),
+  })
+  const report = buildTrustPreflightReport({
+    repoDir: '/tmp/resplit-currency-api',
+    generatedAt: '2026-05-25T06:00:00.000Z',
+    mode: 'fast',
+    outputPath: '/tmp/report.json',
+    markdownPath: '/tmp/report.md',
+    commands: [completionAudit],
+    cockpit: {
+      verdict: { status: 'red', label: 'RED - missing required trust contract' },
+      contracts: [],
+    },
+  })
+  const diagnostic = report.summary.commandDiagnostics[0]
+  const printed = formatPreflightDiagnosticLines(report).join('\n')
+  const markdown = renderMarkdown(report)
+
+  assert.equal(diagnostic.id, 'completion-audit')
+  assert.match(diagnostic.summary, /Launch completion blocked/)
+  assert.equal(diagnostic.blockers[0].id, 'source-contract')
+  assert.equal(diagnostic.blockers[0].status, 'red')
+  assert.match(printed, /trust-preflight: red command completion-audit exited 2/)
+  assert.match(printed, /trust-preflight: blocker source-contract \[red\]/)
+  assert.match(markdown, /Non-Green Command Details/)
+  assert.match(markdown, /proof:otel-grafana-proof/)
 })
 
 test('runTrustPreflight writes JSON and Markdown, then refreshes cockpit', async () => {

@@ -473,6 +473,10 @@ function inspectTrustPreflight(artifact, artifactPath, generatedAt = new Date().
   const status = ['green', 'yellow', 'red'].includes(artifact.status) ? artifact.status : 'yellow'
   const summary = artifact.summary?.headline
     || `${commands.length} command(s): ${counts.green || 0} green, ${counts.yellow || 0} yellow, ${counts.red || 0} red.`
+  const commandDiagnostics = normalizeTrustPreflightCommandDiagnostics({
+    diagnostics: artifact.summary?.commandDiagnostics,
+    commands,
+  })
 
   return {
     status,
@@ -483,6 +487,7 @@ function inspectTrustPreflight(artifact, artifactPath, generatedAt = new Date().
     mode: artifact.mode || null,
     cockpitVerdict: artifact.cockpit?.verdict || null,
     markdownPath: artifact.markdownPath || null,
+    commandDiagnostics,
     commands: commands.map(command => ({
       id: command.id || 'unknown',
       label: command.label || command.id || 'unknown',
@@ -492,8 +497,50 @@ function inspectTrustPreflight(artifact, artifactPath, generatedAt = new Date().
       durationMs: command.durationMs,
       expectedExitCodes: command.expectedExitCodes || [],
       yellowExitCodes: command.yellowExitCodes || [],
+      stdoutTail: command.stdoutTail || '',
+      stderrTail: command.stderrTail || '',
     })),
   }
+}
+
+function normalizeTrustPreflightCommandDiagnostics({ diagnostics = null, commands = [] } = {}) {
+  const source = Array.isArray(diagnostics)
+    ? diagnostics
+    : commands.filter(command => command.status && command.status !== 'green').map(command => ({
+      id: command.id || 'unknown',
+      label: command.label || command.id || 'unknown',
+      command: command.command || '',
+      status: command.status || 'unknown',
+      rc: command.rc,
+      summary: firstTrustPreflightSignal(command) || `${command.label || command.id || 'Command'} exited ${command.rc ?? 'unknown'}.`,
+      signals: [firstTrustPreflightSignal(command)].filter(Boolean),
+      blockers: [],
+    }))
+
+  return source.map(item => ({
+    id: item.id || 'unknown',
+    label: item.label || item.id || 'unknown',
+    command: item.command || '',
+    status: item.status || 'unknown',
+    rc: item.rc,
+    summary: item.summary || `${item.label || item.id || 'Command'} exited ${item.rc ?? 'unknown'}.`,
+    signals: Array.isArray(item.signals) ? item.signals.filter(Boolean).slice(0, 8) : [],
+    blockers: Array.isArray(item.blockers)
+      ? item.blockers.map(blocker => ({
+        id: blocker.id || 'unknown',
+        status: blocker.status || 'unknown',
+        detail: blocker.detail || '',
+      })).slice(0, 8)
+      : [],
+  }))
+}
+
+function firstTrustPreflightSignal(command) {
+  const lines = `${command.stdoutTail || ''}\n${command.stderrTail || ''}`
+    .split(/\r?\n/)
+    .map(line => line.trim().replace(/\s+/g, ' '))
+    .filter(Boolean)
+  return lines.find(line => /completion-audit:|trust-preflight:|smoke-check-deploy:|FAILED|Error:|Missing|blocked|red|yellow/i.test(line)) || null
 }
 
 function inspectSourcePromotionPacket({
@@ -4895,7 +4942,12 @@ function extractGenericLaneFailure(text) {
     .filter(Boolean)
   const trustPreflight = lines.find(line => /^trust-preflight:\s+status=/i.test(line))
   if (trustPreflight) {
-    return trustPreflight.slice(0, 220)
+    const commandDetail = lines.find(line => /^trust-preflight:\s+(red|yellow)\s+command\s+/i.test(line))
+    const blocker = lines.find(line => /^trust-preflight:\s+blocker\s+.+\[(red|yellow)\]/i.test(line))
+    return [trustPreflight, commandDetail, blocker]
+      .filter(Boolean)
+      .join(' | ')
+      .slice(0, 420)
   }
 
   const signal = lines.find(line => (
@@ -6711,7 +6763,29 @@ function renderTrustPreflight(preflight) {
         ${commands.length === 0 ? '<tr><td colspan="7">Run <code>npm run trust:preflight</code> to create this artifact.</td></tr>' : commands.map(command => `<tr><td>${escapeHtml(command.label || command.id)}</td><td><span class="${escapeHtml(command.status || 'yellow')}">${escapeHtml(command.status || 'unknown')}</span></td><td>${escapeHtml(String(command.rc ?? 'n/a'))}</td><td>${escapeHtml((command.expectedExitCodes || []).join(', ') || 'n/a')}</td><td>${escapeHtml((command.yellowExitCodes || []).join(', ') || 'none')}</td><td>${escapeHtml(String(command.durationMs ?? 'n/a'))}ms</td><td><code>${escapeHtml(command.command || '')}</code></td></tr>`).join('\n')}
       </tbody>
     </table>
+    ${renderTrustPreflightCommandDetails(preflight.commandDiagnostics)}
   </section>`
+}
+
+function renderTrustPreflightCommandDetails(diagnostics = []) {
+  const rows = Array.isArray(diagnostics) ? diagnostics : []
+  if (rows.length === 0) {
+    return ''
+  }
+
+  return `<h3>Trust Preflight Command Details</h3>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Exit</th><th>Summary</th><th>Blocking rows</th><th>Signals</th></tr></thead>
+      <tbody>
+        ${rows.map(command => {
+          const blockers = (command.blockers || [])
+            .map(blocker => `<code>${escapeHtml(blocker.id || 'unknown')}</code> <span class="${escapeHtml(blocker.status || 'yellow')}">${escapeHtml(blocker.status || 'unknown')}</span> ${escapeHtml(blocker.detail || '')}`)
+            .join('<br>') || 'none'
+          const signals = (command.signals || []).map(signal => escapeHtml(signal)).join('<br>') || 'none'
+          return `<tr><td>${escapeHtml(command.label || command.id || 'unknown')}<div class="meta"><code>${escapeHtml(command.command || '')}</code></div></td><td><span class="${escapeHtml(command.status || 'yellow')}">${escapeHtml(command.status || 'unknown')}</span></td><td>${escapeHtml(String(command.rc ?? 'n/a'))}</td><td>${escapeHtml(command.summary || '')}</td><td>${blockers}</td><td>${signals}</td></tr>`
+        }).join('\n')}
+      </tbody>
+    </table>`
 }
 
 function renderEvidenceFreshnessLedger(freshness) {

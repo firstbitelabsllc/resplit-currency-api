@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 16:58 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The current-source local-CI lane failure is now more actionable: `resplit_currency_api_trust_preflight` no longer collapses the red command into only `cockpit=RED`; the preflight artifact, markdown, cockpit GUI, and FirstBite log output now name the failing `completion-audit` command and its first blocker rows.
+- Shipped delta pending source promotion: `scripts/trust-preflight.js` now extracts non-green command diagnostics from stdout/stderr tails, stores `summary.commandDiagnostics`, renders a `Non-Green Command Details` markdown table, and prints `trust-preflight: red command ...` plus `trust-preflight: blocker ...` lines for local-CI logs. `scripts/reliability-cockpit.js` now preserves those diagnostics in `trustModel.preflight`, renders a `Trust Preflight Command Details` table in the GUI, and enriches failed-lane parsing so FirstBite operating readouts can carry `completion-audit` blocker detail. `scripts/verify-reliability-cockpit-report.js` now fails if a red preflight command lacks actionable diagnostics or if the generated HTML omits them.
+- Fresh proof:
+  - `node --test tests/trust-preflight.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `108/108` tests passed.
+  - `npm run trust:preflight` -> expected red exit `2`; generated cockpit and preflight artifacts. New stdout includes `trust-preflight: red command completion-audit exited 2: completion-audit: red Launch completion blocked...` plus blocker rows for `overall-launch-trust`, `source-contract`, `clean-firstbite-local-ci`, and `loaded-agent-mcp`.
+  - `npm run reliability:cockpit:verify` -> green; generated report HEAD matches `924d7c13f743`.
+  - `node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/reliability-completion-audit.test.js tests/source-promotion-packet.test.js tests/verify-cloudflare-otel-destinations.test.js tests/verify-grafana-otel-smoke.test.js tests/verify-reliability-cockpit-report.test.js tests/trust-preflight.test.js` -> `144/144` tests passed.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). The red rows remain `overall-launch-trust`, `source-contract`, `clean-firstbite-local-ci`, `loaded-agent-mcp`, and `agent-ledger-fleet`; Cloudflare/Grafana/M4 remain yellow separate proof gates.
+  - `npm run check` -> generate green, strict release validation green, and `289/289` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this still does not clear `resplit_currency_api_trust_preflight`, restart/reload Codex/Cursor, prove the loaded MCP host is bound to this PR worktree, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the local-CI surface answer the next operator question directly: the red lane is a completion-audit/source-contract/proof-boundary failure, not a hidden product regression.
+- Exact next slice: commit/push this diagnostic surfacing, regenerate the cockpit at the new commit HEAD, run current-source FirstBite proof from the new commit, and keep decomposing `agent-ledger-fleet`/`source-contract` without mixing loaded-host or external observability gates.
+
 ## 2026-05-25 16:37 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. After the `origin/main` merge commit, I reran current-source FirstBite proof at `01ca2b31c6bd` and refreshed the PR-scoped operating readout. Local CI now proves `4/4` FX lane proof rows came from the current merge commit; the only current FX lane failure is `resplit_currency_api_trust_preflight`.

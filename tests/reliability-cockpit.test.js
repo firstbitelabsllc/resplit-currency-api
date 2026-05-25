@@ -37,6 +37,7 @@ const {
   inspectLoadedMcpProbe,
   inspectRepoBackedMcpCatalog,
   inspectTelemetry,
+  inspectTrustPreflight,
   inspectTrackedSourceContract,
   parseInbox,
   parseNurseLog,
@@ -134,6 +135,43 @@ test('parseInbox detects Grafana and release-history rows', () => {
   assert.equal(parsed.hasGrafanaItem, true)
   assert.equal(parsed.hasStaleGrafanaItem, true)
   assert.equal(parsed.hasReleaseHistoryItem, true)
+})
+
+test('inspectTrustPreflight keeps red command diagnostics for the cockpit GUI', () => {
+  const preflight = inspectTrustPreflight({
+    generatedAt: '2026-05-25T20:00:00.000Z',
+    mode: 'fast',
+    status: 'red',
+    markdownPath: 'reports/resplit-fx-trust-preflight.md',
+    cockpit: { verdict: { status: 'red', label: 'RED - missing required trust contract' } },
+    summary: {
+      headline: 'status=red; commands 11 green, 3 yellow, 1 red; cockpit=RED - missing required trust contract',
+      commandDiagnostics: [{
+        id: 'completion-audit',
+        label: 'Launch completion audit',
+        command: 'npm run reliability:completion-audit',
+        status: 'red',
+        rc: 2,
+        summary: 'completion-audit: red Launch completion blocked.',
+        signals: ['completion-audit: red Launch completion blocked.'],
+        blockers: [{ id: 'source-contract', status: 'red', detail: 'Source bundle is not on origin/main.' }],
+      }],
+    },
+    commands: [{
+      id: 'completion-audit',
+      label: 'Launch completion audit',
+      command: 'npm run reliability:completion-audit',
+      status: 'red',
+      rc: 2,
+      expectedExitCodes: [0, 2],
+      yellowExitCodes: [],
+    }],
+  }, '/tmp/reports/resplit-fx-trust-preflight.json', '2026-05-25T20:05:00.000Z')
+
+  assert.equal(preflight.commandDiagnostics[0].id, 'completion-audit')
+  assert.match(preflight.commandDiagnostics[0].summary, /Launch completion blocked/)
+  assert.equal(preflight.commandDiagnostics[0].blockers[0].id, 'source-contract')
+  assert.equal(preflight.ageMinutes, 5)
 })
 
 test('buildAgentActivityMatrix classifies recent local-agent handoffs', () => {
@@ -1541,6 +1579,8 @@ test('inspectFirstBiteOperatingReadout preserves failed lane log diagnostics for
     'expected_exit_codes=0,1',
     'yellow_exit_codes=1',
     'trust-preflight: status=red; commands 8 green, 3 yellow, 0 red; cockpit=RED - missing required trust contract',
+    'trust-preflight: red command completion-audit exited 2: completion-audit: red Launch completion blocked.',
+    'trust-preflight: blocker source-contract [red] Source bundle is not on origin/main.',
     '===== FINAL SUMMARY =====',
     'rc=2',
   ].join('\n'))
@@ -1588,6 +1628,8 @@ test('inspectFirstBiteOperatingReadout preserves failed lane log diagnostics for
   assert.equal(readout.status, 'red')
   assert.equal(readout.failedLanes[0].diagnostics.status, 'red')
   assert.match(readout.failedLanes[0].reason, /missing required trust contract/)
+  assert.match(readout.failedLanes[0].reason, /completion-audit/)
+  assert.match(readout.failedLanes[0].reason, /source-contract/)
   assert.match(proofGap.laneFindings[0].reason, /trust-preflight: status=red/)
   assert.doesNotMatch(proofGap.laneFindings[0].reason, /rc unknown/)
 })
