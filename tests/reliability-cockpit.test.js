@@ -970,6 +970,7 @@ test('buildSourcePromotionBundle stays green after source lands even when clean 
       check: 'npm run generate && npm run validate && npm run test',
       'check:publish': 'npm run generate && npm run validate && npm run test',
       'reliability:cockpit': 'node scripts/reliability-cockpit.js',
+      'reliability:cockpit:verify': 'node scripts/verify-reliability-cockpit-report.js',
       'source:promotion-packet': 'node scripts/source-promotion-packet.js',
       'observability:cloudflare-destinations': 'node scripts/verify-cloudflare-otel-destinations.js',
     },
@@ -992,6 +993,8 @@ test('buildSourcePromotionBundle stays green after source lands even when clean 
     'tests/verify-grafana-otel-smoke.test.js',
     'scripts/verify-cloudflare-otel-destinations.js',
     'tests/verify-cloudflare-otel-destinations.test.js',
+    'scripts/verify-reliability-cockpit-report.js',
+    'tests/verify-reliability-cockpit-report.test.js',
     'scripts/audit-history-backfill-sources.js',
     'tests/audit-history-backfill-sources.test.js',
     'scripts/smoke-check-deploy.js',
@@ -3351,7 +3354,7 @@ test('renderHtml escapes dynamic values', () => {
   })
 
   assert.match(html, /&lt;bad&gt;/)
-  assert.match(html, /Proof Freshness Ledger/)
+  assert.match(html, /Evidence Freshness Ledger/)
   assert.match(html, /Launch Trust Audit/)
   assert.match(html, /&lt;launch-audit-summary&gt;/)
   assert.match(html, /&lt;forbidden-claim&gt;/)
@@ -3377,7 +3380,7 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /Staged candidates/)
   assert.match(html, /accepted:accept-current/)
   assert.match(html, /\+2/)
-  assert.match(html, /MCP Catalog Delta/)
+  assert.match(html, /Loaded MCP Catalog Delta/)
   assert.match(html, /FirstBite Runner Control Plane/)
   assert.match(html, /&lt;runner-summary&gt;/)
   assert.match(html, /&lt;runner-token&gt;/)
@@ -3392,7 +3395,7 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /source-promotion-review|&lt;action-gate&gt;/)
   assert.match(html, /Trust Contracts/)
   assert.match(html, /Agent Activity Matrix/)
-  assert.match(html, /OTEL Evidence Checklist/)
+  assert.match(html, /Grafana OTEL Smoke Checklist/)
   assert.match(html, /&lt;gate&gt;/)
   assert.match(html, /&lt;action-gate&gt;/)
   assert.match(html, /&lt;blocked&gt;/)

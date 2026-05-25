@@ -49,6 +49,8 @@ const SOURCE_PROMOTION_REQUIRED_PATHS = [
   'tests/verify-cloudflare-otel-destinations.test.js',
   'scripts/verify-grafana-otel-smoke.js',
   'tests/verify-grafana-otel-smoke.test.js',
+  'scripts/verify-reliability-cockpit-report.js',
+  'tests/verify-reliability-cockpit-report.test.js',
   'scripts/audit-history-backfill-sources.js',
   'tests/audit-history-backfill-sources.test.js',
   'scripts/smoke-check-deploy.js',
@@ -879,6 +881,7 @@ function inspectTrackedSourceContract({ repoDir, manifest, packageJson, manifest
   const requiredScriptSeeds = unique([
     ...laneScriptSeeds,
     'reliability:cockpit',
+    'reliability:cockpit:verify',
     'source:promotion-packet',
   ]).filter(name => currentScripts[name] || headScripts[name] || originScripts[name])
   const requiredScripts = collectPackageScriptClosure(currentScripts, requiredScriptSeeds)
@@ -5340,7 +5343,7 @@ function renderEvidenceFreshnessLedger(freshness) {
 
   const rows = freshness.rows || []
   return `<section>
-    <h2>Proof Freshness Ledger</h2>
+    <h2>Evidence Freshness Ledger</h2>
     <div class="kv">
       <div>Status</div><div><span class="${escapeHtml(freshness.status || 'yellow')}">${escapeHtml(freshness.status || 'unknown')}</span> ${escapeHtml(freshness.summary || '')}</div>
       <div>Fresh window</div><div>${escapeHtml(String(freshness.freshnessLimitMinutes ?? 'unknown'))}m default; row-specific windows may differ.</div>
@@ -5442,7 +5445,7 @@ function renderSummary(report) {
     </div>
   </section>
   <section class="third">
-    <h2>Local CI</h2>
+    <h2>FirstBite Local CI</h2>
     <div class="status ${escapeHtml(report.localCi.status)}">${escapeHtml(report.localCi.summary)}</div>
   </section>
   <section class="third">
@@ -5833,7 +5836,7 @@ function renderMcpCatalogDelta(delta) {
   const missingExpected = (delta.missingExpectedLanesInLoaded || []).length > 0 ? delta.missingExpectedLanesInLoaded.join(', ') : 'none'
   const missingLanes = (delta.missingLanesInLoaded || []).length > 0 ? delta.missingLanesInLoaded.join(', ') : 'none'
 
-  return `<h2>MCP Catalog Delta</h2>
+  return `<h2>Loaded MCP Catalog Delta</h2>
     <div class="kv">
       <div>Status</div><div><span class="${statusClass}">${escapeHtml(delta.status || 'unknown')}</span> ${escapeHtml(delta.summary || '')}</div>
       <div>Loaded checked</div><div>${escapeHtml(delta.loadedCheckedAt || 'unknown')}</div>
@@ -5898,7 +5901,7 @@ function renderLoadedMcpProbe(probe) {
     : 'unknown'
   const freshnessClass = probe.freshnessStatus === 'green' ? 'green' : probe.freshnessStatus === 'red' ? 'red' : 'yellow'
 
-  return `<h2>Loaded MCP Probe</h2>
+  return `<h2>Loaded MCP Host Probe</h2>
     <div class="kv">
       <div>Status</div><div><span class="${statusClass}">${escapeHtml(probe.status || 'unknown')}</span> ${escapeHtml(probe.summary || '')}</div>
       <div>Source</div><div>${escapeHtml(probe.source || 'unknown')}</div>
@@ -5973,7 +5976,7 @@ function renderTelemetry(telemetry) {
   const cloudflareChecks = Array.isArray(cloudflare.checks) ? cloudflare.checks : []
   const persistence = telemetry.observability.persistence || {}
   return `<section class="half">
-    <h2>OTEL / Grafana Readiness</h2>
+    <h2>Cloudflare OTEL Destinations + Grafana OTEL Smoke</h2>
     <div class="kv">
       <div>Worker</div><div><code>${escapeHtml(telemetry.workerName || 'unknown')}</code></div>
       <div>Scope</div><div>${escapeHtml(telemetry.observability.scope || 'unknown')}</div>
@@ -5994,11 +5997,11 @@ function renderTelemetry(telemetry) {
       <div>Checked</div><div>${escapeHtml(evidence.checkedAt || 'unknown')}${evidence.ageMinutes === null ? '' : ` (${escapeHtml(String(evidence.ageMinutes))}m old)`}</div>
       <div>Plan</div><div><code>${escapeHtml(telemetry.grafana.plan)}</code></div>
     </div>
-    ${cloudflareChecks.length > 0 ? `<h3>Cloudflare Destination Checklist</h3>
+    ${cloudflareChecks.length > 0 ? `<h3>Cloudflare OTEL Destinations Checklist</h3>
     <table><thead><tr><th>Check</th><th>Status</th><th>Proof</th><th>Next</th></tr></thead><tbody>
       ${cloudflareChecks.map(check => `<tr><td>${escapeHtml(check.label || check.id)}</td><td><span class="${escapeHtml(check.status || 'yellow')}">${escapeHtml(check.status || 'yellow')}</span></td><td>${escapeHtml(check.proof || '')}</td><td>${escapeHtml(check.nextAction || '')}</td></tr>`).join('')}
     </tbody></table>` : ''}
-    ${checks.length > 0 ? `<h3>OTEL Evidence Checklist</h3>
+    ${checks.length > 0 ? `<h3>Grafana OTEL Smoke Checklist</h3>
     <table>
       <thead><tr><th>Check</th><th>Status</th><th>Proof</th><th>Next</th></tr></thead>
       <tbody>

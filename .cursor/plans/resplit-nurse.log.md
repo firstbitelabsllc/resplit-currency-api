@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 10:13 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but the cockpit GUI now has its own source-backed verifier so the internal report cannot silently drop the operator trust surfaces.
+- Shipped delta pending source promotion: added `npm run reliability:cockpit:verify` (`scripts/verify-reliability-cockpit-report.js`) and wired it into `npm run trust:preflight`. The verifier checks the generated cockpit JSON and HTML for required trust contracts, operator actions, launch audit, evidence freshness, FirstBite local CI, loaded-host MCP probe/delta, Cloudflare OTEL destinations, Grafana OTEL smoke, and missing FX lane IDs when the loaded host is red.
+- Fresh proof:
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> verifier green: `Cockpit report contract is intact: 11 gate(s), 5 action(s), and generated HTML sections are present.`
+  - `node --check scripts/reliability-cockpit.js && node --check scripts/trust-preflight.js && node --check scripts/verify-reliability-cockpit-report.js` -> green.
+  - `node --test tests/verify-reliability-cockpit-report.test.js tests/reliability-cockpit.test.js tests/trust-preflight.test.js` -> `66/66` focused tests green.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `10 green, 3 yellow, 0 red`; cockpit remains `RED - missing required trust contract`.
+  - `npm run check` -> strict release validation green and `237/237` tests passed.
+  - `npm run source:promotion-packet` before this commit -> expected red source gate with `6` stage candidates (`package.json`, cockpit, trust-preflight, verifier script/test, cockpit tests), generated `reports/` held by default, and command drift because `origin/main` lacks the new trust-preflight/verifier surface.
+- Boundary: this does not make loaded MCP, Cloudflare, Grafana, or clean local-CI proof green. It makes the GUI harder to accidentally launder those gates by hiding them from the generated HTML report.
+- Exact next slice: commit/push this verifier source, rerun source-promotion packet from the new head, keep `reports/` local, then reload the FirstBite MCP host before trying loaded-agent execution.
+
 ## 2026-05-25 10:07 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but the loaded-host MCP boundary is now captured as fresh evidence instead of inferred from memory.
