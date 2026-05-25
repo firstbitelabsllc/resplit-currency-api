@@ -433,7 +433,6 @@ function buildStagedBundleAttestation({
 
   const fullStageBlocked = Boolean(stagingGate?.fullStageBlocked)
   const exactMatch = !fullStageBlocked
-    && stageablePaths.length > 0
     && stagedStageablePaths.length === stageablePaths.length
     && unstagedStageablePaths.length === 0
     && unexpectedStagedPaths.length === 0
@@ -456,7 +455,9 @@ function buildStagedBundleAttestation({
     dirtyAfterStagingCount: dirtyAfterStagingPaths.length,
   })
   const nextAction = exactMatch
-    ? 'Run cached diff checks, commit or land this exact bundle, then run clean worktree FirstBite proof.'
+    ? (stageablePaths.length > 0
+      ? 'Run cached diff checks, commit or land this exact bundle, then run clean worktree FirstBite proof.'
+      : 'No source-promotion staging is required; run clean worktree FirstBite proof.')
     : fullStageBlocked
       ? 'Resolve red staging-gate rows before trusting anything currently staged.'
       : unexpectedStagedPaths.length > 0 || dirtyAfterStagingPaths.length > 0
@@ -496,6 +497,9 @@ function summarizeStagedBundle({
     return 'Index attestation is red because the full staging gate is blocked.'
   }
   if (exactMatch) {
+    if (stageableCount === 0) {
+      return 'No source-promotion stage candidates remain; no unexpected staged paths and no dirty-after-staging files.'
+    }
     return `Exact source-promotion bundle is staged (${stagedStageableCount}/${stageableCount}); no unexpected staged paths and no dirty-after-staging files.`
   }
   return [

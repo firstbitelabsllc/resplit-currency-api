@@ -228,6 +228,51 @@ test('buildPacket attests exact staged bundle and rejects staged hold-by-default
   assert.ok(contaminatedPacket.blockers.some(row => row.area === 'staged bundle attestation' && row.status === 'red'))
 })
 
+test('buildPacket treats a landed source-promotion bundle as exact with zero stage candidates', () => {
+  const report = mockReport()
+  const files = report.localCi.sourcePromotionBundle.files.map(row => ({
+    ...row,
+    action: 'already tracked',
+    headExists: true,
+    originExists: true,
+    gitStatus: '',
+  }))
+  report.localCi.sourcePromotionBundle = {
+    ...report.localCi.sourcePromotionBundle,
+    status: 'green',
+    summary: 'Source promotion bundle is tracked; clean worktree proof can target the current cockpit and local-CI contract.',
+    nextAction: 'Run clean proof',
+    counts: {
+      currentOnlyFiles: 0,
+      modifiedFiles: 0,
+      commandDrift: 0,
+    },
+    recommendedPaths: [],
+    commandDrift: [],
+    files,
+  }
+
+  const packet = buildPacket({
+    repoDir: '/tmp/resplit-currency-api',
+    generatedAt: '2026-05-25T08:01:45.000Z',
+    report,
+    gitStatusRows: [],
+  })
+
+  assert.equal(packet.status, 'green')
+  assert.equal(packet.stagingGate.status, 'green')
+  assert.equal(packet.stagedBundle.status, 'green')
+  assert.equal(packet.stagedBundle.exactMatch, true)
+  assert.equal(packet.stagedBundle.stageableCount, 0)
+  assert.equal(packet.stagedBundle.stagedStageableCount, 0)
+  assert.deepEqual(packet.stageCandidates, [])
+  assert.deepEqual(packet.stagedBundle.unexpectedStagedPaths, [])
+  assert.match(packet.stagedBundle.summary, /No source-promotion stage candidates remain/)
+  assert.match(packet.stagedBundle.nextAction, /No source-promotion staging is required/)
+  assert.equal(packet.summary.counts.commandDrift, 0)
+  assert.match(renderMarkdown(packet), /No source-promotion stage candidates remain/)
+})
+
 test('buildPacket blocks full staging when upstream drift rows are red', () => {
   const report = mockReport()
   report.localCi.sourcePromotionBundle.files[0].originExists = true
