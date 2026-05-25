@@ -232,6 +232,7 @@ function buildReport({
     artifact: repoBackedMcpProbe,
     packageDir: repoBackedMcpPackageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
     expectedRepo: manifest?.repo,
+    expectedRepoPath: repoDir,
     expectedLaneIds: Object.keys(manifest?.localCi?.lanes || {}),
     generatedAt,
   })
@@ -2932,6 +2933,18 @@ function trimProofPath(value) {
   return String(value || '').replace(/[.,:;]+$/g, '')
 }
 
+function normalizeComparablePath(value) {
+  if (!value) {
+    return null
+  }
+  const resolved = path.resolve(String(value))
+  try {
+    return fs.realpathSync.native(resolved)
+  } catch {
+    return resolved
+  }
+}
+
 function calculateAgeMinutes(ts, generatedAt) {
   const then = Date.parse(ts || '')
   const now = Date.parse(generatedAt || '')
@@ -3080,13 +3093,19 @@ function inspectRepoBackedMcpCatalog({
   artifact,
   packageDir = DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
   expectedRepo,
+  expectedRepoPath = null,
   expectedLaneIds = [],
   generatedAt = new Date().toISOString(),
 } = {}) {
+  const normalizedExpectedRepoPath = normalizeComparablePath(expectedRepoPath)
   const statusBase = {
     packageDir,
     command: 'npm run --silent call -- list_lanes {}',
     expectedRepo: expectedRepo || null,
+    expectedRepoPath: normalizedExpectedRepoPath,
+    requestedRepoPath: artifact?.repoDir ? normalizeComparablePath(artifact.repoDir) : null,
+    actualRepoPath: null,
+    repoPathMatchesExpected: expectedRepoPath ? null : true,
     expectedLaneIds,
     checkedAt: null,
     ageMinutes: null,
@@ -3139,10 +3158,20 @@ function inspectRepoBackedMcpCatalog({
   const groups = payload.groups || {}
   const lanes = payload.lanes || {}
   const catalog = payload.catalog || {}
+  const manifestStates = catalog.manifest_states || []
   const repoKeys = Object.keys(repos).sort()
   const groupKeys = Object.keys(groups).sort()
   const allLaneIds = Object.keys(lanes).sort()
   const repoPresent = Boolean(expectedRepo && repos[expectedRepo])
+  const repoState = expectedRepo ? manifestStates.find(state => state.repo === expectedRepo) : null
+  const actualRepoPath = normalizeComparablePath(
+    expectedRepo ? repos[expectedRepo]?.path || repos[expectedRepo]?.repo_path || repoState?.repo_path : null,
+  )
+  const repoPathMatchesExpected = normalizedExpectedRepoPath && actualRepoPath
+    ? actualRepoPath === normalizedExpectedRepoPath
+    : normalizedExpectedRepoPath
+      ? null
+      : true
   const loadedLaneIds = allLaneIds
     .filter(laneId => lanes[laneId]?.repo === expectedRepo || expectedLaneIds.includes(laneId))
     .sort()
@@ -3151,9 +3180,13 @@ function inspectRepoBackedMcpCatalog({
   const catalogVersion = catalog.catalog_version || artifact.catalogVersion || null
   const catalogCurrent = catalogVersion === 'repo-manifest-v2'
   const laneCount = catalog.lane_count ?? Object.keys(lanes).length
+  const repoPathMismatch = repoPathMatchesExpected === false
+  const repoPathUnknown = normalizedExpectedRepoPath && repoPathMatchesExpected === null
   const status = !expectedRepo || expectedLaneIds.length === 0
     ? 'yellow'
-    : repoPresent && missingLaneIds.length === 0 && catalogCurrent
+    : repoPathMismatch
+      ? 'red'
+      : repoPresent && missingLaneIds.length === 0 && catalogCurrent && !repoPathUnknown
       ? 'green'
       : repoPresent && missingLaneIds.length === 0
         ? 'yellow'
@@ -3162,9 +3195,18 @@ function inspectRepoBackedMcpCatalog({
   const portabilityText = portability
     ? ` fresh_clone_ready=${String(portability.fresh_clone_ready)}, active_ready=${String(portability.ready)}.`
     : ''
+  const repoPathText = normalizedExpectedRepoPath
+    ? repoPathMatchesExpected === true
+      ? ` repo_path=${actualRepoPath}.`
+      : repoPathMatchesExpected === false
+        ? ` catalog_path=${actualRepoPath}, expected_path=${normalizedExpectedRepoPath}.`
+        : ` catalog_path=unknown, expected_path=${normalizedExpectedRepoPath}.`
+    : ''
   const summary = status === 'green'
-    ? `Repo-backed FirstBite MCP sees ${catalogVersion} with ${laneCount} lane(s); ${expectedRepo} has ${loadedLaneIds.length}/${expectedLaneIds.length} expected lane(s).${portabilityText}`
-    : `Repo-backed FirstBite MCP catalog is not current for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s); catalog ${catalogVersion || 'unknown'}.`
+    ? `Repo-backed FirstBite MCP sees ${catalogVersion} with ${laneCount} lane(s); ${expectedRepo} has ${loadedLaneIds.length}/${expectedLaneIds.length} expected lane(s).${repoPathText}${portabilityText}`
+    : repoPathMismatch
+      ? `Repo-backed FirstBite MCP catalog is reading the wrong checkout for ${expectedRepo}: ${repoPathText.trim()}`
+      : `Repo-backed FirstBite MCP catalog is not current for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s); catalog ${catalogVersion || 'unknown'}.${repoPathText}`
 
   return {
     ...statusBase,
@@ -3174,6 +3216,8 @@ function inspectRepoBackedMcpCatalog({
     source: artifact.source || statusBase.source,
     catalogVersion,
     repoPresent,
+    actualRepoPath,
+    repoPathMatchesExpected,
     repoKeys,
     groupKeys,
     allLaneIds,
@@ -3181,7 +3225,7 @@ function inspectRepoBackedMcpCatalog({
     loadedLaneIds,
     missingLaneIds,
     manifestPortability: portability,
-    manifestStates: catalog.manifest_states || [],
+    manifestStates,
     summary,
     restartHint: catalog.restart_hint || statusBase.restartHint,
   }
@@ -5835,6 +5879,11 @@ function renderRepoBackedMcpProbe(probe) {
   const portability = probe.manifestPortability
     ? `fresh clone ${String(probe.manifestPortability.fresh_clone_ready)} · active checkout ${String(probe.manifestPortability.ready)}`
     : 'unknown'
+  const pathMatch = probe.repoPathMatchesExpected === true
+    ? 'yes'
+    : probe.repoPathMatchesExpected === false
+      ? 'no'
+      : 'unknown'
 
   return `<h2>Repo-Backed MCP Catalog</h2>
     <div class="kv">
@@ -5845,6 +5894,10 @@ function renderRepoBackedMcpProbe(probe) {
       <div>Catalog</div><div>${escapeHtml(probe.catalogVersion || 'unknown')} · ${escapeHtml(String(probe.laneCount ?? 'unknown'))} loaded lane(s)</div>
       <div>Loaded FX lanes</div><div><code>${escapeHtml(loaded)}</code></div>
       <div>Missing FX lanes</div><div><code>${escapeHtml(missing)}</code></div>
+      <div>Catalog repo path</div><div><code>${escapeHtml(probe.actualRepoPath || 'unknown')}</code></div>
+      <div>Expected repo path</div><div><code>${escapeHtml(probe.expectedRepoPath || 'unknown')}</code></div>
+      <div>Requested repo path</div><div><code>${escapeHtml(probe.requestedRepoPath || 'none')}</code></div>
+      <div>Repo path match</div><div><span class="${pathMatch === 'yes' ? 'green' : pathMatch === 'no' ? 'red' : 'yellow'}">${escapeHtml(pathMatch)}</span></div>
       <div>Manifest portability</div><div>${escapeHtml(portability)}</div>
       <div>Package dir</div><div><code>${escapeHtml(probe.packageDir || 'unknown')}</code></div>
       <div>Command</div><div><code>${escapeHtml(probe.command || '')}</code></div>

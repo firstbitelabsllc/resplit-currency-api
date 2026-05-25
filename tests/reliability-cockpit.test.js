@@ -1444,6 +1444,48 @@ test('inspectRepoBackedMcpCatalog reports current package catalog and portabilit
   assert.match(probe.summary, /active_ready=false/)
 })
 
+test('inspectRepoBackedMcpCatalog rejects catalogs from the wrong checkout path', () => {
+  const activeRepoPath = path.join(os.tmpdir(), 'resplit-fx-active')
+  const staleRepoPath = path.join(os.tmpdir(), 'resplit-fx-stale')
+  const probe = inspectRepoBackedMcpCatalog({
+    artifact: {
+      checkedAt: '2026-05-25T00:00:00.000Z',
+      source: 'repo-backed package:list_lanes',
+      repoDir: activeRepoPath,
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          catalog: {
+            catalog_version: 'repo-manifest-v2',
+            lane_count: 3,
+            manifest_portability: {
+              fresh_clone_ready: true,
+              ready: true,
+            },
+          },
+          repos: { resplit_currency_api: { path: staleRepoPath } },
+          lanes: {
+            resplit_currency_api_unit: { repo: 'resplit_currency_api' },
+            resplit_currency_api_integration: { repo: 'resplit_currency_api' },
+            resplit_currency_api_ui: { repo: 'resplit_currency_api' },
+          },
+        }),
+      }],
+    },
+    packageDir: '/mcp/firstbite-local-ci',
+    expectedRepo: 'resplit_currency_api',
+    expectedRepoPath: activeRepoPath,
+    expectedLaneIds: ['resplit_currency_api_unit', 'resplit_currency_api_integration', 'resplit_currency_api_ui'],
+    generatedAt: '2026-05-25T00:05:00.000Z',
+  })
+
+  assert.equal(probe.status, 'red')
+  assert.equal(probe.repoPathMatchesExpected, false)
+  assert.equal(probe.expectedRepoPath, path.resolve(activeRepoPath))
+  assert.equal(probe.actualRepoPath, path.resolve(staleRepoPath))
+  assert.match(probe.summary, /wrong checkout/)
+})
+
 test('captureRepoBackedMcpCatalog points package probe at the selected repo dir', () => {
   const packageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firstbite-package-'))
   fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({ name: 'firstbite-local-ci' }))

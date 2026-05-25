@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 10:45 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but the repo-backed FirstBite catalog can no longer look green while silently reading the wrong checkout.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now records expected, requested, and actual repo paths for the repo-backed MCP catalog probe, compares the catalog path against the active cockpit repo, renders that path proof in the HTML GUI, and turns wrong-checkout catalog evidence red even if all expected lane ids are present.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in this active Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded-host execution remains red.
+  - `node --test tests/reliability-cockpit.test.js` -> `60/60` focused cockpit tests green, including wrong-checkout catalog rejection.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; repo-backed catalog is green with `expectedRepoPath=requestedRepoPath=actualRepoPath=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525`, while loaded-vs-repo-backed delta remains red (`12` loaded lanes vs `16` repo-backed lanes, missing `resplit_currency_api`).
+  - `npm run check` -> strict release validation green and `246/246` tests passed.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green: `11` gate(s), `5` action(s), generated HTML sections present.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `10`, command drift `2`.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+- Boundary: this does not reload the loaded MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It closes the stale canonical-checkout trust hole inside the repo-backed control-plane GUI.
+- Exact next slice: commit/push this path-proof hardening, keep `reports/` local, then restart/reload the FirstBite MCP host and recapture `reports/firstbite-loaded-mcp-lanes.json` before trusting loaded-agent execution.
+
 ## 2026-05-25 10:28 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but the cockpit no longer keeps the release-history gate yellow after current strict validation is green.
