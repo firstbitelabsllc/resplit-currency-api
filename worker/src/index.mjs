@@ -100,7 +100,7 @@ function handleHealth(request, env) {
     ok: true,
     service: 'resplit-currency-api',
     environment: env.SENTRY_ENVIRONMENT || 'unknown',
-    release: env.SENTRY_RELEASE || 'unknown',
+    release: env.SENTRY_RELEASE || 'resplit-fx',
     timestamp: new Date().toISOString(),
   }, {
     requestId,
