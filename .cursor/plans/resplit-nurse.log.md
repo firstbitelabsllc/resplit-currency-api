@@ -1,5 +1,23 @@
 # Resplit Nurse Log
 
+## 2026-05-25 11:50 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit now catches stale FirstBite refresh-plan continuation instructions instead of trusting a packet that says the old lane count while the repo-backed catalog proves the new one.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` detects `continuationProofDrift` when a refresh packet's `expectedProof` says a lane count different from `repoBackedCatalog.lane_count`, renders that mismatch in the MCP Refresh Plan section, and keeps the refresh plan yellow with a repair/regenerate next action. This surfaced the current local-CI packet drift: continuation commands still say `15` lanes, but the current repo-backed catalog is `16/16` declared lanes including `resplit_currency_api_trust_preflight`.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the current Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`.
+  - `FIRSTBITE_MCP_REFRESH_PLAN_RUN_ID=codex-fx-refresh-plan-post-d535c57-20260525 RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh --json` -> repo-backed catalog `repo-manifest-v2`, `16/16` declared lane(s), but continuation expected-proof text still says `15` lanes; process audit still reports `16/21` stale MCP processes.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `67/67` focused cockpit tests green.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> cockpit report contract green; MCP refresh plan summary now includes `continuation proof drift: Prove repo-backed MCP catalog expects 15 lane(s), catalog has 16; Refresh host-app MCP clients expects 15 lane(s), catalog has 16`.
+  - `npm run check` -> strict release validation green and `253/253` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `10`, command drift `2`; generated `reports/` remain hold-by-default.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+- Boundary: this does not repair the ai-leo refresh packet producer, restart/reload Codex/Cursor, prove loaded-agent execution, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It prevents the FX cockpit from hiding a stale lane-count expectation in the local-CI handoff packet.
+- Exact next slice: repair the ai-leo FirstBite MCP refresh-plan producer so it derives expected lane count from the repo-backed catalog, regenerate the packet until `continuationProofDrift=[]`, then restart/reload the MCP host and capture a fresh live loaded-host `list_lanes` artifact.
+
 ## 2026-05-25 11:40 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The source-promotion action now distinguishes "tracked on this PR head" from "promoted to origin/main" so operators do not loop on a no-op local review after a PR-head source landing.

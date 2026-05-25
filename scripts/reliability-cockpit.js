@@ -1306,14 +1306,20 @@ function inspectFirstBiteMcpRefreshPlan({
     Array.isArray(data.continuationCommands) ? data.continuationCommands : [],
     repoDir,
   )
+  const continuationProofDrift = detectContinuationProofDrift(continuationCommands, repoBackedCatalog)
+  const continuationProofDriftSummary = summarizeContinuationProofDrift(continuationProofDrift)
   const status = /unavailable|needs_attention/i.test(verdict) || repoBackedCatalogCurrent === false
     ? 'red'
-    : staleProcessCount > 0 || stale
+    : staleProcessCount > 0 || stale || continuationProofDrift.length > 0
       ? 'yellow'
       : 'green'
+  const summarySuffix = [
+    missingExpectedLaneIds.length > 0 ? `missing current manifest lane(s): ${missingExpectedLaneIds.join(', ')}` : '',
+    continuationProofDriftSummary ? `continuation proof drift: ${continuationProofDriftSummary}` : '',
+  ].filter(Boolean).join('; ')
   const summary = status === 'green'
     ? `FirstBite MCP refresh plan is fresh: ${verdict}; process audit ${processAudit?.status || 'unknown'} with ${staleProcessCount ?? 0}/${processCount ?? 0} stale process(es).`
-    : `FirstBite MCP refresh plan: ${verdict}; process audit ${processAudit?.status || 'unknown'} with ${staleProcessCount ?? 'unknown'}/${processCount ?? 'unknown'} stale process(es); repo-backed catalog ${repoBackedCatalog?.catalog_version || 'unknown'} ${repoBackedCatalog?.declared_count ?? 'unknown'}/${repoBackedCatalog?.lane_count ?? 'unknown'} declared lane(s)${missingExpectedLaneIds.length > 0 ? `; missing current manifest lane(s): ${missingExpectedLaneIds.join(', ')}` : ''}.`
+    : `FirstBite MCP refresh plan: ${verdict}; process audit ${processAudit?.status || 'unknown'} with ${staleProcessCount ?? 'unknown'}/${processCount ?? 'unknown'} stale process(es); repo-backed catalog ${repoBackedCatalog?.catalog_version || 'unknown'} ${repoBackedCatalog?.declared_count ?? 'unknown'}/${repoBackedCatalog?.lane_count ?? 'unknown'} declared lane(s)${summarySuffix ? `; ${summarySuffix}` : ''}.`
 
   return {
     status,
@@ -1336,6 +1342,7 @@ function inspectFirstBiteMcpRefreshPlan({
     laneKeys,
     missingExpectedLaneIds,
     repoBackedCatalogCurrent,
+    continuationProofDrift,
     recommendedSteps: Array.isArray(data.recommendedSteps) ? data.recommendedSteps : [],
     continuationCommands,
     artifacts: data.artifacts || {},
@@ -1344,7 +1351,11 @@ function inspectFirstBiteMcpRefreshPlan({
     nextAction: status === 'green'
       ? 'Capture live loaded-host list_lanes output into reports/firstbite-loaded-mcp-lanes.json before trusting the in-app MCP boundary.'
       : staleProcessCount > 0
-        ? 'Save work and restart/reload Codex/Cursor, then rerun the refresh plan and capture live loaded-host list_lanes output.'
+        ? continuationProofDrift.length > 0
+          ? 'Repair or regenerate the stale refresh-plan lane-count instructions, then save work and restart/reload Codex/Cursor before capturing live loaded-host list_lanes output.'
+          : 'Save work and restart/reload Codex/Cursor, then rerun the refresh plan and capture live loaded-host list_lanes output.'
+        : continuationProofDrift.length > 0
+          ? 'Repair or regenerate the refresh-plan continuation proof so its lane-count expectation matches the repo-backed catalog.'
         : 'Rerun the read-only refresh plan and inspect repo-backed catalog availability before loaded-host MCP claims.',
   }
 }
@@ -1365,6 +1376,54 @@ function scopeRefreshPlanCommands(commands = [], repoDir = null) {
       }),
     }
   })
+}
+
+function detectContinuationProofDrift(commands = [], repoBackedCatalog = null) {
+  const catalogLaneCount = numberOrNull(repoBackedCatalog?.lane_count)
+  if (catalogLaneCount === null) {
+    return []
+  }
+
+  const drift = []
+  commands.forEach((command, index) => {
+    const expectedProof = command?.expectedProof || ''
+    for (const expectedLaneCount of extractLaneCountExpectations(expectedProof)) {
+      if (expectedLaneCount !== catalogLaneCount) {
+        drift.push({
+          index,
+          label: command?.label || `command ${index + 1}`,
+          expectedLaneCount,
+          catalogLaneCount,
+          expectedProof,
+        })
+      }
+    }
+  })
+  return drift
+}
+
+function extractLaneCountExpectations(text = '') {
+  const expectations = []
+  const patterns = [
+    /\blane_count\s*=\s*(\d+)/gi,
+    /\bwith\s+(\d+)\s+(?:declared\s+)?lanes?\b/gi,
+    /\bshows?\s+(\d+)\s+(?:declared\s+)?lanes?\b/gi,
+  ]
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const count = numberOrNull(match[1])
+      if (count !== null) {
+        expectations.push(count)
+      }
+    }
+  }
+  return unique(expectations)
+}
+
+function summarizeContinuationProofDrift(drift = []) {
+  return drift
+    .map(row => `${row.label} expects ${row.expectedLaneCount} lane(s), catalog has ${row.catalogLaneCount}`)
+    .join('; ')
 }
 
 function scopeCommandWithEnv(command, env = {}) {
@@ -6143,6 +6202,9 @@ function renderFirstBiteMcpRefreshPlan(plan) {
   const missingExpected = (plan.missingExpectedLaneIds || []).length > 0
     ? plan.missingExpectedLaneIds.join(', ')
     : 'none'
+  const continuationProofDrift = (plan.continuationProofDrift || []).length > 0
+    ? plan.continuationProofDrift.map(row => `${row.label}: expected ${row.expectedLaneCount}, catalog ${row.catalogLaneCount}`).join('; ')
+    : 'none'
   const steps = (plan.recommendedSteps || []).slice(0, 5)
 
   return `<h2>FirstBite MCP Refresh Plan</h2>
@@ -6155,6 +6217,7 @@ function renderFirstBiteMcpRefreshPlan(plan) {
       <div>Current PIDs</div><div><code>${escapeHtml(currentPids)}</code></div>
       <div>Repo-backed catalog</div><div>${escapeHtml(plan.repoBackedCatalog?.catalog_version || 'unknown')} · ${escapeHtml(String(plan.repoBackedCatalog?.declared_count ?? 'unknown'))}/${escapeHtml(String(plan.repoBackedCatalog?.lane_count ?? 'unknown'))} declared lane(s)</div>
       <div>Missing current manifest lanes</div><div><code>${escapeHtml(missingExpected)}</code></div>
+      <div>Continuation proof drift</div><div><code>${escapeHtml(continuationProofDrift)}</code></div>
       <div>Report</div><div><code>${escapeHtml(plan.reportPath || 'missing')}</code></div>
       <div>Summary</div><div><code>${escapeHtml(plan.summaryPath || 'missing')}</code></div>
       <div>Next action</div><div>${escapeHtml(plan.nextAction || '')}</div>

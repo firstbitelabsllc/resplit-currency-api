@@ -1499,6 +1499,70 @@ test('inspectFirstBiteMcpRefreshPlan surfaces stale loaded-client process audit'
   assert.match(plan.nextAction, /restart\/reload Codex\/Cursor/)
 })
 
+test('inspectFirstBiteMcpRefreshPlan flags stale continuation lane-count expectations', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-proof-drift-'))
+  const runDir = path.join(root, '20260525T114643Z-16715')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    runId: '20260525T114643Z-16715',
+    createdAt: '2026-05-25T11:46:43Z',
+    verdict: 'loaded_clients_current_repo_backed_catalog_ready',
+    processAudit: {
+      status: 'clean',
+      process_count: 2,
+      stale_process_count: 0,
+      current_process_count: 2,
+    },
+    repoBackedCatalog: {
+      catalog_version: 'repo-manifest-v2',
+      lane_count: 16,
+      declared_count: 16,
+      repo_keys: ['resplit_currency_api'],
+      lane_keys: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_trust_preflight',
+        'resplit_currency_api_ui',
+      ],
+    },
+    authority: {
+      repoBackedCatalogCurrent: true,
+    },
+    continuationCommands: [
+      {
+        label: 'Prove repo-backed MCP catalog',
+        command: 'npm run --silent call -- list_lanes',
+        expectedProof: 'catalog_version=repo-manifest-v2 and lane_count=15',
+      },
+      {
+        label: 'Refresh host-app MCP clients',
+        command: 'Save work, quit and reopen Codex Desktop/Cursor.',
+        expectedProof: 'loaded MCP tool exposes repo-manifest-v2 with 15 lanes, or process audit has no stale loaded clients',
+      },
+    ],
+  }, null, 2))
+
+  const plan = inspectFirstBiteMcpRefreshPlan({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    generatedAt: '2026-05-25T11:47:43Z',
+  })
+
+  assert.equal(plan.status, 'yellow')
+  assert.equal(plan.repoBackedCatalogCurrent, true)
+  assert.equal(plan.continuationProofDrift.length, 2)
+  assert.deepEqual(plan.continuationProofDrift.map(row => row.expectedLaneCount), [15, 15])
+  assert.match(plan.summary, /continuation proof drift/)
+  assert.match(plan.summary, /catalog has 16/)
+  assert.match(plan.nextAction, /Repair or regenerate/)
+})
+
 test('inspectFirstBiteMcpRefreshPlan scopes rerun commands to the active repo path', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-scoped-'))
   const runDir = path.join(root, '20260525T112208Z-16715')
