@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 17:21 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI found a stale-evidence class that needed a verifier contract: an MCP refresh-plan packet could be older than the current repo-backed catalog delta and still leave the cockpit looking structurally valid.
+- Shipped delta pending source promotion: `scripts/verify-reliability-cockpit-report.js` now compares `localCi.mcpRefreshPlan.repoBackedCatalog.lane_count` with `localCi.mcpCatalogDelta.repoBackedLaneCount`, and also checks the refresh-plan continuation command's `expectedProof` lane count. `tests/verify-reliability-cockpit-report.test.js` now fixtures the current `37/37` repo-backed catalog and fails both stale refresh-plan catalog counts and stale continuation proof text.
+- Fresh proof:
+  - `node --test tests/verify-reliability-cockpit-report.test.js` -> `16/16` tests passed.
+  - `node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `118/118` tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated report HEAD matches the current checkout and the refreshed MCP plan agrees with the catalog delta.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `npm run check` -> generate green, strict release validation green, and `292/292` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this does not clear launch trust, `resplit_currency_api_trust_preflight`, source promotion, clean landed-source FirstBite, loaded Codex/Cursor MCP host reload/capture, M4 peer execution, Cloudflare destination proof, or Grafana Tempo/Loki proof. It makes the local-CI GUI reject stale MCP refresh guidance when the repo-owned lane catalog has moved forward.
+- Exact next slice: commit/push this refresh-plan consistency hardening, regenerate the cockpit at the new commit HEAD, rerun current-source FirstBite proof so lane-proof-source matches the new verifier head, then keep decomposing `agent-ledger-fleet`/`source-contract`.
+
 ## 2026-05-25 17:07 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI already exposed the trust-preflight red lane, and this slice makes the cockpit preserve the full top blocker set in the failed-lane taxonomy instead of truncating the operator queue before `loaded-agent-mcp`.

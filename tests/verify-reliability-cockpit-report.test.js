@@ -143,6 +143,40 @@ test('verifyCockpitReport fails when loaded MCP path binding disappears', () => 
   assert.match(result.report.failures.join('\n'), /loaded MCP live capture contract does not record repo path match status/)
 })
 
+test('verifyCockpitReport fails when MCP refresh plan catalog count is stale', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-stale-mcp-refresh-'))
+  const report = buildReport()
+  report.localCi.mcpRefreshPlan.repoBackedCatalog.lane_count = 15
+  report.localCi.mcpRefreshPlan.continuationCommands[0].expectedProof = 'catalog_version=repo-manifest-v2 and lane_count=15'
+  report.localCi.mcpCatalogDelta.repoBackedLaneCount = 37
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /MCP refresh plan repo-backed lane count is stale: refresh plan 15, catalog delta 37/)
+})
+
+test('verifyCockpitReport fails when MCP refresh continuation proof names the wrong lane count', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-stale-mcp-refresh-proof-'))
+  const report = buildReport()
+  report.localCi.mcpRefreshPlan.repoBackedCatalog.lane_count = 37
+  report.localCi.mcpCatalogDelta.repoBackedLaneCount = 37
+  report.localCi.mcpRefreshPlan.continuationCommands[0].expectedProof = 'catalog_version=repo-manifest-v2 and lane_count=15'
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /MCP refresh plan continuation command has stale lane_count proof: expectedProof 15, refresh plan 37/)
+})
+
 test('verifyCockpitReport fails when trust preflight proof gap reason is opaque', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-opaque-trust-reason-'))
   const report = buildReport()
@@ -268,9 +302,23 @@ function buildReport() {
       },
       mcpCatalogDelta: {
         status: 'red',
+        repoBackedLaneCount: 37,
         loadedExpectedRepoPath: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
         loadedActualRepoPath: '/Users/leokwan/Development/resplit-currency-api',
         loadedRepoPathMatchesExpected: false,
+      },
+      mcpRefreshPlan: {
+        status: 'red',
+        summary: 'Loaded MCP clients need a host-app restart before they can be trusted.',
+        repoBackedCatalog: {
+          catalog_version: 'repo-manifest-v2',
+          lane_count: 37,
+          declared_count: 37,
+        },
+        continuationCommands: [{
+          command: 'mcp__firstbite_local_ci.list_lanes {}',
+          expectedProof: 'catalog_version=repo-manifest-v2 and lane_count=37',
+        }],
       },
       loadedMcpCaptureContract: {
         status: 'red',

@@ -180,6 +180,33 @@ function verifyJsonContract(cockpit) {
   if (cockpit.localCi?.loadedMcpProbe?.status && !cockpit.localCi?.loadedMcpCaptureContract?.status) {
     failures.push('loaded MCP probe exists but live capture contract is missing')
   }
+  const mcpRefreshPlan = cockpit.localCi?.mcpRefreshPlan
+  const mcpCatalogDelta = cockpit.localCi?.mcpCatalogDelta
+  if (mcpRefreshPlan?.status && mcpCatalogDelta?.status) {
+    const refreshRepoBackedLaneCount = numberOrNull(
+      mcpRefreshPlan.repoBackedCatalog?.lane_count
+      ?? mcpRefreshPlan.repoBackedCatalog?.laneCount,
+    )
+    const deltaRepoBackedLaneCount = numberOrNull(mcpCatalogDelta.repoBackedLaneCount)
+    if (
+      refreshRepoBackedLaneCount !== null
+      && deltaRepoBackedLaneCount !== null
+      && refreshRepoBackedLaneCount !== deltaRepoBackedLaneCount
+    ) {
+      failures.push(`MCP refresh plan repo-backed lane count is stale: refresh plan ${refreshRepoBackedLaneCount}, catalog delta ${deltaRepoBackedLaneCount}`)
+    }
+    const expectedProofText = (mcpRefreshPlan.continuationCommands || [])
+      .map(command => command.expectedProof || '')
+      .join(' ')
+    const expectedProofLaneCount = Number((expectedProofText.match(/lane_count=(\d+)/i) || [])[1])
+    if (
+      Number.isFinite(expectedProofLaneCount)
+      && refreshRepoBackedLaneCount !== null
+      && expectedProofLaneCount !== refreshRepoBackedLaneCount
+    ) {
+      failures.push(`MCP refresh plan continuation command has stale lane_count proof: expectedProof ${expectedProofLaneCount}, refresh plan ${refreshRepoBackedLaneCount}`)
+    }
+  }
   const loadedMcpProbe = cockpit.localCi?.loadedMcpProbe
   if (loadedMcpProbe?.status && loadedMcpProbe.status !== 'missing') {
     if (!loadedMcpProbe.expectedRepoPath) {
@@ -323,6 +350,11 @@ function verifyJsonContract(cockpit) {
   }
 
   return failures
+}
+
+function numberOrNull(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function verifyRecoveryFlowContract(cockpit) {
