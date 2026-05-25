@@ -46,6 +46,7 @@ const REQUIRED_HTML_LABELS = [
   'Loaded MCP Live Capture Contract',
   'Loaded MCP Proof Source',
   'Loaded MCP Catalog Delta',
+  'Coding-Agent Review Scout',
   'Cloudflare OTEL Destinations',
   'Grafana OTEL Smoke',
   'Observability Proof Chain Contract',
@@ -291,6 +292,28 @@ function verifyJsonContract(cockpit) {
       const reason = String(finding.reason || '').trim()
       if (!reason || /^(rc unknown|rc \d+|command exited(?: with)? code \d+)$/i.test(reason)) {
         failures.push('local CI finding taxonomy trust_preflight proof gap reason is missing or opaque')
+      }
+    }
+  }
+  const reviewScout = cockpit.agentState?.reviewScout
+  if (reviewScout?.status && reviewScout.status !== 'missing') {
+    const reviewLocalCi = reviewScout.localCi || {}
+    if (!Array.isArray(reviewLocalCi.expectedLaneIds)) {
+      failures.push('review scout local-CI contract does not record expected manifest lane IDs')
+    }
+    if (!Array.isArray(reviewLocalCi.missingExpectedLaneIds)) {
+      failures.push('review scout local-CI contract does not record missing manifest lane IDs')
+    }
+    if (!Array.isArray(reviewLocalCi.missingExpectedCatalogLaneIds)) {
+      failures.push('review scout local-CI contract does not record missing catalog manifest lane IDs')
+    }
+    if ((reviewLocalCi.missingExpectedLaneIds || []).length > 0 || (reviewLocalCi.missingExpectedCatalogLaneIds || []).length > 0) {
+      if (reviewScout.status === 'green') {
+        failures.push('review scout cannot be green while current manifest lanes are missing')
+      }
+      const reviewText = `${reviewScout.summary || ''} ${reviewScout.nextAction || ''}`
+      if (!/manifest lane/i.test(reviewText)) {
+        failures.push('review scout missing-lane state does not name current manifest lanes in summary or next action')
       }
     }
   }
@@ -633,6 +656,35 @@ function verifyHtmlContract({ cockpit, html }) {
           failures.push(`HTML missing trust preflight command blocker: ${blocker.id}`)
         }
       }
+    }
+  }
+
+  const reviewScout = cockpit.agentState?.reviewScout
+  if (reviewScout?.status && reviewScout.status !== 'missing') {
+    const localCi = reviewScout.localCi || {}
+    if (reviewScout.summary && !html.includes(escapeForHtmlText(reviewScout.summary))) {
+      failures.push('HTML missing review scout summary')
+    }
+    if (reviewScout.nextAction && !html.includes(escapeForHtmlText(reviewScout.nextAction))) {
+      failures.push('HTML missing review scout next action')
+    }
+    for (const laneId of localCi.expectedLaneIds || []) {
+      if (!html.includes(escapeForHtmlText(laneId))) {
+        failures.push(`HTML missing review scout expected manifest lane: ${laneId}`)
+      }
+    }
+    for (const laneId of localCi.missingExpectedLaneIds || []) {
+      if (!html.includes(escapeForHtmlText(laneId))) {
+        failures.push(`HTML missing review scout missing manifest lane: ${laneId}`)
+      }
+    }
+    for (const laneId of localCi.missingExpectedCatalogLaneIds || []) {
+      if (!html.includes(escapeForHtmlText(laneId))) {
+        failures.push(`HTML missing review scout missing catalog manifest lane: ${laneId}`)
+      }
+    }
+    if (localCi.manifestLaneStatus && !html.includes(escapeForHtmlText(localCi.manifestLaneStatus))) {
+      failures.push('HTML missing review scout manifest lane status')
     }
   }
 

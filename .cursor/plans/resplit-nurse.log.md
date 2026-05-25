@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 18:20 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI/coding-agent review proof found a real control-plane trust issue: the latest FirstBite review-scout packet matched this PR checkout, but its embedded local-CI catalog omitted the current manifest lane `resplit_currency_api_trust_preflight`, so the scout could look current while not proving the same lane set the repo now owns.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now passes the repo manifest lane IDs into `inspectFirstBiteCursorReviewScout`, records missing proof lanes and missing catalog lanes separately, renders a `Manifest lanes` row in the `Coding-Agent Review Scout` GUI, and turns the scout yellow until both the repo-scoped proof and embedded catalog include every current manifest lane. `scripts/verify-reliability-cockpit-report.js` now requires those review-scout lane fields, rejects green scout states with missing current manifest lanes, and verifies the generated HTML shows the summary, next action, manifest status, and lane IDs. Tests cover both missing proof-lane and catalog-missing-lane regressions.
+- Fresh live finding: `bash /Users/leokwan/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo /Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 --no-cursor` wrote `/Users/leokwan/.agent-ledger/firstbite-cursor-review/20260525T221535Z-66482/report.json`; it was current for branch `codex/fx-otel-grafana-config-20260525` at `bc27b1e`, with repo proof `3/4` pass and `resplit_currency_api_trust_preflight` fail present, but `catalog_lane_keys` omitted `resplit_currency_api_trust_preflight`. The regenerated cockpit now reports `reviewScout.status=yellow`, `manifestLaneStatus=catalog_missing_current_manifest_lanes`, `missingExpectedLaneIds=[]`, and `missingExpectedCatalogLaneIds=["resplit_currency_api_trust_preflight"]`.
+- Fresh proof:
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `115/115` tests passed.
+  - `npm run reliability:cockpit:verify` -> green; generated cockpit report HEAD matches the current checkout and the review-scout section is present.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run check` -> generate green, strict release validation green, and `304/304` tests passed.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+- Boundary: this does not clear the loaded Codex/Cursor MCP host, make `resplit_currency_api_trust_preflight` pass, prove clean landed-source FirstBite, prove M4 peer execution, prove Cloudflare Workers Observability destinations, or prove Grafana Tempo/Loki. It shifts another chunk of coding-agent trust into repo-owned local-CI truth: a review scout cannot be green unless it proves the current checkout and current manifest lane set together.
+- Exact next slice: commit/push this review-scout manifest-lane contract, prove stale cockpit detection after the commit HEAD changes, regenerate the cockpit at the new HEAD, rerun current-source FirstBite proof/readout for that HEAD, and keep the loaded-host/Grafana/M4 boundaries separate.
+
 ## 2026-05-25 18:05 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The next local-CI/OTEL trust slice closes a verifier gap: the cockpit already rendered `worker-observability-config`, but the report verifier did not require that row or require the accepted-proof list to name the source-side `wrangler.jsonc` logs/traces prerequisite.

@@ -318,6 +318,7 @@ function buildReport({
   const reviewScout = inspectFirstBiteCursorReviewScout({
     reportRoot: cursorReviewRoot || DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR,
     expectedRepo: manifest?.repo,
+    expectedLaneIds: Object.keys(manifest?.localCi?.lanes || {}),
     repoName: packageJson?.name || path.basename(repoDir),
     repoDir,
     git,
@@ -2058,6 +2059,7 @@ function scopeCommandWithEnv(command, env = {}) {
 function inspectFirstBiteCursorReviewScout({
   reportRoot = DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR,
   expectedRepo = null,
+  expectedLaneIds = [],
   repoName = null,
   repoDir = null,
   git = {},
@@ -2078,6 +2080,8 @@ function inspectFirstBiteCursorReviewScout({
     ageMinutes: null,
     searchedReports: 0,
     expectedRepo,
+    expectedLaneIds,
+    missingExpectedLaneIds: expectedLaneIds,
     repoName,
     branch: null,
     headSha: null,
@@ -2089,7 +2093,7 @@ function inspectFirstBiteCursorReviewScout({
     hasSubstantiveFindings: false,
     localCi: null,
     failedLanes: [],
-    history: summarizeReviewScoutHistory([], { selectedRunId: null, expectedRepo, git, generatedAt }),
+    history: summarizeReviewScoutHistory([], { selectedRunId: null, expectedRepo, expectedLaneIds, git, generatedAt }),
     summary: 'No FirstBite Cursor/Graphite review scout packet was found for this repo.',
     nextAction: 'Run the read-only no-Cursor review scout before using Cursor/Graphite packet history as local-agent review evidence.',
     command,
@@ -2137,6 +2141,7 @@ function inspectFirstBiteCursorReviewScout({
   const history = summarizeReviewScoutHistory(reports, {
     selectedRunId: latest.runId,
     expectedRepo,
+    expectedLaneIds,
     git,
     generatedAt,
   })
@@ -2179,6 +2184,12 @@ function inspectFirstBiteCursorReviewScout({
   const repoScopeDerived = Boolean(expectedRepo && !repoScopeMatches && derivedRepoLanes.length > 0)
   const repoScopeWarning = Boolean(expectedRepo && !repoScopeMatches)
   const lanes = repoScopeMatches || !expectedRepo ? allLanes : derivedRepoLanes
+  const laneIds = unique(lanes.map(lane => lane.lane).filter(Boolean))
+  const catalogLaneIds = Array.isArray(localCi.catalog_lane_keys)
+    ? unique(localCi.catalog_lane_keys.filter(Boolean))
+    : laneIds
+  const missingExpectedLaneIds = expectedLaneIds.filter(laneId => !laneIds.includes(laneId))
+  const missingExpectedCatalogLaneIds = expectedLaneIds.filter(laneId => !catalogLaneIds.includes(laneId))
   const failedLanes = lanes
     .filter(lane => lane.status && lane.status !== 'pass')
     .map(lane => ({
@@ -2203,6 +2214,8 @@ function inspectFirstBiteCursorReviewScout({
       || !cursorReviewRan
       || (actionableClaimed && !substantive.hasSubstantiveFindings)
       || repoScopeWarning
+      || missingExpectedLaneIds.length > 0
+      || missingExpectedCatalogLaneIds.length > 0
       || repoLaneFailCount > 0
       ? 'yellow'
       : 'green'
@@ -2220,6 +2233,13 @@ function inspectFirstBiteCursorReviewScout({
   const ciSummary = repoLaneCount > 0
     ? `${repoLanePassCount}/${repoLaneCount} repo lane(s) pass${repoLaneFailCount > 0 ? `, ${repoLaneFailCount} fail` : ''}`
     : 'repo lane proof missing'
+  const manifestLaneSummary = missingExpectedLaneIds.length > 0
+    ? `missing current manifest lane(s): ${missingExpectedLaneIds.join(', ')}`
+    : missingExpectedCatalogLaneIds.length > 0
+      ? `local-CI catalog missing current manifest lane(s): ${missingExpectedCatalogLaneIds.join(', ')}`
+    : expectedLaneIds.length > 0
+      ? 'current manifest lanes covered'
+      : 'current manifest lane coverage unknown'
   const scopeSummary = repoScopeWarning
     ? repoScopeDerived
       ? `local-CI repo key ${localCiRepoKey || 'missing'}; derived ${expectedRepo} lanes from lane metadata`
@@ -2233,7 +2253,7 @@ function inspectFirstBiteCursorReviewScout({
   const historySummary = history.supersededActionableClaimCount > 0
     ? `; ${history.supersededActionableClaimCount} older actionable claim(s) superseded by newer packets`
     : ''
-  const summary = `FirstBite Cursor/Graphite review scout ${mode}: ${currentSummary}; ${ciSummary}; ${scopeSummary}; ${actionabilitySummary}${historySummary}.`
+  const summary = `FirstBite Cursor/Graphite review scout ${mode}: ${currentSummary}; ${ciSummary}; ${manifestLaneSummary}; ${scopeSummary}; ${actionabilitySummary}${historySummary}.`
 
   return {
     status,
@@ -2277,6 +2297,17 @@ function inspectFirstBiteCursorReviewScout({
       repoLaneCount,
       repoLanePassCount,
       repoLaneFailCount,
+      expectedLaneIds,
+      missingExpectedLaneIds,
+      missingExpectedCatalogLaneIds,
+      catalogLaneCount: catalogLaneIds.length,
+      manifestLaneStatus: missingExpectedLaneIds.length > 0
+        ? 'missing_current_manifest_lanes'
+        : missingExpectedCatalogLaneIds.length > 0
+          ? 'catalog_missing_current_manifest_lanes'
+        : expectedLaneIds.length > 0
+          ? 'covered'
+          : 'unknown',
       latestLaneCount: numberOrNull(localCi.latest_lane_count),
       latestLanePassCount: numberOrNull(localCi.latest_lane_pass_count),
       latestLaneFailCount: numberOrNull(localCi.latest_lane_fail_count),
@@ -2290,6 +2321,8 @@ function inspectFirstBiteCursorReviewScout({
         ? 'Rerun the read-only review scout from the current checkout and compare its repo-scoped local-CI proof before using it as current evidence.'
         : repoScopeWarning
           ? 'Fix or rerun the review scout so local_ci_repo_key matches the expected repo; this cockpit derived repo lanes from lane metadata only.'
+          : missingExpectedLaneIds.length > 0 || missingExpectedCatalogLaneIds.length > 0
+            ? 'Rerun the review scout from the current checkout after the repo-backed local-CI catalog and proof include every current manifest lane.'
           : repoLaneFailCount > 0
             ? 'Inspect the failed repo lane proof referenced by the review scout and rerun the affected FirstBite lane from current source.'
             : stale
@@ -2304,6 +2337,7 @@ function inspectFirstBiteCursorReviewScout({
 function summarizeReviewScoutHistory(reports = [], {
   selectedRunId = null,
   expectedRepo = null,
+  expectedLaneIds = [],
   git = {},
   generatedAt = new Date().toISOString(),
 } = {}) {
@@ -2325,7 +2359,7 @@ function summarizeReviewScoutHistory(reports = [], {
         ? true
         : null
     const substance = summarizeReviewScoutSubstance(data)
-    const repoLaneCounts = summarizeReviewScoutRepoLaneCounts(data.local_ci || {}, expectedRepo)
+    const repoLaneCounts = summarizeReviewScoutRepoLaneCounts(data.local_ci || {}, expectedRepo, expectedLaneIds)
     return {
       runId: data.run_id || report.runId,
       createdAt: data.created_at || data.createdAt || null,
@@ -2340,6 +2374,7 @@ function summarizeReviewScoutHistory(reports = [], {
       localCiRepoKey: data.local_ci?.local_ci_repo_key || null,
       repoLaneCount: repoLaneCounts.repoLaneCount,
       repoLaneFailCount: repoLaneCounts.repoLaneFailCount,
+      missingExpectedLaneIds: repoLaneCounts.missingExpectedLaneIds,
       reportPath: report.reportPath,
     }
   })
@@ -2355,7 +2390,7 @@ function summarizeReviewScoutHistory(reports = [], {
   }
 }
 
-function summarizeReviewScoutRepoLaneCounts(localCi = {}, expectedRepo = null) {
+function summarizeReviewScoutRepoLaneCounts(localCi = {}, expectedRepo = null, expectedLaneIds = []) {
   const allLanes = Array.isArray(localCi.lanes) ? localCi.lanes : []
   const localCiRepoKey = localCi.local_ci_repo_key || null
   const repoScopeMatches = !expectedRepo || localCiRepoKey === expectedRepo
@@ -2367,7 +2402,13 @@ function summarizeReviewScoutRepoLaneCounts(localCi = {}, expectedRepo = null) {
   const repoLaneFailCount = repoScopeMatches
     ? numberOrNull(localCi.repo_lane_fail_count) ?? failedLanes.length
     : failedLanes.length
-  return { repoLaneCount, repoLaneFailCount }
+  const laneIds = unique(lanes.map(lane => lane.lane).filter(Boolean))
+  const catalogLaneIds = Array.isArray(localCi.catalog_lane_keys)
+    ? unique(localCi.catalog_lane_keys.filter(Boolean))
+    : laneIds
+  const missingExpectedLaneIds = expectedLaneIds.filter(laneId => !laneIds.includes(laneId))
+  const missingExpectedCatalogLaneIds = expectedLaneIds.filter(laneId => !catalogLaneIds.includes(laneId))
+  return { repoLaneCount, repoLaneFailCount, missingExpectedLaneIds, missingExpectedCatalogLaneIds }
 }
 
 function matchesCursorReviewScoutRepo(report, { expectedRepo, repoName, repoDir } = {}) {
@@ -5776,7 +5817,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       command: reviewScout.command || 'bash ~/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo <repo> --no-cursor',
       blocker: reviewScout.summary || byGate.get('Coding-agent review scout')?.current || 'Review scout packet is missing or not current.',
       nextAction: byGate.get('Coding-agent review scout')?.nextAction || reviewScout.nextAction || 'Refresh the review scout packet from the current checkout.',
-      evidenceRequired: 'A fresh review scout packet whose branch/head matches the current checkout, with explicit no-Cursor or Cursor-sidecar status, a matching local_ci_repo_key, and repo-scoped local-CI proof paths.',
+      evidenceRequired: 'A fresh review scout packet whose branch/head matches the current checkout, with explicit no-Cursor or Cursor-sidecar status, a matching local_ci_repo_key, every current manifest lane present, and repo-scoped local-CI proof paths.',
       unblocks: 'Local coding-agent review trust',
       canRunNow: true,
       boundary: 'local-agent-review',
@@ -7765,6 +7806,7 @@ function renderReviewScout(reviewScout = {}) {
       <div>Actionable payload</div><div>${reviewScout.actionableClaimed ? 'claimed' : 'not claimed'} · findings ${escapeHtml(String(reviewScout.findingCount ?? 0))} · files ${escapeHtml(String(reviewScout.fileCount ?? 0))}</div>
       <div>Superseded actionable</div><div>${escapeHtml(String(reviewScout.history?.supersededActionableClaimCount ?? 0))} claim(s) · ${escapeHtml(String(reviewScout.history?.supersededSubstantiveFindingCount ?? 0))} with findings · ${escapeHtml(String(reviewScout.history?.supersededRepoLaneFailureCount ?? 0))} with repo lane failures</div>
       <div>Local-CI scope</div><div><span class="${reviewScout.localCi?.repoScopeWarning ? 'yellow' : 'green'}">${escapeHtml(reviewScout.localCi?.repoScopeStatus || 'unknown')}</span> · key <code>${escapeHtml(reviewScout.localCi?.repoKey || 'missing')}</code> / expected <code>${escapeHtml(reviewScout.localCi?.expectedRepo || reviewScout.expectedRepo || 'unknown')}</code></div>
+      <div>Manifest lanes</div><div><span class="${reviewScout.localCi?.missingExpectedLaneIds?.length || reviewScout.localCi?.missingExpectedCatalogLaneIds?.length ? 'yellow' : 'green'}">${escapeHtml(reviewScout.localCi?.manifestLaneStatus || 'unknown')}</span> · expected ${escapeHtml(String(reviewScout.localCi?.expectedLaneIds?.length ?? 0))} · proof missing <code>${escapeHtml((reviewScout.localCi?.missingExpectedLaneIds || []).join(', ') || 'none')}</code> · catalog missing <code>${escapeHtml((reviewScout.localCi?.missingExpectedCatalogLaneIds || []).join(', ') || 'none')}</code></div>
       <div>Repo lanes</div><div>${escapeHtml(String(reviewScout.localCi?.repoLanePassCount ?? 'unknown'))}/${escapeHtml(String(reviewScout.localCi?.repoLaneCount ?? 'unknown'))} pass · ${escapeHtml(String(reviewScout.localCi?.repoLaneFailCount ?? 'unknown'))} fail</div>
       <div>Report</div><div><code>${escapeHtml(reviewScout.reportPath || 'missing')}</code></div>
       <div>Review</div><div><code>${escapeHtml(reviewScout.reviewPath || 'missing')}</code></div>

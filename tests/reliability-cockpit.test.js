@@ -395,6 +395,139 @@ test('inspectFirstBiteCursorReviewScout keeps worktree scout local CI scope hone
   assert.match(scout.nextAction, /local_ci_repo_key matches/)
 })
 
+test('inspectFirstBiteCursorReviewScout rejects packets missing current manifest lanes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-manifest-lanes-'))
+  const repoDir = '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525'
+  const runDir = path.join(root, 'codex-current-pr10-review-scout-20260525-bc27b1e')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'review.md'), 'Cursor sidecar found no actionable issues.\n')
+  fs.writeFileSync(path.join(runDir, 'review-packet.md'), '# Review packet\n')
+  fs.writeFileSync(path.join(runDir, 'local-ci-repo-proof.json'), JSON.stringify({ ok: true }))
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    run_id: 'codex-current-pr10-review-scout-20260525-bc27b1e',
+    created_at: '2026-05-25T16:06:35Z',
+    repo: repoDir,
+    repo_name: 'resplit-currency-api',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head_sha: 'bc27b1e',
+    run_cursor: 1,
+    cursor_mode: 'ask',
+    cursor_current_model: 'gpt-5.3-codex',
+    actionable: false,
+    local_ci: {
+      repo_name: 'resplit-currency-api',
+      local_ci_repo_key: 'resplit_currency_api',
+      repo_lane_count: 3,
+      repo_lane_pass_count: 3,
+      repo_lane_fail_count: 0,
+      lanes: [
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass' },
+        { lane: 'resplit_currency_api_integration', repo: 'resplit_currency_api', kind: 'integration', status: 'pass' },
+        { lane: 'resplit_currency_api_ui', repo: 'resplit_currency_api', kind: 'ui', status: 'pass' },
+      ],
+    },
+  }))
+
+  const scout = inspectFirstBiteCursorReviewScout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    repoName: 'resplit-currency-api',
+    repoDir,
+    git: {
+      branch: 'codex/fx-otel-grafana-config-20260525',
+      head: 'bc27b1e06ded1b4811cebd39657c3cba0b3407fd',
+    },
+    generatedAt: '2026-05-25T16:10:00.000Z',
+  })
+
+  assert.equal(scout.currentForCheckout, true)
+  assert.equal(scout.cursorReviewRan, true)
+  assert.equal(scout.status, 'yellow')
+  assert.equal(scout.localCi.repoLaneFailCount, 0)
+  assert.deepEqual(scout.localCi.missingExpectedLaneIds, ['resplit_currency_api_trust_preflight'])
+  assert.equal(scout.localCi.manifestLaneStatus, 'missing_current_manifest_lanes')
+  assert.match(scout.summary, /missing current manifest lane\(s\): resplit_currency_api_trust_preflight/)
+  assert.match(scout.nextAction, /current manifest lane/)
+})
+
+test('inspectFirstBiteCursorReviewScout rejects packets whose catalog omits current manifest lanes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-catalog-lanes-'))
+  const repoDir = '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525'
+  const runDir = path.join(root, 'codex-current-pr10-review-scout-20260525-catalog')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'review.md'), 'Cursor sidecar found no actionable issues.\n')
+  fs.writeFileSync(path.join(runDir, 'review-packet.md'), '# Review packet\n')
+  fs.writeFileSync(path.join(runDir, 'local-ci-repo-proof.json'), JSON.stringify({ ok: true }))
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    run_id: 'codex-current-pr10-review-scout-20260525-catalog',
+    created_at: '2026-05-25T16:16:35Z',
+    repo: repoDir,
+    repo_name: 'resplit-currency-api',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head_sha: 'bc27b1e',
+    run_cursor: 1,
+    cursor_mode: 'ask',
+    cursor_current_model: 'gpt-5.3-codex',
+    actionable: false,
+    local_ci: {
+      repo_name: 'resplit-currency-api',
+      local_ci_repo_key: 'resplit_currency_api',
+      manifest_lane_keys: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_trust_preflight',
+        'resplit_currency_api_ui',
+      ],
+      catalog_lane_keys: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_ui',
+      ],
+      repo_lane_count: 4,
+      repo_lane_pass_count: 3,
+      repo_lane_fail_count: 1,
+      lanes: [
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass' },
+        { lane: 'resplit_currency_api_integration', repo: 'resplit_currency_api', kind: 'integration', status: 'pass' },
+        { lane: 'resplit_currency_api_trust_preflight', repo: 'resplit_currency_api', kind: 'integration', status: 'fail' },
+        { lane: 'resplit_currency_api_ui', repo: 'resplit_currency_api', kind: 'ui', status: 'pass' },
+      ],
+    },
+  }))
+
+  const scout = inspectFirstBiteCursorReviewScout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    repoName: 'resplit-currency-api',
+    repoDir,
+    git: {
+      branch: 'codex/fx-otel-grafana-config-20260525',
+      head: 'bc27b1e06ded1b4811cebd39657c3cba0b3407fd',
+    },
+    generatedAt: '2026-05-25T16:20:00.000Z',
+  })
+
+  assert.equal(scout.currentForCheckout, true)
+  assert.equal(scout.status, 'yellow')
+  assert.deepEqual(scout.localCi.missingExpectedLaneIds, [])
+  assert.deepEqual(scout.localCi.missingExpectedCatalogLaneIds, ['resplit_currency_api_trust_preflight'])
+  assert.equal(scout.localCi.manifestLaneStatus, 'catalog_missing_current_manifest_lanes')
+  assert.match(scout.summary, /local-CI catalog missing current manifest lane\(s\): resplit_currency_api_trust_preflight/)
+  assert.match(scout.nextAction, /local-CI catalog and proof/)
+})
+
 test('inspectFirstBiteCursorReviewScout reports superseded actionable history and prioritizes failed lanes', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-history-'))
   const repoDir = '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525'

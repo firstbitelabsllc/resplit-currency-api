@@ -134,6 +134,48 @@ test('verifyCockpitReport fails when accepted OTEL proof drops wrangler source c
   assert.match(result.report.failures.join('\n'), /observability proof chain missing accepted proof: wrangler observability source config/)
 })
 
+test('verifyCockpitReport fails when review scout omits manifest lane coverage', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-review-scout-lanes-'))
+  const report = buildReport()
+  delete report.agentState.reviewScout.localCi.expectedLaneIds
+  delete report.agentState.reviewScout.localCi.missingExpectedLaneIds
+  delete report.agentState.reviewScout.localCi.missingExpectedCatalogLaneIds
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record expected manifest lane IDs/)
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record missing manifest lane IDs/)
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record missing catalog manifest lane IDs/)
+})
+
+test('verifyCockpitReport fails when review scout is green despite missing current manifest lanes', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-review-scout-green-missing-lane-'))
+  const report = buildReport()
+  report.agentState.reviewScout.status = 'green'
+  report.agentState.reviewScout.summary = 'FirstBite Cursor/Graphite review scout Cursor gpt-5.3-codex: matches the current checkout; 3/3 repo lane(s) pass; local-CI repo key matches resplit_currency_api; no actionable flag.'
+  report.agentState.reviewScout.nextAction = 'Keep the review scout fresh.'
+  report.agentState.reviewScout.localCi.repoLaneCount = 3
+  report.agentState.reviewScout.localCi.repoLanePassCount = 3
+  report.agentState.reviewScout.localCi.missingExpectedLaneIds = ['resplit_currency_api_trust_preflight']
+  report.agentState.reviewScout.localCi.missingExpectedCatalogLaneIds = []
+  report.agentState.reviewScout.localCi.manifestLaneStatus = 'missing_current_manifest_lanes'
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /review scout cannot be green while current manifest lanes are missing/)
+  assert.match(result.report.failures.join('\n'), /review scout missing-lane state does not name current manifest lanes/)
+})
+
 test('verifyCockpitReport fails when JSON loses a recovery boundary claim', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-boundary-claim-'))
   const report = buildReport()
@@ -597,6 +639,31 @@ function buildReport() {
         currentInvalidReason: 'Worker trigger missing; Tempo missing; Loki missing.',
       },
     },
+    agentState: {
+      reviewScout: {
+        status: 'yellow',
+        summary: 'FirstBite Cursor/Graphite review scout no-Cursor packet: matches the current checkout; 3/4 repo lane(s) pass, 1 fail; current manifest lanes covered; local-CI repo key matches resplit_currency_api; no actionable flag.',
+        nextAction: 'Inspect the failed repo lane proof referenced by the review scout and rerun the affected FirstBite lane from current source.',
+        localCi: {
+          repoKey: 'resplit_currency_api',
+          expectedRepo: 'resplit_currency_api',
+          repoScopeStatus: 'matched',
+          repoScopeWarning: false,
+          repoLaneCount: 4,
+          repoLanePassCount: 3,
+          repoLaneFailCount: 1,
+          expectedLaneIds: [
+            'resplit_currency_api_unit',
+            'resplit_currency_api_integration',
+            'resplit_currency_api_trust_preflight',
+            'resplit_currency_api_ui',
+          ],
+          missingExpectedLaneIds: [],
+          missingExpectedCatalogLaneIds: [],
+          manifestLaneStatus: 'covered',
+        },
+      },
+    },
     trustModel: {
       preflight: {
         status: 'red',
@@ -766,6 +833,13 @@ function buildHtml(report) {
       ...(category.laneFindings || []).map(finding => finding.reason),
     ]),
     'Trust Preflight Command Details',
+    'Coding-Agent Review Scout',
+    report.agentState.reviewScout.summary,
+    report.agentState.reviewScout.nextAction,
+    report.agentState.reviewScout.localCi.manifestLaneStatus,
+    ...(report.agentState.reviewScout.localCi.expectedLaneIds || []),
+    ...(report.agentState.reviewScout.localCi.missingExpectedLaneIds || []),
+    ...(report.agentState.reviewScout.localCi.missingExpectedCatalogLaneIds || []),
     ...report.trustModel.preflight.commandDiagnostics.flatMap(diagnostic => [
       diagnostic.summary,
       ...(diagnostic.blockers || []).map(blocker => blocker.id),
