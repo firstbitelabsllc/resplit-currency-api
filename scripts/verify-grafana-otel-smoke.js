@@ -2,6 +2,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 
 const DEFAULT_OUTPUT = path.join('reports', 'grafana-otel-smoke.json')
 const DEFAULT_TRIGGER_URL = 'https://fx.resplit.app/health'
@@ -158,10 +159,12 @@ async function buildGrafanaSmokeReport(options, deps = {}) {
   const fetchImpl = deps.fetch || global.fetch
   const missingConfig = missingGrafanaConfig(options)
   const window = queryWindow(now, options.sinceMinutes)
+  const sourceIdentity = deps.sourceIdentity || readSourceIdentity(deps.repoDir || process.cwd(), deps)
   const report = {
     checkedAt: now.toISOString(),
     status: 'yellow',
     worker: 'resplit-fx',
+    sourceIdentity,
     trigger: {
       skipped: options.skipTrigger,
       url: options.skipTrigger ? null : options.triggerUrl,
@@ -498,6 +501,39 @@ function summarizeNextActions(checks) {
   ))
 }
 
+function readSourceIdentity(repoDir = process.cwd(), deps = {}) {
+  const run = deps.execFileSync || execFileSync
+  const git = args => String(run('git', ['-C', repoDir, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })).trim()
+
+  try {
+    const root = git(['rev-parse', '--show-toplevel']) || repoDir
+    const statusRows = git(['status', '--porcelain=v1', '--untracked-files=all'])
+      .split('\n')
+      .filter(Boolean)
+    return {
+      status: 'ok',
+      repoPath: root,
+      branch: git(['rev-parse', '--abbrev-ref', 'HEAD']),
+      head: git(['rev-parse', '--short=12', 'HEAD']),
+      headFull: git(['rev-parse', 'HEAD']),
+      dirtyCount: statusRows.length,
+    }
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      repoPath: path.resolve(repoDir),
+      branch: null,
+      head: null,
+      headFull: null,
+      dirtyCount: null,
+      error: error.message,
+    }
+  }
+}
+
 function missingGrafanaConfig(options) {
   const missing = []
   if (!options.baseUrl) missing.push('GRAFANA_BASE_URL')
@@ -548,4 +584,5 @@ module.exports = {
   missingGrafanaConfig,
   parseArgs,
   queryWindow,
+  readSourceIdentity,
 }

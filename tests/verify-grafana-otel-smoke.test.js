@@ -8,6 +8,7 @@ const {
   missingGrafanaConfig,
   parseArgs,
   queryWindow,
+  readSourceIdentity,
 } = require('../scripts/verify-grafana-otel-smoke.js')
 
 test('parseArgs reads Grafana verifier env without leaking token into config names', () => {
@@ -69,6 +70,14 @@ test('buildGrafanaSmokeReport stays yellow when read-only Grafana config is miss
 
 test('buildGrafanaSmokeReport returns green when Tempo and Loki both match', async () => {
   const calls = []
+  const sourceIdentity = {
+    status: 'ok',
+    repoPath: '/tmp/resplit-currency-api',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head: 'abc123def456',
+    headFull: 'abc123def4567890abc123def4567890abc123de',
+    dirtyCount: 2,
+  }
   const report = await buildGrafanaSmokeReport({
     skipTrigger: false,
     triggerUrl: 'https://fx.resplit.app/health',
@@ -83,6 +92,7 @@ test('buildGrafanaSmokeReport returns green when Tempo and Loki both match', asy
     settleMs: 0,
   }, {
     now: () => '2026-05-25T05:30:00.000Z',
+    sourceIdentity,
     fetch: async (url, options = {}) => {
       calls.push({ url, options })
       if (url === 'https://fx.resplit.app/health') {
@@ -112,6 +122,7 @@ test('buildGrafanaSmokeReport returns green when Tempo and Loki both match', asy
   assert.equal(report.grafana.loki.resultCount, 1)
   assert.deepEqual(report.checks.map(check => check.status), ['green', 'green', 'green', 'green'])
   assert.deepEqual(report.nextActions, [])
+  assert.deepEqual(report.sourceIdentity, sourceIdentity)
   assert.equal(report.grafana.config.tokenConfigured, true)
   assert.equal(report.grafana.queryWindow.start, '2026-05-25T04:30:00.000Z')
   assert.equal(report.grafana.queryWindow.end, '2026-05-25T05:30:00.000Z')
@@ -123,6 +134,32 @@ test('buildGrafanaSmokeReport returns green when Tempo and Loki both match', asy
   })
   assert.equal(grafanaCalls.length, 2)
   assert.equal(grafanaCalls.every(call => call.options.headers.authorization === 'Bearer secret-token'), true)
+})
+
+test('readSourceIdentity records checkout head, repo path, and dirty count', () => {
+  const calls = []
+  const sourceIdentity = readSourceIdentity('/tmp/fx-repo', {
+    execFileSync: (_cmd, args) => {
+      calls.push(args)
+      const key = args.slice(2).join(' ')
+      if (key === 'rev-parse --show-toplevel') return '/tmp/fx-repo\n'
+      if (key === 'status --porcelain=v1 --untracked-files=all') return ' M scripts/verify-grafana-otel-smoke.js\n?? reports/\n'
+      if (key === 'rev-parse --abbrev-ref HEAD') return 'codex/fx-otel-grafana-config-20260525\n'
+      if (key === 'rev-parse --short=12 HEAD') return 'b44aee28f379\n'
+      if (key === 'rev-parse HEAD') return 'b44aee28f379111111111111111111111111111111\n'
+      throw new Error(`unexpected git args: ${args.join(' ')}`)
+    },
+  })
+
+  assert.deepEqual(sourceIdentity, {
+    status: 'ok',
+    repoPath: '/tmp/fx-repo',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head: 'b44aee28f379',
+    headFull: 'b44aee28f379111111111111111111111111111111',
+    dirtyCount: 2,
+  })
+  assert.equal(calls.every(args => args[0] === '-C' && args[1] === '/tmp/fx-repo'), true)
 })
 
 test('extractors understand common Tempo and Loki response shapes', () => {

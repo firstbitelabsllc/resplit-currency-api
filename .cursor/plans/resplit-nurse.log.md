@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 19:36 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI/Moussey found a real telemetry-trust gap: Grafana OTEL smoke artifacts could prove Tempo/Loki matches without saying which checkout produced the artifact, so a cockpit could not distinguish fresh telemetry from stale or adjacent source proof.
+- Shipped delta pending source promotion: `scripts/verify-grafana-otel-smoke.js` now writes a top-level `sourceIdentity` block into `reports/grafana-otel-smoke.json` with repo path, branch, short/full HEAD, and dirty count. `tests/verify-grafana-otel-smoke.test.js` covers both green report emission and git source identity parsing, while continuing to assert Grafana tokens are not serialized.
+- Fresh artifact proof: `npm run observability:otel-smoke -- --since-minutes 60` returned expected yellow exit `2` on this host because `GRAFANA_BASE_URL`, `GRAFANA_TEMPO_DATASOURCE_UID`, and `GRAFANA_LOKI_DATASOURCE_UID` are missing. The report now has `sourceIdentity.head=b44aee28f379`, repo path `/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525`, Worker trigger HTTP `200`, and request id `cbadccbd-a69e-4abf-916f-acb4da699ccf`.
+- Cross-repo Moussey proof: live `http://127.0.0.1:4323/api/coding/local-ci` now reports `observability.status=warning`, `ready=0`, `total=2`, `stale=0`. The PR-worktree FX report is `sourceIdentity.status=verified` but still warning on missing Grafana config; the primary FX report still has Tempo `4` and Loki `1`, but remains warning because it lacks embedded source identity. Browser proof found `source verified`, `source missing`, `b44aee28f379`, `GRAFANA_BASE_URL`, Tempo, and Loki on `/coding`; screenshot `/tmp/moussey-coding-otel-source-verified-mixed-20260525.png`.
+- Fresh proof:
+  - `node --test tests/verify-grafana-otel-smoke.test.js` -> `6/6` tests passed.
+  - `node --test tests/verify-grafana-otel-smoke.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `134/134` tests passed.
+  - `npm run check` -> generate green, strict release validation green, and `308/308` tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated cockpit report HEAD matches the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+- Boundary: this does not clear Grafana/Cloudflare proof, loaded Codex/Cursor MCP, clean landed-source FirstBite, M4 peer execution, or fleet proof. It makes the telemetry artifact harder to launder: a future green Tempo/Loki report must also identify its producing checkout before Moussey can count it ready.
+- Exact next slice: commit/push this smoke source-identity writer, regenerate cockpit at the post-commit HEAD, then run FirstBite from the committed PR source ref instead of the primary checkout.
+
 ## 2026-05-25 18:39 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI pushed the cockpit toward a stricter source-identity trust model: a Coding-Agent Review Scout packet can no longer look green merely because its outer packet matches the checkout; every embedded repo lane proof must also carry per-lane `source_head` and `primary_repo_path` matching the current PR worktree.
