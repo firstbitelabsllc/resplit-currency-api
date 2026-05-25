@@ -1,5 +1,22 @@
 # Resplit Nurse Log
 
+## 2026-05-25 11:40 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The source-promotion action now distinguishes "tracked on this PR head" from "promoted to origin/main" so operators do not loop on a no-op local review after a PR-head source landing.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` classifies a red source bundle with zero current/head candidates but missing `origin/main` files or package-script drift as an origin promotion hold. `source-promotion-review` becomes `canRunNow=false`, `boundary=source-promotion`, and blocks on merge/promotion plus a post-merge packet instead of inviting another local packet review.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the current Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `66/66` focused cockpit tests green.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> cockpit report contract green; before commit, `source-promotion-review` is still correctly runnable because `2` tracked source files are modified locally.
+  - `npm run check` -> strict release validation green and `252/252` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `9`, command drift `2`; generated `reports/` remain hold-by-default.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+- Boundary: this does not merge the PR, promote the source bundle to `origin/main`, reload the Codex/Cursor MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery.
+- Exact next slice: commit/push this source-promotion hold, rerun the cockpit from a clean PR head, confirm `source-promotion-review` becomes held on `origin/main` instead of runnable, then reload the MCP host and run the external Cloudflare/Grafana and M4 proofs.
+
 ## 2026-05-25 11:30 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but loaded-MCP evidence freshness is now freshly captured and no longer masks the real host-reload blocker.

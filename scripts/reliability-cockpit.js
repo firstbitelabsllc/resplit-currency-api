@@ -1001,6 +1001,11 @@ function buildSourcePromotionBundle({ repoDir, trackedSource = null, cleanProofR
   const yellow = commandDrift.length > 0
     || trackedSource?.status === 'yellow'
   const status = red ? 'red' : yellow ? 'yellow' : 'green'
+  const sourceTrackedOnHeadPendingOrigin = status !== 'green'
+    && dirtyBundleFiles.length === 0
+    && missingCurrentFiles.length === 0
+    && missingHeadFiles.length === 0
+    && (missingOriginFiles.length > 0 || commandDrift.some(row => row.status === 'red' && !row.origin))
   const summary = status === 'green'
     ? 'Source promotion bundle is tracked; clean worktree proof can target the current cockpit and local-CI contract.'
     : [
@@ -1037,7 +1042,9 @@ function buildSourcePromotionBundle({ repoDir, trackedSource = null, cleanProofR
     },
     nextAction: status === 'green'
       ? 'Run the clean worktree FirstBite command and attach the new report.'
-      : 'Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof.',
+      : sourceTrackedOnHeadPendingOrigin
+        ? 'Source bundle is tracked on this PR head; keep it held until remaining trust gates clear, then merge/promote to origin/main and rerun clean worktree FirstBite proof.'
+        : 'Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof.',
   }
 }
 
@@ -4455,6 +4462,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const actions = []
 
   if (contractNeedsAction(byGate.get('Source promotion bundle')) || contractNeedsAction(byGate.get('Tracked local-CI contract'))) {
+    const awaitingOriginPromotion = sourcePromotionAwaitingOriginMain(sourcePromotion)
     actions.push(operatorAction({
       id: 'source-promotion-review',
       priority: 1,
@@ -4464,11 +4472,16 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       proof: 'reports/resplit-fx-source-promotion-packet.md',
       command: sourcePromotion.commands?.writePacket || 'npm run source:promotion-packet',
       blocker: sourcePromotion.summary || byGate.get('Source promotion bundle')?.current || 'Source promotion bundle has not been generated.',
-      nextAction: 'Review the packet, stage only exact candidates, and keep hold-by-default rows out unless separately reviewed.',
-      evidenceRequired: 'A staged or landed diff whose paths match the packet stage candidates, with hold-by-default rows reviewed separately.',
+      nextAction: awaitingOriginPromotion
+        ? 'Source is already tracked on this PR head; keep the PR held until remaining trust gates clear, then merge/promote to origin/main and rerun the source packet plus clean FirstBite proof.'
+        : 'Review the packet, stage only exact candidates, and keep hold-by-default rows out unless separately reviewed.',
+      evidenceRequired: awaitingOriginPromotion
+        ? 'A post-merge origin/main packet showing zero missing origin files, zero command drift, and clean FirstBite proof from refs/remotes/origin/main.'
+        : 'A staged or landed diff whose paths match the packet stage candidates, with hold-by-default rows reviewed separately.',
       unblocks: 'Clean worktree FirstBite proof',
-      canRunNow: true,
-      boundary: 'local',
+      canRunNow: !awaitingOriginPromotion,
+      blockedBy: awaitingOriginPromotion ? 'Source bundle is tracked on HEAD but absent from origin/main; promotion is held until remaining launch trust gates clear.' : '',
+      boundary: awaitingOriginPromotion ? 'source-promotion' : 'local',
     }))
   }
 
@@ -4715,6 +4728,21 @@ function loadedMcpProbeNeedsRecapture(loadedMcp = {}) {
   }
 
   return Boolean(loadedMcp.freshnessStatus && loadedMcp.freshnessStatus !== 'green')
+}
+
+function sourcePromotionAwaitingOriginMain(sourcePromotion = {}) {
+  if (!sourcePromotion || sourcePromotion.status === 'green') {
+    return false
+  }
+  const counts = sourcePromotion.counts || {}
+  const commandDrift = Array.isArray(sourcePromotion.commandDrift) ? sourcePromotion.commandDrift : []
+  const recommendedPaths = Array.isArray(sourcePromotion.recommendedPaths) ? sourcePromotion.recommendedPaths : []
+  return recommendedPaths.length === 0
+    && (counts.currentOnlyFiles || 0) === 0
+    && (counts.modifiedFiles || 0) === 0
+    && (counts.missingCurrentFiles || 0) === 0
+    && (counts.missingHeadFiles || 0) === 0
+    && ((counts.missingOriginFiles || 0) > 0 || commandDrift.some(row => row.status === 'red' && !row.origin))
 }
 
 function loadedMcpHostReloadBlocker({ loadedMcp = {}, mcpRefreshPlan = {} } = {}) {
