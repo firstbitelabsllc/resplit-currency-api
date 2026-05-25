@@ -307,6 +307,21 @@ function verifyJsonContract(cockpit) {
     if (!Array.isArray(reviewLocalCi.missingExpectedCatalogLaneIds)) {
       failures.push('review scout local-CI contract does not record missing catalog manifest lane IDs')
     }
+    if (!reviewLocalCi.laneSourceStatus) {
+      failures.push('review scout local-CI contract does not record lane source identity status')
+    }
+    if (!Array.isArray(reviewLocalCi.missingSourceHeadLaneIds)) {
+      failures.push('review scout local-CI contract does not record missing lane source_head IDs')
+    }
+    if (!Array.isArray(reviewLocalCi.missingPrimaryRepoPathLaneIds)) {
+      failures.push('review scout local-CI contract does not record missing lane primary repo path IDs')
+    }
+    if (!Array.isArray(reviewLocalCi.mismatchedSourceHeadLanes)) {
+      failures.push('review scout local-CI contract does not record mismatched lane source_head IDs')
+    }
+    if (!Array.isArray(reviewLocalCi.mismatchedPrimaryRepoPathLanes)) {
+      failures.push('review scout local-CI contract does not record mismatched lane primary repo path IDs')
+    }
     if ((reviewLocalCi.missingExpectedLaneIds || []).length > 0 || (reviewLocalCi.missingExpectedCatalogLaneIds || []).length > 0) {
       if (reviewScout.status === 'green') {
         failures.push('review scout cannot be green while current manifest lanes are missing')
@@ -314,6 +329,19 @@ function verifyJsonContract(cockpit) {
       const reviewText = `${reviewScout.summary || ''} ${reviewScout.nextAction || ''}`
       if (!/manifest lane/i.test(reviewText)) {
         failures.push('review scout missing-lane state does not name current manifest lanes in summary or next action')
+      }
+    }
+    const sourceIdentityIssueCount = (reviewLocalCi.missingSourceHeadLaneIds || []).length
+      + (reviewLocalCi.missingPrimaryRepoPathLaneIds || []).length
+      + (reviewLocalCi.mismatchedSourceHeadLanes || []).length
+      + (reviewLocalCi.mismatchedPrimaryRepoPathLanes || []).length
+    if (sourceIdentityIssueCount > 0 || (reviewLocalCi.laneSourceStatus && reviewLocalCi.laneSourceStatus !== 'covered')) {
+      if (reviewScout.status === 'green') {
+        failures.push('review scout cannot be green while lane source identity is missing or mismatched')
+      }
+      const reviewText = `${reviewScout.summary || ''} ${reviewScout.nextAction || ''}`
+      if (!/source_head|primary_repo_path|repo path|source identity/i.test(reviewText)) {
+        failures.push('review scout lane source identity gap does not name source_head or repo path in summary or next action')
       }
     }
   }
@@ -685,6 +713,33 @@ function verifyHtmlContract({ cockpit, html }) {
     }
     if (localCi.manifestLaneStatus && !html.includes(escapeForHtmlText(localCi.manifestLaneStatus))) {
       failures.push('HTML missing review scout manifest lane status')
+    }
+    if (localCi.laneSourceStatus && !html.includes(escapeForHtmlText(localCi.laneSourceStatus))) {
+      failures.push('HTML missing review scout lane source identity status')
+    }
+    for (const laneId of localCi.missingSourceHeadLaneIds || []) {
+      if (!html.includes(escapeForHtmlText(laneId))) {
+        failures.push(`HTML missing review scout missing source_head lane: ${laneId}`)
+      }
+    }
+    for (const laneId of localCi.missingPrimaryRepoPathLaneIds || []) {
+      if (!html.includes(escapeForHtmlText(laneId))) {
+        failures.push(`HTML missing review scout missing primary repo path lane: ${laneId}`)
+      }
+    }
+    for (const mismatch of localCi.mismatchedSourceHeadLanes || []) {
+      for (const value of [mismatch.lane, mismatch.sourceHead, mismatch.expectedHead]) {
+        if (value && !html.includes(escapeForHtmlText(value))) {
+          failures.push(`HTML missing review scout source_head mismatch value: ${value}`)
+        }
+      }
+    }
+    for (const mismatch of localCi.mismatchedPrimaryRepoPathLanes || []) {
+      for (const value of [mismatch.lane, mismatch.primaryRepoPath, mismatch.expectedRepoPath]) {
+        if (value && !html.includes(escapeForHtmlText(value))) {
+          failures.push(`HTML missing review scout primary repo path mismatch value: ${value}`)
+        }
+      }
     }
   }
 

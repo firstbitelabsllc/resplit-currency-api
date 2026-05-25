@@ -153,6 +153,29 @@ test('verifyCockpitReport fails when review scout omits manifest lane coverage',
   assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record missing catalog manifest lane IDs/)
 })
 
+test('verifyCockpitReport fails when review scout omits lane source identity coverage', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-review-scout-source-fields-'))
+  const report = buildReport()
+  delete report.agentState.reviewScout.localCi.laneSourceStatus
+  delete report.agentState.reviewScout.localCi.missingSourceHeadLaneIds
+  delete report.agentState.reviewScout.localCi.missingPrimaryRepoPathLaneIds
+  delete report.agentState.reviewScout.localCi.mismatchedSourceHeadLanes
+  delete report.agentState.reviewScout.localCi.mismatchedPrimaryRepoPathLanes
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record lane source identity status/)
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record missing lane source_head IDs/)
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record missing lane primary repo path IDs/)
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record mismatched lane source_head IDs/)
+  assert.match(result.report.failures.join('\n'), /review scout local-CI contract does not record mismatched lane primary repo path IDs/)
+})
+
 test('verifyCockpitReport fails when review scout is green despite missing current manifest lanes', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-review-scout-green-missing-lane-'))
   const report = buildReport()
@@ -174,6 +197,34 @@ test('verifyCockpitReport fails when review scout is green despite missing curre
   assert.equal(result.report.status, 'red')
   assert.match(result.report.failures.join('\n'), /review scout cannot be green while current manifest lanes are missing/)
   assert.match(result.report.failures.join('\n'), /review scout missing-lane state does not name current manifest lanes/)
+})
+
+test('verifyCockpitReport fails when review scout is green despite lane source mismatch', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-review-scout-green-source-mismatch-'))
+  const report = buildReport()
+  report.agentState.reviewScout.status = 'green'
+  report.agentState.reviewScout.summary = 'FirstBite Cursor/Graphite review scout Cursor gpt-5.3-codex: matches the current checkout; 4/4 repo lane(s) pass; current manifest lanes covered; local-CI repo key matches resplit_currency_api; no actionable flag.'
+  report.agentState.reviewScout.nextAction = 'Keep the review scout fresh.'
+  report.agentState.reviewScout.localCi.repoLaneCount = 4
+  report.agentState.reviewScout.localCi.repoLanePassCount = 4
+  report.agentState.reviewScout.localCi.repoLaneFailCount = 0
+  report.agentState.reviewScout.localCi.laneSourceStatus = 'source_identity_mismatch'
+  report.agentState.reviewScout.localCi.mismatchedSourceHeadLanes = [{
+    lane: 'resplit_currency_api_unit',
+    sourceHead: 'old123456789',
+    expectedHead: 'de99b14671dd',
+  }]
+  report.agentState.reviewScout.localCi.mismatchedPrimaryRepoPathLanes = []
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /review scout cannot be green while lane source identity is missing or mismatched/)
+  assert.match(result.report.failures.join('\n'), /review scout lane source identity gap does not name source_head or repo path/)
 })
 
 test('verifyCockpitReport fails when JSON loses a recovery boundary claim', () => {
@@ -661,6 +712,14 @@ function buildReport() {
           missingExpectedLaneIds: [],
           missingExpectedCatalogLaneIds: [],
           manifestLaneStatus: 'covered',
+          laneSourceStatus: 'covered',
+          laneSourceSummary: 'local-CI lane source identity covered for 4/4 expected lane(s)',
+          missingSourceHeadLaneIds: [],
+          missingPrimaryRepoPathLaneIds: [],
+          mismatchedSourceHeadLanes: [],
+          mismatchedPrimaryRepoPathLanes: [],
+          sourceIdentityExpectedHead: 'de99b14671dd',
+          sourceIdentityExpectedRepoPath: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
         },
       },
     },

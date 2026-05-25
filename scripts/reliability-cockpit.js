@@ -2190,6 +2190,12 @@ function inspectFirstBiteCursorReviewScout({
     : laneIds
   const missingExpectedLaneIds = expectedLaneIds.filter(laneId => !laneIds.includes(laneId))
   const missingExpectedCatalogLaneIds = expectedLaneIds.filter(laneId => !catalogLaneIds.includes(laneId))
+  const laneSourceIdentity = summarizeReviewScoutLaneSourceIdentity({
+    lanes,
+    expectedLaneIds,
+    repoDir,
+    git,
+  })
   const failedLanes = lanes
     .filter(lane => lane.status && lane.status !== 'pass')
     .map(lane => ({
@@ -2197,6 +2203,8 @@ function inspectFirstBiteCursorReviewScout({
       repo: lane.repo || null,
       kind: lane.kind || null,
       status: lane.status || 'unknown',
+      sourceHead: getReviewScoutLaneSourceHead(lane),
+      primaryRepoPath: getReviewScoutLaneRepoPath(lane),
       runId: lane.run_id || null,
       reportPath: lane.report_path || null,
       logPath: lane.log_path || null,
@@ -2216,6 +2224,7 @@ function inspectFirstBiteCursorReviewScout({
       || repoScopeWarning
       || missingExpectedLaneIds.length > 0
       || missingExpectedCatalogLaneIds.length > 0
+      || laneSourceIdentity.status !== 'covered'
       || repoLaneFailCount > 0
       ? 'yellow'
       : 'green'
@@ -2240,6 +2249,11 @@ function inspectFirstBiteCursorReviewScout({
     : expectedLaneIds.length > 0
       ? 'current manifest lanes covered'
       : 'current manifest lane coverage unknown'
+  const laneSourceSummary = laneSourceIdentity.status === 'covered'
+    ? 'lane source identity matches current checkout'
+    : laneSourceIdentity.status === 'unknown'
+      ? 'lane source identity unknown'
+      : laneSourceIdentity.summary
   const scopeSummary = repoScopeWarning
     ? repoScopeDerived
       ? `local-CI repo key ${localCiRepoKey || 'missing'}; derived ${expectedRepo} lanes from lane metadata`
@@ -2253,7 +2267,7 @@ function inspectFirstBiteCursorReviewScout({
   const historySummary = history.supersededActionableClaimCount > 0
     ? `; ${history.supersededActionableClaimCount} older actionable claim(s) superseded by newer packets`
     : ''
-  const summary = `FirstBite Cursor/Graphite review scout ${mode}: ${currentSummary}; ${ciSummary}; ${manifestLaneSummary}; ${scopeSummary}; ${actionabilitySummary}${historySummary}.`
+  const summary = `FirstBite Cursor/Graphite review scout ${mode}: ${currentSummary}; ${ciSummary}; ${manifestLaneSummary}; ${laneSourceSummary}; ${scopeSummary}; ${actionabilitySummary}${historySummary}.`
 
   return {
     status,
@@ -2308,6 +2322,14 @@ function inspectFirstBiteCursorReviewScout({
         : expectedLaneIds.length > 0
           ? 'covered'
           : 'unknown',
+      laneSourceStatus: laneSourceIdentity.status,
+      laneSourceSummary: laneSourceIdentity.summary,
+      missingSourceHeadLaneIds: laneSourceIdentity.missingSourceHeadLaneIds,
+      missingPrimaryRepoPathLaneIds: laneSourceIdentity.missingPrimaryRepoPathLaneIds,
+      mismatchedSourceHeadLanes: laneSourceIdentity.mismatchedSourceHeadLanes,
+      mismatchedPrimaryRepoPathLanes: laneSourceIdentity.mismatchedPrimaryRepoPathLanes,
+      sourceIdentityExpectedHead: laneSourceIdentity.expectedHead,
+      sourceIdentityExpectedRepoPath: laneSourceIdentity.expectedRepoPath,
       latestLaneCount: numberOrNull(localCi.latest_lane_count),
       latestLanePassCount: numberOrNull(localCi.latest_lane_pass_count),
       latestLaneFailCount: numberOrNull(localCi.latest_lane_fail_count),
@@ -2323,15 +2345,133 @@ function inspectFirstBiteCursorReviewScout({
           ? 'Fix or rerun the review scout so local_ci_repo_key matches the expected repo; this cockpit derived repo lanes from lane metadata only.'
           : missingExpectedLaneIds.length > 0 || missingExpectedCatalogLaneIds.length > 0
             ? 'Rerun the review scout from the current checkout after the repo-backed local-CI catalog and proof include every current manifest lane.'
-          : repoLaneFailCount > 0
-            ? 'Inspect the failed repo lane proof referenced by the review scout and rerun the affected FirstBite lane from current source.'
-            : stale
-              ? 'Refresh the review scout packet before using it as agent-review evidence.'
-              : !cursorReviewRan
-                ? 'Treat this as a packet-only scout; run the optional Cursor sidecar only when a spendful read-only model pass is worth it.'
-                : 'Keep the review scout fresh; it is advisory beside local-CI and launch proof.',
+            : laneSourceIdentity.status !== 'covered'
+              ? 'Rerun the review scout from the current checkout and require each local-CI lane to carry source_head plus primary_repo_path matching the current repo path and HEAD.'
+              : repoLaneFailCount > 0
+                ? 'Inspect the failed repo lane proof referenced by the review scout and rerun the affected FirstBite lane from current source.'
+                : stale
+                  ? 'Refresh the review scout packet before using it as agent-review evidence.'
+                  : !cursorReviewRan
+                    ? 'Treat this as a packet-only scout; run the optional Cursor sidecar only when a spendful read-only model pass is worth it.'
+                    : 'Keep the review scout fresh; it is advisory beside local-CI and launch proof.',
     command,
   }
+}
+
+function summarizeReviewScoutLaneSourceIdentity({
+  lanes = [],
+  expectedLaneIds = [],
+  repoDir = null,
+  git = {},
+} = {}) {
+  const expectedHead = git?.head ? shortGitSha(git.head) || String(git.head) : null
+  const expectedRepoPath = normalizeComparablePath(repoDir)
+  const laneIds = expectedLaneIds.length > 0
+    ? expectedLaneIds
+    : unique(lanes.map(lane => lane.lane).filter(Boolean))
+
+  if (laneIds.length === 0) {
+    return {
+      status: 'unknown',
+      summary: 'Review scout did not declare expected local-CI lanes for source identity checking.',
+      expectedHead,
+      expectedRepoPath,
+      missingSourceHeadLaneIds: [],
+      missingPrimaryRepoPathLaneIds: [],
+      mismatchedSourceHeadLanes: [],
+      mismatchedPrimaryRepoPathLanes: [],
+    }
+  }
+
+  const byLaneId = new Map(lanes.map(lane => [lane.lane, lane]))
+  const presentExpectedLanes = laneIds
+    .map(laneId => byLaneId.get(laneId))
+    .filter(Boolean)
+  const missingSourceHeadLaneIds = []
+  const missingPrimaryRepoPathLaneIds = []
+  const mismatchedSourceHeadLanes = []
+  const mismatchedPrimaryRepoPathLanes = []
+
+  for (const lane of presentExpectedLanes) {
+    const laneId = lane.lane || 'unknown'
+    const sourceHead = getReviewScoutLaneSourceHead(lane)
+    const primaryRepoPath = getReviewScoutLaneRepoPath(lane)
+    const normalizedPrimaryRepoPath = normalizeComparablePath(primaryRepoPath)
+
+    if (!sourceHead) {
+      missingSourceHeadLaneIds.push(laneId)
+    } else if (expectedHead && compareGitHeads(sourceHead, expectedHead) === false) {
+      mismatchedSourceHeadLanes.push({
+        lane: laneId,
+        sourceHead,
+        expectedHead,
+      })
+    }
+
+    if (!primaryRepoPath) {
+      missingPrimaryRepoPathLaneIds.push(laneId)
+    } else if (expectedRepoPath && normalizedPrimaryRepoPath !== expectedRepoPath) {
+      mismatchedPrimaryRepoPathLanes.push({
+        lane: laneId,
+        primaryRepoPath: normalizedPrimaryRepoPath || primaryRepoPath,
+        expectedRepoPath,
+      })
+    }
+  }
+
+  const issueCount = missingSourceHeadLaneIds.length
+    + missingPrimaryRepoPathLaneIds.length
+    + mismatchedSourceHeadLanes.length
+    + mismatchedPrimaryRepoPathLanes.length
+  const status = issueCount === 0
+    ? 'covered'
+    : mismatchedSourceHeadLanes.length > 0 || mismatchedPrimaryRepoPathLanes.length > 0
+      ? 'source_identity_mismatch'
+      : 'missing_source_identity'
+  const parts = []
+  if (missingSourceHeadLaneIds.length > 0) {
+    parts.push(`missing source_head for ${missingSourceHeadLaneIds.join(', ')}`)
+  }
+  if (missingPrimaryRepoPathLaneIds.length > 0) {
+    parts.push(`missing primary_repo_path for ${missingPrimaryRepoPathLaneIds.join(', ')}`)
+  }
+  if (mismatchedSourceHeadLanes.length > 0) {
+    parts.push(`source_head mismatch for ${mismatchedSourceHeadLanes.map(item => `${item.lane}@${item.sourceHead}`).join(', ')} expected ${expectedHead || 'current HEAD'}`)
+  }
+  if (mismatchedPrimaryRepoPathLanes.length > 0) {
+    parts.push(`primary_repo_path mismatch for ${mismatchedPrimaryRepoPathLanes.map(item => `${item.lane}@${item.primaryRepoPath}`).join(', ')} expected ${expectedRepoPath || 'current repo path'}`)
+  }
+
+  return {
+    status,
+    summary: status === 'covered'
+      ? `local-CI lane source identity covered for ${presentExpectedLanes.length}/${laneIds.length} expected lane(s)`
+      : `local-CI lane source identity ${status}: ${parts.join('; ')}`,
+    expectedHead,
+    expectedRepoPath,
+    missingSourceHeadLaneIds,
+    missingPrimaryRepoPathLaneIds,
+    mismatchedSourceHeadLanes,
+    mismatchedPrimaryRepoPathLanes,
+  }
+}
+
+function getReviewScoutLaneSourceHead(lane = {}) {
+  return lane.source_head
+    || lane.sourceHead
+    || lane.source_state?.head
+    || lane.primary_source_state?.head
+    || null
+}
+
+function getReviewScoutLaneRepoPath(lane = {}) {
+  return lane.primary_repo_path
+    || lane.primaryRepoPath
+    || lane.repo_path
+    || lane.cwd
+    || lane.primary_source_state?.repo_path
+    || lane.source_state?.repo_path
+    || null
 }
 
 function summarizeReviewScoutHistory(reports = [], {
@@ -7807,6 +7947,7 @@ function renderReviewScout(reviewScout = {}) {
       <div>Superseded actionable</div><div>${escapeHtml(String(reviewScout.history?.supersededActionableClaimCount ?? 0))} claim(s) · ${escapeHtml(String(reviewScout.history?.supersededSubstantiveFindingCount ?? 0))} with findings · ${escapeHtml(String(reviewScout.history?.supersededRepoLaneFailureCount ?? 0))} with repo lane failures</div>
       <div>Local-CI scope</div><div><span class="${reviewScout.localCi?.repoScopeWarning ? 'yellow' : 'green'}">${escapeHtml(reviewScout.localCi?.repoScopeStatus || 'unknown')}</span> · key <code>${escapeHtml(reviewScout.localCi?.repoKey || 'missing')}</code> / expected <code>${escapeHtml(reviewScout.localCi?.expectedRepo || reviewScout.expectedRepo || 'unknown')}</code></div>
       <div>Manifest lanes</div><div><span class="${reviewScout.localCi?.missingExpectedLaneIds?.length || reviewScout.localCi?.missingExpectedCatalogLaneIds?.length ? 'yellow' : 'green'}">${escapeHtml(reviewScout.localCi?.manifestLaneStatus || 'unknown')}</span> · expected ${escapeHtml(String(reviewScout.localCi?.expectedLaneIds?.length ?? 0))} · proof missing <code>${escapeHtml((reviewScout.localCi?.missingExpectedLaneIds || []).join(', ') || 'none')}</code> · catalog missing <code>${escapeHtml((reviewScout.localCi?.missingExpectedCatalogLaneIds || []).join(', ') || 'none')}</code></div>
+      <div>Lane source identity</div><div><span class="${reviewScout.localCi?.laneSourceStatus === 'covered' ? 'green' : 'yellow'}">${escapeHtml(reviewScout.localCi?.laneSourceStatus || 'unknown')}</span> · head <code>${escapeHtml(reviewScout.localCi?.sourceIdentityExpectedHead || 'unknown')}</code> · repo <code>${escapeHtml(reviewScout.localCi?.sourceIdentityExpectedRepoPath || 'unknown')}</code> · missing source_head <code>${escapeHtml((reviewScout.localCi?.missingSourceHeadLaneIds || []).join(', ') || 'none')}</code> · missing repo path <code>${escapeHtml((reviewScout.localCi?.missingPrimaryRepoPathLaneIds || []).join(', ') || 'none')}</code> · mismatched source_head <code>${escapeHtml((reviewScout.localCi?.mismatchedSourceHeadLanes || []).map(item => `${item.lane}@${item.sourceHead}`).join(', ') || 'none')}</code> · mismatched repo path <code>${escapeHtml((reviewScout.localCi?.mismatchedPrimaryRepoPathLanes || []).map(item => `${item.lane}@${item.primaryRepoPath}`).join(', ') || 'none')}</code></div>
       <div>Repo lanes</div><div>${escapeHtml(String(reviewScout.localCi?.repoLanePassCount ?? 'unknown'))}/${escapeHtml(String(reviewScout.localCi?.repoLaneCount ?? 'unknown'))} pass · ${escapeHtml(String(reviewScout.localCi?.repoLaneFailCount ?? 'unknown'))} fail</div>
       <div>Report</div><div><code>${escapeHtml(reviewScout.reportPath || 'missing')}</code></div>
       <div>Review</div><div><code>${escapeHtml(reviewScout.reviewPath || 'missing')}</code></div>
@@ -7814,9 +7955,9 @@ function renderReviewScout(reviewScout = {}) {
       <div>Next action</div><div>${escapeHtml(reviewScout.nextAction || '')}</div>
     </div>
     <table>
-      <thead><tr><th>Lane</th><th>Status</th><th>Run</th><th>Report</th><th>Log</th></tr></thead>
+      <thead><tr><th>Lane</th><th>Status</th><th>Source</th><th>Run</th><th>Report</th><th>Log</th></tr></thead>
       <tbody>
-        ${failedLanes.length === 0 ? '<tr><td colspan="5">No failed repo lanes in the latest review scout packet.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.reportPath || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
+        ${failedLanes.length === 0 ? '<tr><td colspan="6">No failed repo lanes in the latest review scout packet.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.sourceHead || 'missing source_head')}</code><br><code>${escapeHtml(lane.primaryRepoPath || 'missing repo path')}</code></td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.reportPath || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
       </tbody>
     </table>
   </section>`

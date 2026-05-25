@@ -528,6 +528,69 @@ test('inspectFirstBiteCursorReviewScout rejects packets whose catalog omits curr
   assert.match(scout.nextAction, /local-CI catalog and proof/)
 })
 
+test('inspectFirstBiteCursorReviewScout rejects lane source identity mismatches', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-source-identity-'))
+  const repoDir = '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525'
+  const runDir = path.join(root, 'codex-current-pr10-review-scout-20260525-source')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'review.md'), 'Cursor sidecar found no actionable issues.\n')
+  fs.writeFileSync(path.join(runDir, 'review-packet.md'), '# Review packet\n')
+  fs.writeFileSync(path.join(runDir, 'local-ci-repo-proof.json'), JSON.stringify({ ok: true }))
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    run_id: 'codex-current-pr10-review-scout-20260525-source',
+    created_at: '2026-05-25T16:26:35Z',
+    repo: repoDir,
+    repo_name: 'resplit-currency-api',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head_sha: 'bc27b1e',
+    run_cursor: 1,
+    cursor_mode: 'ask',
+    cursor_current_model: 'gpt-5.3-codex',
+    actionable: false,
+    local_ci: {
+      repo_name: 'resplit-currency-api',
+      local_ci_repo_key: 'resplit_currency_api',
+      repo_lane_count: 4,
+      repo_lane_pass_count: 4,
+      repo_lane_fail_count: 0,
+      lanes: [
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass', source_head: 'bc27b1e06ded', primary_repo_path: repoDir },
+        { lane: 'resplit_currency_api_integration', repo: 'resplit_currency_api', kind: 'integration', status: 'pass', source_head: 'old1234', primary_repo_path: repoDir },
+        { lane: 'resplit_currency_api_trust_preflight', repo: 'resplit_currency_api', kind: 'integration', status: 'pass', source_head: 'bc27b1e06ded', primary_repo_path: '/Users/leokwan/Development/resplit-currency-api' },
+        { lane: 'resplit_currency_api_ui', repo: 'resplit_currency_api', kind: 'ui', status: 'pass', source_head: 'bc27b1e06ded', primary_repo_path: repoDir },
+      ],
+    },
+  }))
+
+  const scout = inspectFirstBiteCursorReviewScout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    repoName: 'resplit-currency-api',
+    repoDir,
+    git: {
+      branch: 'codex/fx-otel-grafana-config-20260525',
+      head: 'bc27b1e06ded1b4811cebd39657c3cba0b3407fd',
+    },
+    generatedAt: '2026-05-25T16:30:00.000Z',
+  })
+
+  assert.equal(scout.currentForCheckout, true)
+  assert.equal(scout.status, 'yellow')
+  assert.equal(scout.localCi.manifestLaneStatus, 'covered')
+  assert.equal(scout.localCi.laneSourceStatus, 'source_identity_mismatch')
+  assert.deepEqual(scout.localCi.mismatchedSourceHeadLanes.map(item => item.lane), ['resplit_currency_api_integration'])
+  assert.deepEqual(scout.localCi.mismatchedPrimaryRepoPathLanes.map(item => item.lane), ['resplit_currency_api_trust_preflight'])
+  assert.match(scout.summary, /source_head mismatch/)
+  assert.match(scout.summary, /primary_repo_path mismatch/)
+  assert.match(scout.nextAction, /source_head plus primary_repo_path/)
+})
+
 test('inspectFirstBiteCursorReviewScout reports superseded actionable history and prioritizes failed lanes', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-history-'))
   const repoDir = '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525'
@@ -581,12 +644,14 @@ test('inspectFirstBiteCursorReviewScout reports superseded actionable history an
       repo_lane_pass_count: 3,
       repo_lane_fail_count: 1,
       lanes: [
-        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass' },
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass', source_head: 'a3dafa2ddbc', primary_repo_path: repoDir },
         {
           lane: 'resplit_currency_api_trust_preflight',
           repo: 'resplit_currency_api',
           kind: 'integration',
           status: 'fail',
+          source_head: 'a3dafa2ddbc',
+          primary_repo_path: repoDir,
           run_id: 'verify-firstbite-mcp-warn-exits-red-clean-head-20260525',
           report_path: '/tmp/current-report.json',
           log_path: '/tmp/current-run.log',

@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 18:39 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI pushed the cockpit toward a stricter source-identity trust model: a Coding-Agent Review Scout packet can no longer look green merely because its outer packet matches the checkout; every embedded repo lane proof must also carry per-lane `source_head` and `primary_repo_path` matching the current PR worktree.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now computes `reviewScout.localCi.laneSourceStatus`, records missing/mismatched `source_head` and repo-path lanes, renders a `Lane source identity` row in the GUI, and includes failed-lane source identity in the scout table. `scripts/verify-reliability-cockpit-report.js` now requires those JSON/HTML fields and rejects green scout states with missing or mismatched lane source identity. Tests cover both missing field regressions and a packet where all lanes pass but one lane is from an old head and another from the wrong checkout path.
+- Fresh live scout: `FIRSTBITE_CURSOR_REVIEW_RUN_ID=verify-fx-review-scout-lane-source-identity-c3bdf7f-20260525 bash /Users/leokwan/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo /Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 --no-cursor --no-ledger` wrote `/Users/leokwan/.agent-ledger/firstbite-cursor-review/verify-fx-review-scout-lane-source-identity-c3bdf7f-20260525/report.json`. All four FX lanes carry `source_head=c3bdf7f92f56` and `primary_repo_path=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525`; the scout remains yellow because `resplit_currency_api_trust_preflight` is a real failed proof lane.
+- Fresh proof:
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `118/118` tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `128/128` tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated report HEAD matches the current checkout and the review-scout section renders lane source identity.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `npm run check` -> generate green, strict release validation green, and `307/307` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this does not clear the loaded Codex/Cursor MCP host, make `resplit_currency_api_trust_preflight` pass, prove clean landed-source FirstBite, prove M4 peer execution, prove Cloudflare Workers Observability destinations, or prove Grafana Tempo/Loki. It makes the coding-agent GUI harder to fool: review-scout lane proof must now be lane-set current, repo-path current, and source-head current at the same time.
+- Exact next slice: commit/push this review-scout lane source-identity contract, prove stale cockpit detection after the commit HEAD changes, regenerate the cockpit at the new HEAD, rerun current-source FirstBite proof/readout for that HEAD, and keep loaded-host/Grafana/M4 boundaries separate.
+
 ## 2026-05-25 18:20 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI/coding-agent review proof found a real control-plane trust issue: the latest FirstBite review-scout packet matched this PR checkout, but its embedded local-CI catalog omitted the current manifest lane `resplit_currency_api_trust_preflight`, so the scout could look current while not proving the same lane set the repo now owns.
