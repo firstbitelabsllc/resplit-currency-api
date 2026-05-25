@@ -295,6 +295,7 @@ function buildReport({
   const operatingReadout = inspectFirstBiteOperatingReadout({
     reportRoot: operatingReadoutRoot || DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR,
     expectedRepo: manifest?.repo,
+    expectedRepoDir: repoDir,
     generatedAt,
   })
   const mcpRefreshPlan = inspectFirstBiteMcpRefreshPlan({
@@ -377,6 +378,13 @@ function buildReport({
     ledger,
     reviewScout,
     contracts,
+  })
+  localCi.findingTaxonomy = buildLocalCiFindingTaxonomy({
+    localCi,
+    telemetry,
+    contracts,
+    operatorActions,
+    expectedRepo: manifest?.repo,
   })
   const operatorRecoveryFlow = buildOperatorRecoveryFlow(operatorActions)
   const evidenceFreshness = buildEvidenceFreshnessLedger({
@@ -1125,6 +1133,7 @@ function buildSourcePromotionBundle({ repoDir, trackedSource = null, cleanProofR
 function inspectFirstBiteOperatingReadout({
   reportRoot = DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR,
   expectedRepo = 'resplit_currency_api',
+  expectedRepoDir = null,
   generatedAt = new Date().toISOString(),
 } = {}) {
   const missing = {
@@ -1174,7 +1183,12 @@ function inspectFirstBiteOperatingReadout({
     return missing
   }
 
-  const latest = reports[0]
+  const selected = selectOperatingReadoutReport({
+    reports,
+    expectedRepo,
+    expectedRepoDir,
+  })
+  const latest = selected.report
   const data = readJsonIfExists(latest.reportPath)
   if (!data) {
     return {
@@ -1236,6 +1250,7 @@ function inspectFirstBiteOperatingReadout({
     reportPath: latest.reportPath,
     summaryPath: latest.summaryPath,
     runId: data.run_id || latest.runId,
+    selection: selected.selection,
     createdAt: data.created_at || null,
     ageMinutes,
     searchedReports: reports.length,
@@ -1286,6 +1301,53 @@ function inspectFirstBiteOperatingReadout({
         : peerBoundaryWarning && failCount === 0 && manifestPortability?.ready !== false && !mousseyNotReady
           ? peerExecutionBoundary.nextAction
           : 'Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.',
+  }
+}
+
+function selectOperatingReadoutReport({ reports = [], expectedRepo = 'resplit_currency_api', expectedRepoDir = null } = {}) {
+  if (!expectedRepoDir) {
+    return {
+      report: reports[0],
+      selection: {
+        mode: 'latest',
+        reason: 'No expected repo directory was provided; using latest readout.',
+        skippedNewerReports: 0,
+      },
+    }
+  }
+
+  const expectedPath = path.resolve(expectedRepoDir)
+  for (const report of reports) {
+    const data = readJsonIfExists(report.reportPath)
+    const manifestState = (data?.local_ci?.catalog?.manifest_states || []).find(row => row.repo === expectedRepo)
+    const repoPath = manifestState?.repo_path || manifestState?.repoPath || null
+    if (repoPath && path.resolve(repoPath) === expectedPath) {
+      const skippedNewerReports = reports.findIndex(candidate => candidate.reportPath === report.reportPath)
+      return {
+        report,
+        selection: {
+          mode: skippedNewerReports === 0 ? 'latest-matching-repo-path' : 'preferred-matching-repo-path',
+          reason: skippedNewerReports === 0
+            ? 'Latest readout matches the current repo path.'
+            : `Skipped ${skippedNewerReports} newer fleet readout(s) whose ${expectedRepo} repo_path did not match the current checkout.`,
+          expectedRepo,
+          expectedRepoDir,
+          readoutRepoPath: repoPath,
+          skippedNewerReports,
+        },
+      }
+    }
+  }
+
+  return {
+    report: reports[0],
+    selection: {
+      mode: 'latest-diagnostic',
+      reason: `No readout matched ${expectedRepo} repo_path ${expectedRepoDir}; using latest readout as diagnostic evidence only.`,
+      expectedRepo,
+      expectedRepoDir,
+      skippedNewerReports: 0,
+    },
   }
 }
 
@@ -1379,6 +1441,196 @@ function buildOperatingReadoutScopeContract({
       ? 'Keep the operating readout fresh before using it for fleet coordination.'
       : `Treat this readout as fleet context only until its repo path and lane set match the current checkout. Run: ${scopedCommand}`,
   }
+}
+
+function buildLocalCiFindingTaxonomy({
+  localCi = {},
+  telemetry = {},
+  contracts = [],
+  operatorActions = [],
+  expectedRepo = 'resplit_currency_api',
+} = {}) {
+  const byGate = new Map((contracts || []).map(contract => [contract.gate, contract]))
+  const byAction = new Map((operatorActions || []).map(action => [action.id, action]))
+  const operatingReadout = localCi.operatingReadout || {}
+  const failedLanes = [
+    ...(localCi.mcpProof?.latest?.lanes || []),
+    ...(operatingReadout.failedLanes || []),
+  ].filter(lane => lane && lane.status === 'fail')
+  const currentRepoFailures = uniqueLaneFindings(failedLanes
+    .filter(lane => !expectedRepo || lane.repo === expectedRepo)
+    .map(lane => ({
+      lane: lane.lane || 'unknown',
+      repo: lane.repo || 'unknown',
+      runId: lane.runId || lane.run_id || operatingReadout.runId || null,
+      reportPath: lane.reportPath || lane.report_path || operatingReadout.reportPath || null,
+      reason: lane.reason || `rc ${lane.rc ?? 'unknown'}`,
+      kind: classifyLocalCiLaneFinding(lane),
+    })))
+  const productFailures = currentRepoFailures.filter(finding => finding.kind === 'product-failure')
+  const proofLaneFailures = currentRepoFailures.filter(finding => finding.kind === 'proof-gap')
+  const externalProofActions = [
+    byAction.get('cloudflare-otel-destinations'),
+    byAction.get('grafana-otel-proof'),
+    byAction.get('source-promotion-review'),
+    byAction.get('clean-firstbite-proof'),
+    byAction.get('firstbite-operating-readout'),
+  ].filter(Boolean)
+  const staleControlPlaneActions = [
+    byAction.get('loaded-mcp-recapture'),
+    byAction.get('loaded-mcp-refresh'),
+    byAction.get('firstbite-runner-durability'),
+  ].filter(Boolean)
+  const peerActions = [
+    byAction.get('m4-peer-execute-proof'),
+  ].filter(Boolean)
+  const categories = [
+    findingCategory({
+      id: 'product-failure',
+      label: 'Product lane failure',
+      status: productFailures.length > 0 ? 'red' : 'green',
+      summary: productFailures.length > 0
+        ? `${productFailures.length} current ${expectedRepo} product lane failure(s): ${productFailures.map(item => item.lane).join(', ')}.`
+        : `No current ${expectedRepo} product lane failure is proven by local CI.`,
+      evidence: productFailures.map(item => item.reportPath || item.runId || item.lane).filter(Boolean),
+      nextAction: productFailures.length > 0
+        ? 'Debug the failing product lane before treating this as a proof-only launch hold.'
+        : 'Keep product-lane proof separate from proof/control-plane failures.',
+      laneFindings: productFailures,
+    }),
+    findingCategory({
+      id: 'proof-gap',
+      label: 'Launch proof gap',
+      status: worstStatus([
+        ...proofLaneFailures.map(() => 'red'),
+        ...externalProofActions.map(action => action.status || 'yellow'),
+        telemetry.observabilityProofChain?.status,
+      ]),
+      summary: summarizeFindingActions({
+        empty: 'No local-CI launch-proof gap is currently blocking the cockpit.',
+        laneFindings: proofLaneFailures,
+        actions: externalProofActions,
+      }),
+      evidence: [
+        ...proofLaneFailures.map(item => item.reportPath || item.runId || item.lane),
+        ...externalProofActions.map(action => action.proof),
+      ].filter(Boolean),
+      nextAction: firstNonGreenAction(externalProofActions)?.nextAction
+        || byGate.get('OTEL/Grafana evidence')?.nextAction
+        || 'Run the proof commands for the non-green launch-trust gates.',
+      laneFindings: proofLaneFailures,
+      actionIds: externalProofActions.map(action => action.id),
+    }),
+    findingCategory({
+      id: 'stale-control-plane',
+      label: 'Stale agent/control-plane',
+      status: worstStatus([
+        localCi.loadedMcpCaptureContract?.status,
+        byGate.get('Loaded MCP host catalog')?.status,
+        ...staleControlPlaneActions.map(action => action.status || 'yellow'),
+      ]),
+      summary: summarizeFindingActions({
+        empty: 'Loaded MCP and runner control-plane proof are current enough for this cockpit.',
+        actions: staleControlPlaneActions,
+        fallback: byGate.get('Loaded MCP host catalog')?.current,
+      }),
+      evidence: [
+        localCi.loadedMcpProbe?.path,
+        localCi.mcpRefreshPlan?.reportPath,
+        ...staleControlPlaneActions.map(action => action.proof),
+      ].filter(Boolean),
+      nextAction: firstNonGreenAction(staleControlPlaneActions)?.nextAction
+        || byGate.get('Loaded MCP host catalog')?.nextAction
+        || 'Keep loaded agent catalog proof fresh.',
+      actionIds: staleControlPlaneActions.map(action => action.id),
+    }),
+    findingCategory({
+      id: 'peer-boundary',
+      label: 'Peer execution boundary',
+      status: worstStatus([
+        operatingReadout.peerExecutionBoundary?.status,
+        ...peerActions.map(action => action.status || 'yellow'),
+      ]),
+      summary: summarizeFindingActions({
+        empty: 'No peer execution boundary is currently blocking local-CI trust.',
+        actions: peerActions,
+        fallback: operatingReadout.peerExecutionBoundary?.summary,
+      }),
+      evidence: [
+        operatingReadout.reportPath,
+        operatingReadout.m4FreshClonePacket?.latestCommands,
+        ...peerActions.map(action => action.proof),
+      ].filter(Boolean),
+      nextAction: firstNonGreenAction(peerActions)?.nextAction
+        || operatingReadout.peerExecutionBoundary?.nextAction
+        || 'Keep peer proof distinct from Mac Studio proof.',
+      actionIds: peerActions.map(action => action.id),
+    }),
+  ]
+  const nonGreen = categories.filter(category => category.status !== 'green')
+  return {
+    status: worstStatus(categories.map(category => category.status)),
+    summary: nonGreen.length > 0
+      ? `Local CI found ${nonGreen.length} non-green finding class(es): ${nonGreen.map(category => `${category.id}=${category.status}`).join(', ')}.`
+      : 'Local CI findings are all green for product, proof, control-plane, and peer-boundary classes.',
+    categories,
+    productFailureCount: productFailures.length,
+    proofGapCount: proofLaneFailures.length + externalProofActions.filter(action => action.status !== 'green').length,
+    staleControlPlaneCount: staleControlPlaneActions.filter(action => action.status !== 'green').length,
+    peerBoundaryCount: peerActions.filter(action => action.status !== 'green').length,
+  }
+}
+
+function classifyLocalCiLaneFinding(lane = {}) {
+  const text = `${lane.lane || ''} ${lane.reason || ''} ${lane.command || ''}`.toLowerCase()
+  if (/trust|preflight|otel|grafana|cloudflare|source-promotion|mcp|loaded/.test(text)) {
+    return 'proof-gap'
+  }
+  return 'product-failure'
+}
+
+function uniqueLaneFindings(findings = []) {
+  const seen = new Set()
+  return findings.filter(finding => {
+    const key = `${finding.repo}:${finding.lane}:${finding.runId || ''}`
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+function findingCategory({ id, label, status, summary, evidence = [], nextAction = '', laneFindings = [], actionIds = [] }) {
+  return {
+    id,
+    label,
+    status: normalizeStatus(status || 'green'),
+    summary: String(summary || ''),
+    evidence: unique(evidence.filter(Boolean).map(String)),
+    nextAction: String(nextAction || ''),
+    laneFindings,
+    actionIds,
+  }
+}
+
+function summarizeFindingActions({ empty, laneFindings = [], actions = [], fallback = '' } = {}) {
+  const nonGreenActions = actions.filter(action => action.status !== 'green')
+  const parts = []
+  if (laneFindings.length > 0) {
+    parts.push(`${laneFindings.length} proof lane failure(s): ${laneFindings.map(item => item.lane).join(', ')}`)
+  }
+  if (nonGreenActions.length > 0) {
+    parts.push(nonGreenActions.map(action => `${action.id}: ${action.status || 'yellow'}`).join('; '))
+  }
+  if (parts.length > 0) {
+    return parts.join('; ')
+  }
+  return fallback || empty
+}
+
+function firstNonGreenAction(actions = []) {
+  return actions.find(action => action && action.status !== 'green') || null
 }
 
 function firstBiteOperatingReadoutCommand({ expectedRepo, expectedRepoDir } = {}) {
@@ -6061,6 +6313,7 @@ function renderHtml(report) {
     renderOperatorActionQueue(report.trustModel.operatorActions),
     renderTrustContracts(report.trustModel.contracts),
     renderLaneTable(report.localCi),
+    renderLocalCiFindingTaxonomy(report.localCi.findingTaxonomy),
     renderLocalCiProof(report.localCi),
     renderGates(report.gates),
     renderTelemetry(report.telemetry),
@@ -6410,6 +6663,33 @@ function renderLaneTable(localCi) {
   </section>`
 }
 
+function renderLocalCiFindingTaxonomy(taxonomy) {
+  if (!taxonomy) {
+    return `<section>
+      <h2>Local CI Finding Taxonomy</h2>
+      <p class="meta">No local-CI finding taxonomy was generated.</p>
+    </section>`
+  }
+
+  const categories = Array.isArray(taxonomy.categories) ? taxonomy.categories : []
+  return `<section>
+    <h2>Local CI Finding Taxonomy</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${escapeHtml(taxonomy.status || 'yellow')}">${escapeHtml(taxonomy.status || 'unknown')}</span> ${escapeHtml(taxonomy.summary || '')}</div>
+      <div>Product failures</div><div>${escapeHtml(String(taxonomy.productFailureCount ?? 0))}</div>
+      <div>Proof gaps</div><div>${escapeHtml(String(taxonomy.proofGapCount ?? 0))}</div>
+      <div>Stale control-plane</div><div>${escapeHtml(String(taxonomy.staleControlPlaneCount ?? 0))}</div>
+      <div>Peer boundaries</div><div>${escapeHtml(String(taxonomy.peerBoundaryCount ?? 0))}</div>
+    </div>
+    <table>
+      <thead><tr><th>Class</th><th>Status</th><th>Meaning</th><th>Evidence</th><th>Next action</th></tr></thead>
+      <tbody>
+        ${categories.length === 0 ? '<tr><td colspan="5">No finding classes were generated.</td></tr>' : categories.map(category => `<tr><td><code>${escapeHtml(category.id || '')}</code><div class="meta">${escapeHtml(category.label || '')}</div></td><td><span class="${escapeHtml(category.status || 'yellow')}">${escapeHtml(category.status || 'unknown')}</span></td><td>${escapeHtml(category.summary || '')}${(category.laneFindings || []).length ? `<div class="meta">${category.laneFindings.map(finding => `<code>${escapeHtml(finding.lane || '')}</code> ${escapeHtml(finding.kind || '')}`).join(' ')}</div>` : ''}${(category.actionIds || []).length ? `<div class="meta">${category.actionIds.map(id => `<code>${escapeHtml(id)}</code>`).join(' ')}</div>` : ''}</td><td>${(category.evidence || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ') || 'none'}</td><td>${escapeHtml(category.nextAction || '')}</td></tr>`).join('\n')}
+      </tbody>
+    </table>
+  </section>`
+}
+
 function renderLocalCiProof(localCi) {
   const proof = localCi.mcpProof?.latest
   const partial = localCi.mcpProof?.latestPartial
@@ -6637,6 +6917,7 @@ function renderFirstBiteOperatingReadout(readout) {
     <div class="kv">
       <div>Status</div><div><span class="${statusClass}">${escapeHtml(readout.status || 'unknown')}</span> ${escapeHtml(readout.summary || '')}</div>
       <div>Run</div><div><code>${escapeHtml(readout.runId || 'unknown')}</code></div>
+      <div>Selection</div><div>${escapeHtml(readout.selection?.mode || 'unknown')} · ${escapeHtml(readout.selection?.reason || '')}</div>
       <div>Created</div><div>${escapeHtml(checked)}</div>
       <div>Local CI latest proofs</div><div>${escapeHtml(String(readout.localCi?.latestLanePassCount ?? 'unknown'))}/${escapeHtml(String(readout.localCi?.latestLaneCount ?? 'unknown'))} pass · ${escapeHtml(String(readout.localCi?.latestLaneFailCount ?? 'unknown'))} fail</div>
       <div>Catalog</div><div>${escapeHtml(readout.catalog?.version || 'missing')} · declared ${escapeHtml(String(readout.catalog?.declaredCount ?? 'unknown'))}/${escapeHtml(String(readout.catalog?.laneCount ?? 'unknown'))} · expected repo ${readout.catalog?.repoPresent ? 'present' : 'missing'}</div>
@@ -7285,6 +7566,7 @@ module.exports = {
   buildEvidenceFreshnessLedger,
   buildLaunchTrustAudit,
   buildLoadedMcpCaptureContract,
+  buildLocalCiFindingTaxonomy,
   buildMcpCatalogDelta,
   buildObservabilityProofChain,
   buildOperatingReadoutScopeContract,

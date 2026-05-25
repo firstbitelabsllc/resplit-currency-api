@@ -183,6 +183,25 @@ function verifyJsonContract(cockpit) {
   if (cockpit.localCi?.operatingReadout?.status && !cockpit.localCi?.operatingReadoutScopeContract?.status) {
     failures.push('FirstBite operating readout exists but scope contract is missing')
   }
+  const findingTaxonomy = cockpit.localCi?.findingTaxonomy
+  if (!findingTaxonomy?.status) {
+    failures.push('local CI finding taxonomy is missing')
+  } else {
+    const categoryIds = new Set((findingTaxonomy.categories || []).map(category => category.id))
+    for (const id of ['product-failure', 'proof-gap', 'stale-control-plane', 'peer-boundary']) {
+      if (!categoryIds.has(id)) {
+        failures.push(`local CI finding taxonomy missing category: ${id}`)
+      }
+    }
+    const product = (findingTaxonomy.categories || []).find(category => category.id === 'product-failure')
+    const proof = (findingTaxonomy.categories || []).find(category => category.id === 'proof-gap')
+    if (product && proof && /resplit_currency_api_trust_preflight/.test(JSON.stringify(product))) {
+      failures.push('local CI finding taxonomy misclassifies trust_preflight as a product failure')
+    }
+    if (proof && !/trust_preflight|Cloudflare|Grafana|proof/i.test(JSON.stringify(proof))) {
+      failures.push('local CI finding taxonomy proof-gap row does not name launch proof evidence')
+    }
+  }
   const operatingReadoutScopeContract = cockpit.localCi?.operatingReadoutScopeContract
   if (operatingReadoutScopeContract) {
     const rowIds = new Set((operatingReadoutScopeContract.rows || []).map(row => row.id))
@@ -410,6 +429,21 @@ function verifyHtmlContract({ cockpit, html }) {
     for (const proof of operatingReadoutScopeContract.rejectedProof || []) {
       if (!html.includes(escapeForHtmlText(proof))) {
         failures.push(`HTML missing operating readout rejected proof: ${proof}`)
+      }
+    }
+  }
+
+  const findingTaxonomy = cockpit.localCi?.findingTaxonomy
+  if (findingTaxonomy) {
+    if (!html.includes('Local CI Finding Taxonomy')) {
+      failures.push('HTML missing local CI finding taxonomy section')
+    }
+    for (const category of findingTaxonomy.categories || []) {
+      if (category.id && !html.includes(escapeForHtmlText(category.id))) {
+        failures.push(`HTML missing local CI finding taxonomy category: ${category.id}`)
+      }
+      if (category.summary && !html.includes(escapeForHtmlText(category.summary))) {
+        failures.push(`HTML missing local CI finding taxonomy summary: ${category.id}`)
       }
     }
   }

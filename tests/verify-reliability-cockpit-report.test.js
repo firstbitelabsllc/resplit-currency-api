@@ -219,6 +219,63 @@ function buildReport() {
         ],
         currentInvalidReason: 'Repo path mismatch; Lane set missing resplit_currency_api_trust_preflight.',
       },
+      findingTaxonomy: {
+        status: 'red',
+        summary: 'Local CI found 3 non-green finding class(es): proof-gap=red, stale-control-plane=red, peer-boundary=yellow.',
+        productFailureCount: 0,
+        proofGapCount: 3,
+        staleControlPlaneCount: 1,
+        peerBoundaryCount: 1,
+        categories: [
+          {
+            id: 'product-failure',
+            label: 'Product lane failure',
+            status: 'green',
+            summary: 'No current resplit_currency_api product lane failure is proven by local CI.',
+            evidence: [],
+            nextAction: 'Keep product-lane proof separate from proof/control-plane failures.',
+            laneFindings: [],
+            actionIds: [],
+          },
+          {
+            id: 'proof-gap',
+            label: 'Launch proof gap',
+            status: 'red',
+            summary: '1 proof lane failure(s): resplit_currency_api_trust_preflight; grafana-otel-proof: yellow',
+            evidence: ['/tmp/firstbite/report.json', 'reports/grafana-otel-smoke.json'],
+            nextAction: 'Run the proof commands for the non-green launch-trust gates.',
+            laneFindings: [{
+              lane: 'resplit_currency_api_trust_preflight',
+              repo: 'resplit_currency_api',
+              runId: 'trust-red',
+              reportPath: '/tmp/firstbite/report.json',
+              reason: 'command exited with code 2',
+              kind: 'proof-gap',
+            }],
+            actionIds: ['grafana-otel-proof'],
+          },
+          {
+            id: 'stale-control-plane',
+            label: 'Stale agent/control-plane',
+            status: 'red',
+            summary: 'loaded-mcp-refresh: red',
+            evidence: ['reports/firstbite-loaded-mcp-lanes.json'],
+            nextAction: 'Save work and restart/reload Codex/Cursor.',
+            laneFindings: [],
+            actionIds: ['loaded-mcp-refresh'],
+          },
+          {
+            id: 'peer-boundary',
+            label: 'Peer execution boundary',
+            status: 'yellow',
+            summary: 'm4-peer-execute-proof: yellow',
+            evidence: ['/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-cockpit/report.json'],
+            nextAction: 'Run on M4.',
+            laneFindings: [],
+            actionIds: ['m4-peer-execute-proof'],
+          },
+        ],
+      },
     },
     telemetry: {
       grafana: {
@@ -385,6 +442,11 @@ function buildHtml(report) {
     report.localCi.operatingReadoutScopeContract.currentInvalidReason,
     ...report.localCi.operatingReadoutScopeContract.acceptedProof,
     ...report.localCi.operatingReadoutScopeContract.rejectedProof,
+    'Local CI Finding Taxonomy',
+    ...report.localCi.findingTaxonomy.categories.flatMap(category => [
+      category.id,
+      category.summary,
+    ]),
   ].join('\n')
 }
 

@@ -11,6 +11,7 @@ const {
   buildEvidenceFreshnessLedger,
   buildLaunchTrustAudit,
   buildLoadedMcpCaptureContract,
+  buildLocalCiFindingTaxonomy,
   buildMcpCatalogDelta,
   buildObservabilityProofChain,
   buildOperatorActionQueue,
@@ -1517,6 +1518,80 @@ test('inspectFirstBiteOperatingReadout surfaces fleet readiness without hiding n
   assert.match(readout.summary, /M4 peer support-only/)
 })
 
+test('inspectFirstBiteOperatingReadout prefers current repo-path reports over newer fleet readouts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-readout-select-'))
+  const matchingDir = path.join(root, 'matching-pr-worktree')
+  const fleetDir = path.join(root, 'newer-primary-checkout')
+  fs.mkdirSync(matchingDir, { recursive: true })
+  fs.mkdirSync(fleetDir, { recursive: true })
+  const baseReadout = {
+    run_id: 'base',
+    created_at: '2026-05-25T19:00:00Z',
+    local_ci: {
+      latest_lane_count: 4,
+      latest_lane_pass_count: 4,
+      latest_lane_fail_count: 0,
+      proof_only_non_current_lane_count: 0,
+      proof_only_non_current_fail_count: 0,
+      catalog: {
+        catalog_version: 'repo-manifest-v2',
+        lane_count: 4,
+        declared_count: 4,
+        repo_keys: ['resplit_currency_api'],
+        lane_keys: [
+          'resplit_currency_api_unit',
+          'resplit_currency_api_integration',
+          'resplit_currency_api_ui',
+          'resplit_currency_api_trust_preflight',
+        ],
+        manifest_portability: {
+          fresh_clone_ready: true,
+          ready: true,
+        },
+        manifest_states: [{
+          repo: 'resplit_currency_api',
+          repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+          portability_status: 'committed',
+        }],
+      },
+      latest_lane_proof: [],
+    },
+  }
+  fs.writeFileSync(path.join(matchingDir, 'report.json'), JSON.stringify({ ...baseReadout, run_id: 'matching' }, null, 2))
+  fs.writeFileSync(path.join(fleetDir, 'report.json'), JSON.stringify({
+    ...baseReadout,
+    run_id: 'newer-fleet',
+    local_ci: {
+      ...baseReadout.local_ci,
+      catalog: {
+        ...baseReadout.local_ci.catalog,
+        manifest_states: [{
+          repo: 'resplit_currency_api',
+          repo_path: '/Users/leokwan/Development/resplit-currency-api',
+          portability_status: 'committed',
+        }],
+      },
+    },
+  }, null, 2))
+  const older = new Date('2026-05-25T19:00:00Z')
+  const newer = new Date('2026-05-25T19:05:00Z')
+  fs.utimesSync(path.join(matchingDir, 'report.json'), older, older)
+  fs.utimesSync(path.join(fleetDir, 'report.json'), newer, newer)
+
+  const readout = inspectFirstBiteOperatingReadout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    generatedAt: '2026-05-25T19:06:00Z',
+  })
+
+  assert.equal(readout.runId, 'matching')
+  assert.equal(readout.selection.mode, 'preferred-matching-repo-path')
+  assert.equal(readout.selection.skippedNewerReports, 1)
+  assert.match(readout.selection.reason, /Skipped 1 newer fleet readout/)
+  assert.equal(readout.expectedManifestState.repo_path, '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525')
+})
+
 test('buildOperatingReadoutScopeContract rejects primary-checkout readouts for PR worktree proof', () => {
   const contract = buildOperatingReadoutScopeContract({
     expectedRepo: 'resplit_currency_api',
@@ -1634,6 +1709,79 @@ test('buildOperatingReadoutScopeContract keeps lane failures separate from scope
   assert.equal(contract.rows.find(row => row.id === 'proof-only-lanes').status, 'green')
   assert.match(contract.scopedCommand, /^RESPLIT_CURRENCY_API_REPO=/)
   assert.match(contract.scopedCommand, /post-pr9-main-20260525/)
+})
+
+test('buildLocalCiFindingTaxonomy separates product failures from proof and stale-control-plane findings', () => {
+  const taxonomy = buildLocalCiFindingTaxonomy({
+    expectedRepo: 'resplit_currency_api',
+    localCi: {
+      loadedMcpCaptureContract: { status: 'red' },
+      loadedMcpProbe: { path: 'reports/firstbite-loaded-mcp-lanes.json' },
+      mcpRefreshPlan: { reportPath: '/tmp/refresh/report.json' },
+      operatingReadout: {
+        reportPath: '/tmp/readout/report.json',
+        failedLanes: [{
+          lane: 'resplit_currency_api_trust_preflight',
+          repo: 'resplit_currency_api',
+          status: 'fail',
+          rc: 2,
+          reason: 'command exited with code 2',
+          report_path: '/tmp/firstbite/report.json',
+          run_id: 'trust-red',
+        }, {
+          lane: 'resplit_currency_api_unit',
+          repo: 'resplit_currency_api',
+          status: 'fail',
+          rc: 1,
+          reason: 'test assertion failed',
+          report_path: '/tmp/unit/report.json',
+          run_id: 'unit-red',
+        }, {
+          lane: 'resplit_ios_ui_full',
+          repo: 'resplit_ios',
+          status: 'fail',
+          rc: 1,
+          reason: 'simulator failure',
+          report_path: '/tmp/ios/report.json',
+          run_id: 'ios-red',
+        }],
+        peerExecutionBoundary: {
+          status: 'yellow',
+          summary: 'M4 peer support-only.',
+          nextAction: 'Run on M4.',
+        },
+        m4FreshClonePacket: {
+          latestCommands: '/tmp/m4/fresh-clone-commands.sh',
+        },
+      },
+    },
+    telemetry: {
+      observabilityProofChain: { status: 'yellow' },
+    },
+    contracts: [
+      { gate: 'Loaded MCP host catalog', status: 'red', current: 'loaded host missing trust lane', nextAction: 'restart host' },
+      { gate: 'OTEL/Grafana evidence', status: 'yellow', nextAction: 'run Grafana smoke' },
+    ],
+    operatorActions: [
+      { id: 'loaded-mcp-refresh', status: 'red', proof: 'reports/firstbite-loaded-mcp-lanes.json', nextAction: 'restart host' },
+      { id: 'grafana-otel-proof', status: 'yellow', proof: 'reports/grafana-otel-smoke.json', nextAction: 'run Grafana smoke' },
+      { id: 'm4-peer-execute-proof', status: 'yellow', proof: '/tmp/readout/report.json', nextAction: 'run on M4' },
+    ],
+  })
+
+  assert.equal(taxonomy.status, 'red')
+  assert.equal(taxonomy.productFailureCount, 1)
+  assert.equal(taxonomy.categories.find(category => category.id === 'product-failure').laneFindings[0].lane, 'resplit_currency_api_unit')
+  assert.deepEqual(
+    taxonomy.categories.find(category => category.id === 'proof-gap').laneFindings.map(finding => finding.lane),
+    ['resplit_currency_api_trust_preflight'],
+  )
+  assert.equal(taxonomy.categories.find(category => category.id === 'stale-control-plane').status, 'red')
+  assert.equal(taxonomy.categories.find(category => category.id === 'peer-boundary').status, 'yellow')
+  assert.doesNotMatch(
+    JSON.stringify(taxonomy.categories.find(category => category.id === 'product-failure')),
+    /trust_preflight/,
+  )
 })
 
 test('inspectFirstBiteMcpRefreshPlan surfaces stale loaded-client process audit', () => {

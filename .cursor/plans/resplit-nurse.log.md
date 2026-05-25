@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 15:08 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit now classifies local-CI findings by failure class instead of leaving every red lane in one bucket: product failure, launch proof gap, stale agent/control-plane, and peer execution boundary.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now builds `localCi.findingTaxonomy`, renders a `Local CI Finding Taxonomy` table, and records that the current local-CI signal found `0` proven `resplit_currency_api` product failures, while `resplit_currency_api_trust_preflight` remains a proof-gap failure. The operating-readout selector now prefers the newest readout whose `resplit_currency_api` manifest `repo_path` matches the current PR worktree, and records when it skips newer fleet/primary-checkout readouts.
+- Fresh proof:
+  - Regenerated cockpit: `localCi.findingTaxonomy.status=red`, `productFailureCount=0`, `proof-gap=red`, `stale-control-plane=red`, and `peer-boundary=yellow`.
+  - Regenerated cockpit: `operatingReadout.selection.mode=preferred-matching-repo-path`, skipped `1` newer fleet readout, and selected `/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-pr-worktree-20260525-1454/report.json` for the current PR worktree.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `100/100` cockpit/verifier/completion tests passed.
+  - `npm run reliability:cockpit:verify` -> green with the taxonomy section present and report HEAD matching the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). `agent-ledger-fleet` now points at the real PR-scoped `resplit_currency_api_trust_preflight` failure, not a wrong-path readout.
+  - `npm run smoke:deploy` -> green against `https://resplit-currency-api.pages.dev`.
+  - `npm run check` -> generate green, strict release validation green, and `277/277` tests passed.
+- Boundary: this still does not restart/reload Codex/Cursor, prove the live loaded MCP host is current, pass `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the local-CI GUI answer Leo's question precisely: local CI found a launch-trust proof/control-plane issue, not a proven product-lane failure.
+- Exact next slice: commit/push this taxonomy + readout-selection hardening, regenerate the cockpit on the new commit head, then either capture true loaded-host MCP proof after host reload or work the `resplit_currency_api_trust_preflight` proof chain without calling it a product regression.
+
 ## 2026-05-25 14:59 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit is now aligned to the local-CI operating loop: when the FirstBite operating readout needs PR-worktree proof, the GUI/operator action prints the exact scoped command instead of a generic primary-checkout readout command.
