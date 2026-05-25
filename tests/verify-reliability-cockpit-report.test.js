@@ -180,6 +180,35 @@ function buildReport() {
           status: 'yellow',
         },
       },
+      observabilityProofChain: {
+        status: 'yellow',
+        summary: 'Observability proof chain is incomplete.',
+        required: [
+          { id: 'cloudflare-destinations', label: 'Cloudflare destination read proof', status: 'yellow', proof: 'Cloudflare proof missing.' },
+          { id: 'worker-trigger', label: 'Worker trigger', status: 'yellow', proof: 'Worker trigger missing.' },
+          { id: 'grafana-read-config', label: 'Grafana read config', status: 'yellow', proof: 'Grafana config missing.' },
+          { id: 'tempo-query', label: 'Tempo trace query', status: 'yellow', proof: 'Tempo missing.' },
+          { id: 'loki-query', label: 'Loki log query', status: 'yellow', proof: 'Loki missing.' },
+          { id: 'freshness', label: 'Freshness', status: 'yellow', proof: 'Freshness missing.' },
+        ],
+        acceptedProof: [
+          'reports/cloudflare-otel-destinations.json:green',
+          'reports/grafana-otel-smoke.json:worker-trigger green',
+          'reports/grafana-otel-smoke.json:grafana-read-config green',
+          'reports/grafana-otel-smoke.json:tempo-query green',
+          'reports/grafana-otel-smoke.json:loki-query green',
+          'fresh checkedAt within 24h',
+        ],
+        rejectedProof: [
+          'wrangler.jsonc destination names without Cloudflare read proof',
+          'reports/grafana-otel-smoke.json with --skip-trigger or worker-trigger skipped',
+          'Tempo-only proof without Loki logs',
+          'Loki-only proof without Tempo trace',
+          'stale Grafana or Cloudflare report',
+          'old nurse-log or INBOX note',
+        ],
+        currentInvalidReason: 'Worker trigger missing; Tempo missing; Loki missing.',
+      },
     },
     trustModel: {
       contracts: REQUIRED_CONTRACT_GATES.map(gate => ({ gate, status: 'yellow' })),
@@ -278,10 +307,10 @@ function buildReport() {
             status: 'red',
             claimAllowed: false,
             acceptedProof: 'No launch claim accepted; diagnostic evidence only: reports/grafana-otel-smoke.json',
-            rejectedProof: 'Do not claim telemetry is launch-trusted from config alone or an old nurse-log note.',
+            rejectedProof: 'Do not claim telemetry is launch-trusted from wrangler config alone, skipped-trigger Grafana smoke, Tempo-only/Loki-only proof, stale reports, or an old nurse-log note.',
             currentEvidence: 'reports/grafana-otel-smoke.json',
             currentGap: 'Grafana proof missing.',
-            nextValidProof: 'A fresh smoke artifact where Worker trigger, Grafana config, Tempo query, and Loki query are all green.',
+            nextValidProof: 'Fresh Cloudflare destination proof plus a non-skipped Grafana smoke artifact where Worker trigger, Grafana config, Tempo query, Loki query, and freshness are all green.',
             actionId: 'grafana-otel-proof',
           },
         ],
@@ -301,6 +330,9 @@ function buildHtml(report) {
     report.localCi.loadedMcpCaptureContract.currentInvalidReason,
     ...report.localCi.loadedMcpCaptureContract.acceptedSources,
     ...report.localCi.loadedMcpCaptureContract.rejectedSources,
+    report.telemetry.observabilityProofChain.currentInvalidReason,
+    ...report.telemetry.observabilityProofChain.acceptedProof,
+    ...report.telemetry.observabilityProofChain.rejectedProof,
   ].join('\n')
 }
 

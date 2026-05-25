@@ -12,6 +12,7 @@ const {
   buildLaunchTrustAudit,
   buildLoadedMcpCaptureContract,
   buildMcpCatalogDelta,
+  buildObservabilityProofChain,
   buildOperatorActionQueue,
   buildOperatorRecoveryFlow,
   buildProofAcceptanceMatrix,
@@ -686,6 +687,80 @@ test('inspectGrafanaEvidence keeps stale JSON proof yellow', () => {
   assert.equal(evidence.tempoMatched, true)
   assert.equal(evidence.lokiMatched, true)
   assert.equal(evidence.ageMinutes, 2880)
+})
+
+test('buildObservabilityProofChain rejects config-only and skipped-trigger proof', () => {
+  const chain = buildObservabilityProofChain({
+    telemetry: {
+      observability: {
+        enabled: true,
+        logsEnabled: true,
+        tracesEnabled: true,
+      },
+      cloudflare: {
+        destinations: {
+          status: 'green',
+          summary: 'Cloudflare destinations match wrangler.',
+        },
+      },
+      grafana: {
+        evidence: {
+          status: 'yellow',
+          checkedAt: '2026-05-25T00:00:00.000Z',
+          ageMinutes: 5,
+          tempoMatched: true,
+          lokiMatched: true,
+          checks: [
+            { id: 'worker-trigger', status: 'yellow', proof: 'Skipped Worker trigger.' },
+            { id: 'grafana-read-config', status: 'green', proof: 'Grafana config present.' },
+            { id: 'tempo-query', status: 'green', proof: 'Tempo matched.' },
+            { id: 'loki-query', status: 'green', proof: 'Loki matched.' },
+          ],
+        },
+      },
+    },
+  })
+
+  assert.equal(chain.status, 'yellow')
+  assert.match(chain.summary, /Worker trigger/)
+  assert.match(chain.rejectedProof.join(' '), /skip-trigger/)
+})
+
+test('buildObservabilityProofChain turns green only with full Cloudflare and Grafana chain', () => {
+  const chain = buildObservabilityProofChain({
+    telemetry: {
+      observability: {
+        enabled: true,
+        logsEnabled: true,
+        tracesEnabled: true,
+      },
+      cloudflare: {
+        destinations: {
+          status: 'green',
+          summary: 'Cloudflare destinations match wrangler.',
+        },
+      },
+      grafana: {
+        evidence: {
+          status: 'green',
+          checkedAt: '2026-05-25T00:00:00.000Z',
+          ageMinutes: 5,
+          tempoMatched: true,
+          lokiMatched: true,
+          checks: [
+            { id: 'worker-trigger', status: 'green', proof: 'Worker returned telemetry id.' },
+            { id: 'grafana-read-config', status: 'green', proof: 'Grafana config present.' },
+            { id: 'tempo-query', status: 'green', proof: 'Tempo matched.' },
+            { id: 'loki-query', status: 'green', proof: 'Loki matched.' },
+          ],
+        },
+      },
+    },
+  })
+
+  assert.equal(chain.status, 'green')
+  assert.match(chain.acceptedProof.join(' '), /cloudflare-otel-destinations/)
+  assert.equal(chain.currentInvalidReason, '')
 })
 
 test('evaluateMcpProofFreshness requires source state and lane artifacts', () => {

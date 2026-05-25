@@ -46,6 +46,7 @@ const REQUIRED_HTML_LABELS = [
   'Loaded MCP Catalog Delta',
   'Cloudflare OTEL Destinations',
   'Grafana OTEL Smoke',
+  'Observability Proof Chain Contract',
 ]
 
 if (require.main === module) {
@@ -182,6 +183,26 @@ function verifyJsonContract(cockpit) {
   if (cockpit.telemetry?.grafana && !cockpit.telemetry?.cloudflare?.destinations) {
     failures.push('Grafana evidence exists but Cloudflare destination boundary is missing')
   }
+  if (cockpit.telemetry?.grafana && !cockpit.telemetry?.observabilityProofChain?.status) {
+    failures.push('Grafana evidence exists but observability proof chain is missing')
+  }
+  const observabilityProofChain = cockpit.telemetry?.observabilityProofChain
+  if (observabilityProofChain) {
+    const chainIds = new Set((observabilityProofChain.required || []).map(row => row.id))
+    for (const id of ['cloudflare-destinations', 'worker-trigger', 'grafana-read-config', 'tempo-query', 'loki-query', 'freshness']) {
+      if (!chainIds.has(id)) {
+        failures.push(`observability proof chain missing row: ${id}`)
+      }
+    }
+    const accepted = (observabilityProofChain.acceptedProof || []).join(' ')
+    const rejected = (observabilityProofChain.rejectedProof || []).join(' ')
+    if (!/Cloudflare|worker-trigger|grafana-read-config|tempo-query|loki-query|fresh/i.test(accepted)) {
+      failures.push('observability proof chain does not name the full accepted Cloudflare/Grafana proof chain')
+    }
+    if (!/wrangler|skip-trigger|Tempo-only|Loki-only|stale|nurse-log/i.test(rejected)) {
+      failures.push('observability proof chain does not reject config-only, skipped, partial, stale, and note-only proof')
+    }
+  }
 
   const proofRows = cockpit.trustModel?.proofAcceptanceMatrix?.rows
   if (!Array.isArray(proofRows) || proofRows.length === 0) {
@@ -208,7 +229,7 @@ function verifyJsonContract(cockpit) {
     }
 
     const grafana = proofById.get('otel-grafana-proof')
-    if (grafana && !/Tempo|Loki|Grafana|OTEL/i.test(`${grafana.acceptedProof || ''} ${grafana.rejectedProof || ''} ${grafana.nextValidProof || ''}`)) {
+    if (grafana && !/Cloudflare|Worker trigger|Tempo|Loki|Grafana|OTEL|fresh/i.test(`${grafana.acceptedProof || ''} ${grafana.rejectedProof || ''} ${grafana.nextValidProof || ''}`)) {
       failures.push('Grafana proof row does not describe Tempo/Loki/Grafana proof requirements')
     }
   }
@@ -333,6 +354,23 @@ function verifyHtmlContract({ cockpit, html }) {
     const sourceSummary = cockpit.localCi.loadedMcpProbe.sourceSummary
     if (sourceSummary && !html.includes(escapeForHtmlText(sourceSummary))) {
       failures.push('HTML missing loaded MCP proof source summary')
+    }
+  }
+
+  const observabilityProofChain = cockpit.telemetry?.observabilityProofChain
+  if (observabilityProofChain) {
+    if (observabilityProofChain.currentInvalidReason && !html.includes(escapeForHtmlText(observabilityProofChain.currentInvalidReason))) {
+      failures.push('HTML missing observability proof-chain invalid reason')
+    }
+    for (const proof of observabilityProofChain.acceptedProof || []) {
+      if (!html.includes(escapeForHtmlText(proof))) {
+        failures.push(`HTML missing observability accepted proof: ${proof}`)
+      }
+    }
+    for (const proof of observabilityProofChain.rejectedProof || []) {
+      if (!html.includes(escapeForHtmlText(proof))) {
+        failures.push(`HTML missing observability rejected proof: ${proof}`)
+      }
     }
   }
 

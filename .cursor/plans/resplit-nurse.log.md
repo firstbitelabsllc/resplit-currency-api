@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 14:38 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit now has a first-class Observability Proof Chain Contract, so OTEL/Grafana launch proof requires Cloudflare destination read proof plus a non-skipped Grafana smoke where Worker trigger, Grafana read config, Tempo query, Loki query, and freshness are all green.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` derives `telemetry.observabilityProofChain`, renders it in the GUI, and threads it into risks, trust contracts, operator actions, launch audit, and proof acceptance. `scripts/verify-reliability-cockpit-report.js` now fails if the generated GUI/report drops the proof-chain contract or stops showing accepted/rejected observability proof.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` now exposes `resplit_currency_api`, but still only `resplit_currency_api_unit`, `resplit_currency_api_integration`, and `resplit_currency_api_ui`; the current `resplit_currency_api_trust_preflight` lane is still missing from the loaded host and `resplit_currency_api_all`.
+  - FirstBite operating readout `fx-cockpit-20260525-143229` finished: declared lanes `15/15`, repo-backed catalog `15/15`, latest lane proof `17/19` with `2` failed proof-only rows, and M4 remains support-only until M4-local execute proof passes.
+  - Regenerated cockpit: `observabilityProofChain.status=yellow`; current blockers are missing `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN`, skipped Worker trigger, missing Grafana read env (`GRAFANA_BASE_URL`, `GRAFANA_TEMPO_DATASOURCE_UID`, `GRAFANA_LOKI_DATASOURCE_UID`), and blocked Tempo/Loki queries.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/verify-grafana-otel-smoke.test.js tests/verify-cloudflare-otel-destinations.test.js` -> `95/95` focused cockpit/verifier/OTEL tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green with Observability Proof Chain Contract present and report HEAD matching the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). The `proof:otel-grafana-proof` row now requires fresh Cloudflare destination proof plus non-skipped Grafana smoke with trigger/config/Tempo/Loki/freshness all green.
+  - `npm run check` -> generate green, strict release validation green, and `271/271` tests passed.
+- Boundary: this still does not provide Cloudflare/Grafana credentials, run non-skipped live Grafana smoke, restart/reload Codex/Cursor, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove fleet/ledger health. It makes config-only, skipped-trigger, Tempo-only, Loki-only, stale-report, and note-only observability evidence impossible to promote inside the cockpit.
+- Exact next slice: commit/push this Observability Proof Chain Contract hardening, regenerate the cockpit on the new commit head, then work the live host reload and external observability proof rows without conflating them.
+
 ## 2026-05-25 14:29 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit now has a first-class Loaded MCP Live Capture Contract, so loaded-agent proof must name the exact live MCP tool source, reject repo-backed/reused artifacts, prove `repo-manifest-v2`, include every current `resplit_currency_api` lane, and prove `resplit_currency_api_all` contains every expected lane.

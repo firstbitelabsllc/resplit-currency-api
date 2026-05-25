@@ -45,6 +45,22 @@ const LOADED_MCP_REJECTED_SOURCES = [
   'local-cli:list_lanes',
   '--reuse-existing',
 ]
+const OBSERVABILITY_ACCEPTED_PROOF = [
+  'reports/cloudflare-otel-destinations.json:green',
+  'reports/grafana-otel-smoke.json:worker-trigger green',
+  'reports/grafana-otel-smoke.json:grafana-read-config green',
+  'reports/grafana-otel-smoke.json:tempo-query green',
+  'reports/grafana-otel-smoke.json:loki-query green',
+  'fresh checkedAt within 24h',
+]
+const OBSERVABILITY_REJECTED_PROOF = [
+  'wrangler.jsonc destination names without Cloudflare read proof',
+  'reports/grafana-otel-smoke.json with --skip-trigger or worker-trigger skipped',
+  'Tempo-only proof without Loki logs',
+  'Loki-only proof without Tempo trace',
+  'stale Grafana or Cloudflare report',
+  'old nurse-log or INBOX note',
+]
 const RECOVERY_BOUNDARY_CLAIM_RULES = {
   'local-ci': {
     label: 'Clean FirstBite local CI',
@@ -327,6 +343,7 @@ function buildReport({
     generatedAt,
   })
   const telemetry = inspectTelemetry(wrangler, wranglerPath, packageJson, repoDir, { generatedAt })
+  telemetry.observabilityProofChain = buildObservabilityProofChain({ telemetry })
   const gates = inspectGates(packageJson)
   const preflight = inspectTrustPreflight(readJsonIfExists(trustPreflightPath), trustPreflightPath, generatedAt)
   const risks = computeRisks({
@@ -2768,6 +2785,121 @@ function normalizeGrafanaEvidenceChecks(checks) {
     }))
 }
 
+function buildObservabilityProofChain({ telemetry = {} } = {}) {
+  const evidence = telemetry.grafana?.evidence || {}
+  const cloudflare = telemetry.cloudflare?.destinations || {}
+  const checks = Array.isArray(evidence.checks) ? evidence.checks : []
+  const byId = new Map(checks.map(check => [String(check.id || '').toLowerCase(), check]))
+  const checkStatus = id => normalizeStatus(byId.get(id)?.status || 'missing')
+  const checkProof = id => byId.get(id)?.proof || byId.get(id)?.nextAction || ''
+  const workerTriggerStatus = checkStatus('worker-trigger')
+  const grafanaReadConfigStatus = checkStatus('grafana-read-config')
+  const tempoQueryStatus = checkStatus('tempo-query')
+  const lokiQueryStatus = checkStatus('loki-query')
+  const cloudflareStatus = normalizeStatus(cloudflare.status || 'missing')
+  const grafanaStatus = normalizeStatus(evidence.status || 'missing')
+  const configStatus = telemetry.observability?.enabled
+    && telemetry.observability?.logsEnabled
+    && telemetry.observability?.tracesEnabled
+    ? 'green'
+    : 'red'
+  const freshnessStatus = evidence.ageMinutes === null
+    ? 'missing'
+    : evidence.ageMinutes <= 24 * 60 ? 'green' : 'yellow'
+  const required = [
+    observabilityChainRow({
+      id: 'worker-observability-config',
+      label: 'Worker observability config',
+      status: configStatus,
+      proof: telemetry.observability?.enabled
+        ? `logs ${telemetry.observability.logsEnabled ? 'enabled' : 'missing'} / traces ${telemetry.observability.tracesEnabled ? 'enabled' : 'missing'}`
+        : 'wrangler observability block missing',
+      nextAction: 'Keep logs and traces enabled in wrangler.jsonc before running external proof.',
+    }),
+    observabilityChainRow({
+      id: 'cloudflare-destinations',
+      label: 'Cloudflare destination read proof',
+      status: cloudflareStatus === 'missing' ? 'yellow' : cloudflareStatus,
+      proof: cloudflare.summary || cloudflare.latestPath || 'Cloudflare destination artifact missing.',
+      nextAction: 'Run npm run observability:cloudflare-destinations with read credentials.',
+    }),
+    observabilityChainRow({
+      id: 'worker-trigger',
+      label: 'Worker trigger',
+      status: workerTriggerStatus,
+      proof: checkProof('worker-trigger') || 'No non-skipped Worker trigger check was found.',
+      nextAction: 'Run npm run observability:otel-smoke without --skip-trigger against the deployed Worker.',
+    }),
+    observabilityChainRow({
+      id: 'grafana-read-config',
+      label: 'Grafana read config',
+      status: grafanaReadConfigStatus,
+      proof: checkProof('grafana-read-config') || 'Grafana read config check missing.',
+      nextAction: 'Provide Grafana URL, Tempo datasource UID, Loki datasource UID, and a read token.',
+    }),
+    observabilityChainRow({
+      id: 'tempo-query',
+      label: 'Tempo trace query',
+      status: evidence.tempoMatched ? tempoQueryStatus : 'yellow',
+      proof: checkProof('tempo-query') || (evidence.tempoMatched ? 'Tempo matched by artifact fields.' : 'Tempo match missing.'),
+      nextAction: 'Query Tempo for the Worker-trigger trace id.',
+    }),
+    observabilityChainRow({
+      id: 'loki-query',
+      label: 'Loki log query',
+      status: evidence.lokiMatched ? lokiQueryStatus : 'yellow',
+      proof: checkProof('loki-query') || (evidence.lokiMatched ? 'Loki matched by artifact fields.' : 'Loki match missing.'),
+      nextAction: 'Query Loki for the same Worker-trigger window.',
+    }),
+    observabilityChainRow({
+      id: 'freshness',
+      label: 'Freshness',
+      status: freshnessStatus,
+      proof: evidence.checkedAt
+        ? `${evidence.checkedAt}${evidence.ageMinutes === null ? '' : ` (${evidence.ageMinutes}m old)`}`
+        : 'Grafana checkedAt missing.',
+      nextAction: 'Regenerate Cloudflare and Grafana proof immediately before launch claims.',
+    }),
+  ]
+  const status = worstStatus([
+    configStatus,
+    cloudflareStatus,
+    grafanaStatus,
+    workerTriggerStatus,
+    grafanaReadConfigStatus,
+    evidence.tempoMatched ? tempoQueryStatus : 'yellow',
+    evidence.lokiMatched ? lokiQueryStatus : 'yellow',
+    freshnessStatus,
+  ])
+  const gaps = required
+    .filter(row => row.status !== 'green')
+    .map(row => `${row.label}: ${row.proof}`)
+
+  return {
+    status,
+    summary: status === 'green'
+      ? 'Cloudflare destination proof and Grafana OTEL smoke form a complete launch-trust chain.'
+      : `Observability proof chain is incomplete: ${gaps.join('; ') || 'no proof rows found'}.`,
+    required,
+    acceptedProof: OBSERVABILITY_ACCEPTED_PROOF,
+    rejectedProof: OBSERVABILITY_REJECTED_PROOF,
+    currentInvalidReason: status === 'green' ? '' : gaps.join('; '),
+    nextAction: status === 'green'
+      ? 'Keep Cloudflare and Grafana proof fresh through launch.'
+      : 'Run Cloudflare destination proof, then a non-skipped Grafana OTEL smoke where trigger, read config, Tempo, and Loki are all green.',
+  }
+}
+
+function observabilityChainRow({ id, label, status, proof, nextAction }) {
+  return {
+    id,
+    label,
+    status: normalizeStatus(status),
+    proof: String(proof || ''),
+    nextAction: String(nextAction || ''),
+  }
+}
+
 function normalizeStatus(status) {
   return ['green', 'yellow', 'red', 'missing'].includes(status) ? status : 'yellow'
 }
@@ -4490,6 +4622,13 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger, review
       detail: telemetry.summary,
     })
   }
+  if (telemetry.observabilityProofChain?.status && telemetry.observabilityProofChain.status !== 'green') {
+    risks.push({
+      status: telemetry.observabilityProofChain.status,
+      label: 'OTEL/Grafana proof chain gap',
+      detail: telemetry.observabilityProofChain.summary,
+    })
+  }
 
   if (ledger?.health?.status === 'red') {
     risks.push({
@@ -4538,6 +4677,7 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
   const proof = localCi?.mcpProof?.latest
   const evidence = telemetry?.grafana?.evidence
   const cloudflareDestinations = telemetry?.cloudflare?.destinations
+  const observabilityProofChain = telemetry?.observabilityProofChain
   const loadedMcp = localCi?.loadedMcpProbe
   const repoBackedMcp = localCi?.repoBackedMcpProbe
   const loadedMcpCaptureContract = localCi?.loadedMcpCaptureContract
@@ -4663,12 +4803,15 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
     },
     {
       gate: 'OTEL/Grafana evidence',
-      status: telemetry?.status || 'red',
-      current: telemetry?.summary || 'No telemetry summary available.',
+      status: worstStatus([telemetry?.status || 'red', observabilityProofChain?.status]),
+      current: [
+        telemetry?.summary || 'No telemetry summary available.',
+        observabilityProofChain?.summary || '',
+      ].filter(Boolean).join(' '),
       proof: evidence?.latestPath || 'reports/grafana-otel-smoke.json',
-      nextAction: telemetry?.status === 'green'
+      nextAction: telemetry?.status === 'green' && observabilityProofChain?.status === 'green'
         ? 'Keep fresh Tempo and Loki evidence under the cockpit evidence roots.'
-        : 'After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match.',
+        : observabilityProofChain?.nextAction || 'After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match.',
     },
     {
       gate: 'Release-history strict coverage',
@@ -4712,6 +4855,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const loadedMcpBlockedBy = loadedMcpHostReloadBlocker({ loadedMcp, mcpRefreshPlan })
   const cloudflareDestinations = telemetry.cloudflare?.destinations || {}
   const grafanaEvidence = telemetry.grafana?.evidence || {}
+  const observabilityProofChain = telemetry.observabilityProofChain || {}
   const actions = []
 
   if (contractNeedsAction(byGate.get('Source promotion bundle')) || contractNeedsAction(byGate.get('Tracked local-CI contract'))) {
@@ -4862,12 +5006,12 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       priority: 5,
       owner: 'Cloudflare/Grafana',
       gate: 'OTEL/Grafana evidence',
-      status: byGate.get('OTEL/Grafana evidence')?.status || telemetry.status || 'yellow',
+      status: byGate.get('OTEL/Grafana evidence')?.status || observabilityProofChain.status || telemetry.status || 'yellow',
       proof: grafanaEvidence.latestPath || 'reports/grafana-otel-smoke.json',
       command: 'npm run observability:otel-smoke -- --since-minutes 60',
-      blocker: telemetry.summary || byGate.get('OTEL/Grafana evidence')?.current || 'Grafana evidence was not inspected.',
-      nextAction: byGate.get('OTEL/Grafana evidence')?.nextAction || 'Run the live Grafana smoke after destinations and read credentials exist.',
-      evidenceRequired: 'A fresh smoke artifact where Worker trigger, Grafana config, Tempo query, and Loki query are all green.',
+      blocker: observabilityProofChain.summary || telemetry.summary || byGate.get('OTEL/Grafana evidence')?.current || 'Grafana evidence was not inspected.',
+      nextAction: observabilityProofChain.nextAction || byGate.get('OTEL/Grafana evidence')?.nextAction || 'Run the live Grafana smoke after destinations and read credentials exist.',
+      evidenceRequired: 'Fresh Cloudflare destination proof plus a non-skipped Grafana smoke artifact where Worker trigger, Grafana config, Tempo query, Loki query, and freshness are all green.',
       unblocks: 'OTEL/Grafana launch trust',
       canRunNow: false,
       blockedBy: 'Requires Cloudflare destination setup, deployment, and Grafana read env.',
@@ -5431,12 +5575,16 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
       surface: 'OTEL/Grafana observability',
       boundary: 'external-observability',
       owner: 'Cloudflare/Grafana',
-      status: byGate.get('OTEL/Grafana evidence')?.status || telemetry?.status || 'yellow',
-      allowedWhenGreen: 'Worker trigger, Grafana config, Tempo query, and Loki query all have fresh positive evidence.',
-      forbiddenUntilGreen: 'Do not claim telemetry is launch-trusted from config alone or an old nurse-log note.',
+      status: worstStatus([
+        byGate.get('OTEL/Grafana evidence')?.status,
+        telemetry?.observabilityProofChain?.status,
+        telemetry?.status,
+      ]),
+      allowedWhenGreen: 'Cloudflare destinations, Worker trigger, Grafana config, Tempo query, Loki query, and freshness all have positive evidence.',
+      forbiddenUntilGreen: 'Do not claim telemetry is launch-trusted from wrangler config alone, skipped-trigger Grafana smoke, Tempo-only/Loki-only proof, stale reports, or an old nurse-log note.',
       evidence: byGate.get('OTEL/Grafana evidence')?.proof || telemetry?.grafana?.evidence?.latestPath || 'reports/grafana-otel-smoke.json',
-      gap: byGate.get('OTEL/Grafana evidence')?.current || telemetry?.summary || 'Grafana proof missing.',
-      nextAction: byGate.get('OTEL/Grafana evidence')?.nextAction || 'Run the live Grafana OTEL smoke after destinations and read env exist.',
+      gap: byGate.get('OTEL/Grafana evidence')?.current || telemetry?.observabilityProofChain?.summary || telemetry?.summary || 'Grafana proof missing.',
+      nextAction: byGate.get('OTEL/Grafana evidence')?.nextAction || telemetry?.observabilityProofChain?.nextAction || 'Run the live Grafana OTEL smoke after destinations and read env exist.',
     }),
     trustAuditRow({
       id: 'release-history-quality',
@@ -6670,6 +6818,15 @@ function renderTelemetry(telemetry) {
   }
   const checks = Array.isArray(evidence.checks) ? evidence.checks : []
   const cloudflareChecks = Array.isArray(cloudflare.checks) ? cloudflare.checks : []
+  const chain = telemetry.observabilityProofChain || {
+    status: 'missing',
+    summary: 'Observability proof chain was not computed.',
+    required: [],
+    acceptedProof: OBSERVABILITY_ACCEPTED_PROOF,
+    rejectedProof: OBSERVABILITY_REJECTED_PROOF,
+    currentInvalidReason: 'Observability proof chain was not computed.',
+  }
+  const chainRows = Array.isArray(chain.required) ? chain.required : []
   const persistence = telemetry.observability.persistence || {}
   return `<section class="half">
     <h2>Cloudflare OTEL Destinations + Grafana OTEL Smoke</h2>
@@ -6693,6 +6850,16 @@ function renderTelemetry(telemetry) {
       <div>Checked</div><div>${escapeHtml(evidence.checkedAt || 'unknown')}${evidence.ageMinutes === null ? '' : ` (${escapeHtml(String(evidence.ageMinutes))}m old)`}</div>
       <div>Plan</div><div><code>${escapeHtml(telemetry.grafana.plan)}</code></div>
     </div>
+    <h3>Observability Proof Chain Contract</h3>
+    <div class="kv">
+      <div>Status</div><div><span class="${escapeHtml(chain.status)}">${escapeHtml(chain.status)}</span> ${escapeHtml(chain.summary || '')}</div>
+      <div>Accepted proof</div><div>${(chain.acceptedProof || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ')}</div>
+      <div>Rejected proof</div><div>${(chain.rejectedProof || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ')}</div>
+      <div>Invalid reason</div><div>${escapeHtml(chain.currentInvalidReason || 'none')}</div>
+    </div>
+    ${chainRows.length > 0 ? `<table><thead><tr><th>Proof</th><th>Status</th><th>Current</th><th>Next</th></tr></thead><tbody>
+      ${chainRows.map(row => `<tr><td>${escapeHtml(row.label || row.id)}</td><td><span class="${escapeHtml(row.status || 'yellow')}">${escapeHtml(row.status || 'yellow')}</span></td><td>${escapeHtml(row.proof || '')}</td><td>${escapeHtml(row.nextAction || '')}</td></tr>`).join('')}
+    </tbody></table>` : ''}
     ${cloudflareChecks.length > 0 ? `<h3>Cloudflare OTEL Destinations Checklist</h3>
     <table><thead><tr><th>Check</th><th>Status</th><th>Proof</th><th>Next</th></tr></thead><tbody>
       ${cloudflareChecks.map(check => `<tr><td>${escapeHtml(check.label || check.id)}</td><td><span class="${escapeHtml(check.status || 'yellow')}">${escapeHtml(check.status || 'yellow')}</span></td><td>${escapeHtml(check.proof || '')}</td><td>${escapeHtml(check.nextAction || '')}</td></tr>`).join('')}
@@ -6933,6 +7100,7 @@ module.exports = {
   buildLaunchTrustAudit,
   buildLoadedMcpCaptureContract,
   buildMcpCatalogDelta,
+  buildObservabilityProofChain,
   buildProofAcceptanceMatrix,
   buildReport,
   buildSourcePromotionBundle,
