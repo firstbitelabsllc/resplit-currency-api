@@ -15,6 +15,7 @@ const SOURCE_PROMOTION_PACKET_BASENAME = 'resplit-fx-source-promotion-packet.jso
 const SOURCE_PROMOTION_PACKET_MARKDOWN = 'resplit-fx-source-promotion-packet.md'
 const PROOF_FRESHNESS_LIMIT_MINUTES = 60
 const DEFAULT_FIRSTBITE_LOCAL_CI_DIR = path.join(os.homedir(), 'Development', 'ai-leo', 'skills', 'resplit-watch', 'mcp', 'firstbite-local-ci')
+const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
 const DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-operating-readout')
 const FIRSTBITE_OPERATING_READOUT_FRESHNESS_LIMIT_MINUTES = 60
 const MAX_MCP_HISTORY = 8
@@ -626,9 +627,10 @@ function assessCleanProofReadiness({
   git = null,
 } = {}) {
   const reasons = []
-  const runnerContract = 'FirstBite run_lanes with worktree=true creates disposable detached worktrees from the registered repo HEAD; worktree=false runs the active checkout and is supporting evidence only.'
-  const cleanCommand = `cd ${DEFAULT_FIRSTBITE_LOCAL_CI_DIR} && npm run --silent call -- run_lanes '{"mode":"execute","group":"resplit_currency_api_all","worktree":true,"run_id":"verify-resplit-fx-clean-current-contract-YYYYMMDD"}'`
+  const runnerContract = 'FirstBite run_lanes with worktree=true creates disposable detached worktrees from source_ref; launch proof must pass source_ref=refs/remotes/origin/main so a dirty registered checkout cannot leak into execution. worktree=false runs the active checkout and is supporting evidence only.'
+  const cleanCommand = `cd ${DEFAULT_FIRSTBITE_LOCAL_CI_DIR} && npm run --silent call -- run_lanes '{"mode":"execute","group":"resplit_currency_api_all","worktree":true,"source_ref":"${DEFAULT_FIRSTBITE_SOURCE_REF}","run_id":"verify-resplit-fx-clean-origin-main-YYYYMMDD"}'`
   const dirtyCommand = `cd ${DEFAULT_FIRSTBITE_LOCAL_CI_DIR} && npm run --silent call -- run_lanes '{"mode":"execute","group":"resplit_currency_api_all","worktree":false,"run_id":"verify-resplit-fx-current-manifest-YYYYMMDD"}'`
+  const proofUsesPinnedOriginMain = usesPinnedOriginMainSourceRef(proof)
 
   if (trackedSource?.status && trackedSource.status !== 'green') {
     reasons.push({
@@ -700,7 +702,7 @@ function assessCleanProofReadiness({
     })
   }
 
-  if (git && ((git.dirtyCount || 0) > 0 || (git.behindOriginMain || 0) > 0)) {
+  if (!proofUsesPinnedOriginMain && git && ((git.dirtyCount || 0) > 0 || (git.behindOriginMain || 0) > 0)) {
     reasons.push({
       status: 'yellow',
       area: 'primary checkout',
@@ -716,7 +718,7 @@ function assessCleanProofReadiness({
         area: 'manifest portability',
         detail: 'Repo-backed MCP catalog says fresh_clone_ready=false; another Mac cannot pull the full manifest contract from origin/main.',
       })
-    } else if (portability.ready === false) {
+    } else if (portability.ready === false && !proofUsesPinnedOriginMain) {
       reasons.push({
         status: 'yellow',
         area: 'active checkout portability',
@@ -756,6 +758,8 @@ function assessCleanProofReadiness({
       runId: proof.runId || null,
       status: proof.status || null,
       source: sourceStateSummary(proof.executionSourceState || proof.sourceState),
+      sourceRef: proof.requestedSourceRef || null,
+      resolvedSourceRef: proof.resolvedSourceRef || null,
     } : null,
     currentManifestProof: currentManifestProof ? {
       runId: currentManifestProof.runId || null,
@@ -768,6 +772,18 @@ function assessCleanProofReadiness({
     },
     nextAction,
   }
+}
+
+function usesPinnedOriginMainSourceRef(proof) {
+  if (!proof) {
+    return false
+  }
+  return isOriginMainSourceRef(proof.requestedSourceRef)
+    || (proof.lanes || []).some(lane => isOriginMainSourceRef(lane.requestedSourceRef))
+}
+
+function isOriginMainSourceRef(sourceRef) {
+  return sourceRef === DEFAULT_FIRSTBITE_SOURCE_REF || sourceRef === 'origin/main'
 }
 
 function isTrustworthyCleanExecutionSource(sourceState) {
@@ -2582,6 +2598,8 @@ function summarizeMcpProofForHistory(proof) {
     status: proof.status,
     trustStatus,
     reportPath: proof.reportPath,
+    requestedSourceRef: proof.requestedSourceRef || null,
+    resolvedSourceRef: proof.resolvedSourceRef || null,
     coverage: proof.coverage,
     laneCount: proof.lanes.length,
     sourceState: proof.sourceState ? {
@@ -2623,6 +2641,8 @@ function sourceStateTrustStatus(sourceState) {
 function buildMcpProof({ data, matching, reportPath, expectedLaneIds }) {
   const executionLane = matching.find(lane => lane.execution_source_state || lane.source_state) || matching[0]
   const primaryLane = matching.find(lane => lane.primary_source_state) || matching.find(lane => lane.source_state) || matching[0]
+  const requestedSourceRef = data.source_ref || executionLane?.requested_source_ref || null
+  const resolvedSourceRef = executionLane?.resolved_source_ref || null
   const executionSourceState = normalizeSourceState(
     executionLane,
     executionLane?.execution_source_state ? 'execution_source_state' : 'source_state',
@@ -2641,6 +2661,8 @@ function buildMcpProof({ data, matching, reportPath, expectedLaneIds }) {
     createdAt: data.created_at || null,
     status: data.overall || summarizeLaneStatuses(matching),
     host: data.host || matching[0]?.host || null,
+    requestedSourceRef,
+    resolvedSourceRef,
     sourceState,
     executionSourceState: sourceState,
     primarySourceState,
@@ -2657,6 +2679,8 @@ function buildMcpProof({ data, matching, reportPath, expectedLaneIds }) {
       status: lane.status,
       rc: lane.rc ?? null,
       sourceHead: lane.source_head || null,
+      requestedSourceRef: lane.requested_source_ref || data.source_ref || null,
+      resolvedSourceRef: lane.resolved_source_ref || null,
       logPath: lane.log_path || null,
       worktree: lane.worktree ?? null,
       cwd: lane.cwd || null,
@@ -4252,6 +4276,8 @@ function renderLocalCiProof(localCi) {
       <div>Manifest command match</div><div><span class="${escapeHtml(localCi.proofManifestMatch?.status || 'yellow')}">${escapeHtml(localCi.proofManifestMatch?.summary || 'unknown')}</span></div>
       <div>Status</div><div><span class="${proof.status === 'pass' ? 'green' : proof.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(proof.status)}</span></div>
       <div>Host</div><div>${escapeHtml(proof.host || 'unknown')}</div>
+      <div>Requested source ref</div><div><code>${escapeHtml(proof.requestedSourceRef || 'not recorded')}</code></div>
+      <div>Resolved source ref</div><div><code>${escapeHtml(proof.resolvedSourceRef || 'not recorded')}</code></div>
       <div>Execution sync</div><div>${escapeHtml(proof.executionSourceState?.syncStatus || proof.sourceState?.syncStatus || 'missing source_state')}</div>
       <div>Execution dirty / ahead / behind</div><div>${escapeHtml(String((proof.executionSourceState || proof.sourceState)?.dirtyCount ?? 'unknown'))} / ${escapeHtml(String((proof.executionSourceState || proof.sourceState)?.aheadOriginMain ?? 'unknown'))} / ${escapeHtml(String((proof.executionSourceState || proof.sourceState)?.behindOriginMain ?? 'unknown'))}</div>
       <div>Execution upstream</div><div><code>${escapeHtml((proof.executionSourceState || proof.sourceState)?.upstream || 'unknown')}</code> <code>${escapeHtml((proof.executionSourceState || proof.sourceState)?.upstreamHead || 'unknown')}</code></div>
@@ -4272,7 +4298,7 @@ function renderLocalCiProof(localCi) {
     <table>
       <thead><tr><th>Lane</th><th>Kind</th><th>Status</th><th>Proof Command</th><th>Execution Source</th><th>Worktree</th><th>Diagnostics</th><th>Log</th></tr></thead>
       <tbody>
-        ${proof.lanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane)}</code></td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'pass' ? 'green' : lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.command || 'unknown')}</code></td><td><code>${escapeHtml(lane.sourceHead || 'unknown')}</code><div class="meta">${escapeHtml(lane.executionSourceState?.syncStatus || 'unknown')} · dirty ${escapeHtml(String(lane.executionSourceState?.dirtyCount ?? 'unknown'))} / ahead ${escapeHtml(String(lane.executionSourceState?.aheadOriginMain ?? 'unknown'))} / behind ${escapeHtml(String(lane.executionSourceState?.behindOriginMain ?? 'unknown'))}</div></td><td>${lane.worktree === null ? 'unknown' : escapeHtml(String(lane.worktree))}</td><td><span class="${escapeHtml(lane.diagnostics?.status || 'unknown')}">${escapeHtml(lane.diagnostics?.summary || 'unknown')}</span></td><td><code>${escapeHtml(lane.logPath || 'missing')}</code></td></tr>`).join('\n')}
+        ${proof.lanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane)}</code></td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'pass' ? 'green' : lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.command || 'unknown')}</code></td><td><code>${escapeHtml(lane.sourceHead || 'unknown')}</code><div class="meta">${escapeHtml(lane.executionSourceState?.syncStatus || 'unknown')} · dirty ${escapeHtml(String(lane.executionSourceState?.dirtyCount ?? 'unknown'))} / ahead ${escapeHtml(String(lane.executionSourceState?.aheadOriginMain ?? 'unknown'))} / behind ${escapeHtml(String(lane.executionSourceState?.behindOriginMain ?? 'unknown'))}</div><div class="meta">source_ref ${escapeHtml(lane.requestedSourceRef || 'not recorded')} -&gt; ${escapeHtml(lane.resolvedSourceRef || 'not recorded')}</div></td><td>${lane.worktree === null ? 'unknown' : escapeHtml(String(lane.worktree))}</td><td><span class="${escapeHtml(lane.diagnostics?.status || 'unknown')}">${escapeHtml(lane.diagnostics?.summary || 'unknown')}</span></td><td><code>${escapeHtml(lane.logPath || 'missing')}</code></td></tr>`).join('\n')}
       </tbody>
     </table>
     ${renderMcpProofHistory(localCi.mcpProof?.history || [])}
@@ -4309,7 +4335,7 @@ function renderCleanProofReadiness(readiness) {
     <div class="kv">
       <div>Status</div><div><span class="${statusClass}">${escapeHtml(readiness.status || 'unknown')}</span> ${escapeHtml(readiness.summary || '')}</div>
       <div>Runner contract</div><div>${escapeHtml(readiness.runnerContract || '')}</div>
-      <div>Selected proof</div><div>${readiness.selectedProof ? `<code>${escapeHtml(readiness.selectedProof.runId || 'unknown')}</code> ${escapeHtml(readiness.selectedProof.status || 'unknown')} · ${escapeHtml(readiness.selectedProof.source || 'unknown source')}` : 'missing'}</div>
+      <div>Selected proof</div><div>${readiness.selectedProof ? `<code>${escapeHtml(readiness.selectedProof.runId || 'unknown')}</code> ${escapeHtml(readiness.selectedProof.status || 'unknown')} · ${escapeHtml(readiness.selectedProof.source || 'unknown source')} · <code>${escapeHtml(readiness.selectedProof.sourceRef || 'source_ref not recorded')}</code>` : 'missing'}</div>
       <div>Current-manifest proof</div><div>${readiness.currentManifestProof ? `<code>${escapeHtml(readiness.currentManifestProof.runId || 'unknown')}</code> ${escapeHtml(readiness.currentManifestProof.status || 'unknown')} · ${escapeHtml(readiness.currentManifestProof.source || 'unknown source')}` : 'none'}</div>
       <div>Next action</div><div>${escapeHtml(readiness.nextAction || '')}</div>
       <div>Clean command</div><div><code>${escapeHtml(readiness.commands?.cleanWorktree || '')}</code></div>
