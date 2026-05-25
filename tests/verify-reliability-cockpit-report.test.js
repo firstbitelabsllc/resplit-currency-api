@@ -271,7 +271,7 @@ function buildReport() {
           { id: 'repo-path', label: 'Repo path', status: 'red', proof: 'readout=/Users/leokwan/Development/resplit-currency-api current=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525', nextAction: 'Regenerate from the current repo path.' },
           { id: 'repo-head', label: 'Repo HEAD', status: 'red', proof: 'readout=4226d2800000 current=503bcd832b54', nextAction: 'Regenerate from the current checkout.' },
           { id: 'lane-set', label: 'Lane set', status: 'red', proof: 'missing resplit_currency_api_trust_preflight', nextAction: 'Regenerate after current lanes exist.' },
-          { id: 'lane-proof-source', label: 'Lane proof source', status: 'red', proof: '0/4 expected lane proof(s) match current HEAD 503bcd832b54; non-current resplit_currency_api_trust_preflight@532421e7dd8e', nextAction: 'Rerun FirstBite lane proof from the current checkout HEAD.' },
+          { id: 'lane-proof-source', label: 'Lane proof source', status: 'red', proof: '0/4 expected lane proof(s) match current HEAD 503bcd832b54; non-current resplit_currency_api_trust_preflight@532421e7dd8e', nextAction: 'Run current-source FirstBite lane proof with run_lanes source_ref=503bcd832b54, then refresh the readout.' },
           { id: 'proof-only-lanes', label: 'Proof-only lanes', status: 'yellow', proof: '4 non-current proof-only lane(s), 2 failed', nextAction: 'Keep proof-only failures separated.' },
         ],
         acceptedProof: [
@@ -290,6 +290,7 @@ function buildReport() {
           'Moussey/M4 support-only status promoted as execution proof',
         ],
         currentInvalidReason: 'Repo path mismatch; Repo HEAD mismatch; Lane set missing resplit_currency_api_trust_preflight.',
+        laneProofCommand: 'cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 npm run --silent call -- run_lanes \'{"mode":"execute","group":"resplit_currency_api_all","worktree":true,"source_ref":"503bcd832b54","run_id":"verify-resplit-currency-api-current-source-503bcd832b-YYYYMMDD"}\'',
       },
       findingTaxonomy: {
         status: 'red',

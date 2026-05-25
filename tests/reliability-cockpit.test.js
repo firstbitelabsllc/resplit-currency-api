@@ -1871,6 +1871,11 @@ test('buildOperatingReadoutScopeContract rejects non-current lane proof source h
   assert.equal(contract.status, 'red')
   assert.equal(row.status, 'red')
   assert.match(row.proof, /532421e7dd8e/)
+  assert.match(row.nextAction, /run_lanes/)
+  assert.match(row.nextAction, /source_ref/)
+  assert.match(contract.laneProofCommand, /RESPLIT_CURRENCY_API_REPO=/)
+  assert.match(contract.laneProofCommand, /resplit_currency_api_all/)
+  assert.match(contract.laneProofCommand, /bdca51eedd68/)
   assert.match(contract.currentInvalidReason, /Lane proof source/)
   assert.match(contract.acceptedProof.join(' '), /source_head/)
   assert.match(contract.rejectedProof.join(' '), /source_head/)
@@ -1919,6 +1924,9 @@ test('buildOperatingReadoutScopeContract keeps lane failures separate from scope
   assert.equal(contract.rows.find(row => row.id === 'proof-only-lanes').status, 'green')
   assert.match(contract.scopedCommand, /^RESPLIT_CURRENCY_API_REPO=/)
   assert.match(contract.scopedCommand, /post-pr9-main-20260525/)
+  assert.match(contract.laneProofCommand, /run_lanes/)
+  assert.match(contract.laneProofCommand, /source_ref/)
+  assert.match(contract.laneProofCommand, /503bcd832b54/)
 })
 
 test('buildLocalCiFindingTaxonomy separates product failures from proof and stale-control-plane findings', () => {

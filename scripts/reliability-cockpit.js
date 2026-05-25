@@ -1403,6 +1403,11 @@ function buildOperatingReadoutScopeContract({
   const proofOnlySeparationKnown = operatingReadout.localCi?.proofOnlyNonCurrentLaneCount != null
     && operatingReadout.localCi?.proofOnlyNonCurrentFailCount != null
   const scopedCommand = firstBiteOperatingReadoutCommand({ expectedRepo, expectedRepoDir })
+  const laneProofCommand = firstBiteCurrentLaneProofCommand({
+    expectedRepo,
+    expectedRepoDir,
+    expectedRepoHead: currentRepoHead,
+  })
   const expectedRepoLaneProofs = Array.isArray(operatingReadout.expectedRepoLaneProofs)
     ? operatingReadout.expectedRepoLaneProofs
     : []
@@ -1465,7 +1470,7 @@ function buildOperatingReadoutScopeContract({
       proof: laneProofSourceStatus === 'green'
         ? `${currentLaneProofCount}/${laneProofExpectedCount} expected lane proof(s) match current HEAD ${currentRepoHead || 'missing'}`
         : `${currentLaneProofCount}/${laneProofExpectedCount} expected lane proof(s) match current HEAD ${currentRepoHead || 'missing'}${laneProofSourceGaps.length ? `; non-current ${laneProofSourceGaps.join(', ')}` : ''}`,
-      nextAction: `Rerun FirstBite lane proof from the current checkout HEAD before using latest_lane_proof as launch evidence. Run: ${scopedCommand}`,
+      nextAction: `Run current-source FirstBite lane proof before using latest_lane_proof as launch evidence. Run: ${laneProofCommand}; then refresh the readout with: ${scopedCommand}`,
     }),
     operatingReadoutScopeRow({
       id: 'proof-only-lanes',
@@ -1480,7 +1485,7 @@ function buildOperatingReadoutScopeContract({
   const nextAction = status === 'green'
     ? 'Keep the operating readout fresh before using it for fleet coordination.'
     : laneProofSourceStatus !== 'green'
-      ? `Treat this readout as fleet context only until its repo path, repo HEAD, lane set, and latest_lane_proof source_head values all match the current checkout. Run: ${scopedCommand}`
+      ? `Treat this readout as fleet context only until its repo path, repo HEAD, lane set, and latest_lane_proof source_head values all match the current checkout. Run current-source proof: ${laneProofCommand}; then refresh the readout: ${scopedCommand}`
       : `Treat this readout as fleet context only until its repo path, repo HEAD, and lane set match the current checkout. Run: ${scopedCommand}`
 
   return {
@@ -1510,6 +1515,7 @@ function buildOperatingReadoutScopeContract({
     expectedRepoHead: currentRepoHead,
     expectedLaneIds,
     scopedCommand,
+    laneProofCommand,
     readoutRepoPath: manifestRepoPath,
     readoutRepoHead,
     declarationPath,
@@ -1733,6 +1739,31 @@ function firstBiteOperatingReadoutCommand({ expectedRepo, expectedRepoDir } = {}
     return `bash ${script}`
   }
   return `${envVar}=${shellQuoteValue(expectedRepoDir)} bash ${script}`
+}
+
+function firstBiteCurrentLaneProofCommand({ expectedRepo = 'resplit_currency_api', expectedRepoDir = null, expectedRepoHead = null } = {}) {
+  const envVarByRepo = {
+    resplit_web: 'RESPLIT_WEB_REPO',
+    resplit_ios: 'RESPLIT_IOS_REPO',
+    resplit_currency_api: 'RESPLIT_CURRENCY_API_REPO',
+    strongyes_web: 'STRONGYES_WEB_REPO',
+    moussey: 'MOUSSEY_REPO',
+  }
+  const envVar = envVarByRepo[expectedRepo] || null
+  const group = `${expectedRepo}_all`
+  const sourceRef = expectedRepoHead || 'HEAD'
+  const runIdSuffix = shortGitSha(sourceRef) || 'HEAD'
+  const payload = {
+    mode: 'execute',
+    group,
+    worktree: true,
+    source_ref: sourceRef,
+    run_id: `verify-${expectedRepo.replace(/_/g, '-')}-current-source-${runIdSuffix}-YYYYMMDD`,
+  }
+  const envPrefix = envVar && expectedRepoDir
+    ? `${envVar}=${shellQuoteValue(expectedRepoDir)} `
+    : ''
+  return `cd ${shellQuoteValue(DEFAULT_FIRSTBITE_LOCAL_CI_DIR)} && ${envPrefix}npm run --silent call -- run_lanes ${shellQuoteValue(JSON.stringify(payload))}`
 }
 
 function operatingReadoutScopeRow({ id, label, status, proof, nextAction }) {
@@ -2324,6 +2355,13 @@ function compareGitHeads(left, right) {
   const leftText = String(left)
   const rightText = String(right)
   return leftText.startsWith(rightText) || rightText.startsWith(leftText)
+}
+
+function shortGitSha(value) {
+  if (!value || !/^[0-9a-f]{7,40}$/i.test(String(value))) {
+    return null
+  }
+  return String(value).slice(0, 12)
 }
 
 function summarizeReviewScoutSubstance(data) {
@@ -7110,7 +7148,8 @@ function renderOperatingReadoutScopeContract(contract) {
       <div>Readout HEAD</div><div><code>${escapeHtml(contract.readoutRepoHead || 'missing')}</code></div>
       <div>Declaration</div><div><code>${escapeHtml(contract.declarationPath || 'missing')}</code></div>
       <div>Missing lanes</div><div>${contract.missingExpectedLaneIds?.length ? contract.missingExpectedLaneIds.map(lane => `<code>${escapeHtml(lane)}</code>`).join(' ') : 'none'}</div>
-      <div>Scoped command</div><div><code>${escapeHtml(contract.scopedCommand || '')}</code></div>
+      <div>Readout command</div><div><code>${escapeHtml(contract.scopedCommand || '')}</code></div>
+      <div>Lane proof command</div><div><code>${escapeHtml(contract.laneProofCommand || '')}</code></div>
       <div>Accepted proof</div><div>${(contract.acceptedProof || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ')}</div>
       <div>Rejected proof</div><div>${(contract.rejectedProof || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ')}</div>
       <div>Invalid reason</div><div>${escapeHtml(contract.currentInvalidReason || 'none')}</div>

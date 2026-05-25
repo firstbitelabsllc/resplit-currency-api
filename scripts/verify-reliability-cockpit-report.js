@@ -238,6 +238,11 @@ function verifyJsonContract(cockpit) {
         failures.push(`operating readout scope contract missing row: ${id}`)
       }
     }
+    const laneProofRow = (operatingReadoutScopeContract.rows || []).find(row => row.id === 'lane-proof-source')
+    const laneProofRecovery = `${operatingReadoutScopeContract.laneProofCommand || ''} ${laneProofRow?.nextAction || ''}`
+    if (!/run_lanes/i.test(laneProofRecovery) || !/source_ref/i.test(laneProofRecovery)) {
+      failures.push('operating readout scope contract lane-proof-source row does not provide a source_ref run_lanes recovery command')
+    }
     const accepted = (operatingReadoutScopeContract.acceptedProof || []).join(' ')
     const rejected = (operatingReadoutScopeContract.rejectedProof || []).join(' ')
     const acceptedPatterns = [/current repo path/i, /current repo HEAD/i, /lane_keys/i, /current manifest lane/i, /source_head/i, /proof-only/i]
