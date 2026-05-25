@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 12:22 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit now has an explicit Proof Acceptance Matrix so local operators can see which proof boundaries are accepted versus diagnostic-only, instead of inferring trust from adjacent green rows.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` derives `trustModel.proofAcceptanceMatrix` from the Launch Trust Audit and Operator Action Queue, renders a `Proof Acceptance Matrix` HTML section, and records each row's accepted proof, rejected proof, current gap, next valid proof, and owning action. `scripts/verify-reliability-cockpit-report.js` now fails if that matrix disappears or if the clean FirstBite, loaded-agent MCP, or OTEL/Grafana proof rows are missing.
+- Fresh proof:
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `73/73` focused cockpit/verifier tests passed.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.{json,html}` with Proof Acceptance Matrix status `red`: `4` accepted, `8` blocked.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green with `Proof Acceptance Matrix` present in HTML and JSON.
+  - Matrix sample: `clean-firstbite-local-ci` red/blocked until fresh `worktree=true` FirstBite execute proof; `loaded-agent-mcp` red/blocked until fresh loaded-host `list_lanes` with `repo-manifest-v2` and all FX lanes; `otel-grafana-proof` yellow/blocked until Worker trigger, Grafana config, Tempo query, and Loki query are all green.
+  - `npm run check` -> generate green, strict release validation green, and `255/255` tests passed.
+- Boundary: this does not restart/reload Codex/Cursor, prove the live loaded MCP tool is current, land the `ai-leo` producer stack, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes those non-green boundaries impossible to promote accidentally inside the operator cockpit.
+- Exact next slice: reload the long-lived Codex/Cursor FirstBite MCP host, recapture live loaded `list_lanes`, then work the matrix rows top-down for clean landed-source FirstBite, M4 peer execution, Cloudflare destination, and Grafana Tempo/Loki proof.
+
 ## 2026-05-25 12:00 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The stale refresh-packet producer has a durable repair on `ai-leo` draft stack PR #13, and the FX cockpit no longer sees lane-count continuation proof drift after regenerating the packet.

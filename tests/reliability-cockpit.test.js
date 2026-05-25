@@ -13,6 +13,7 @@ const {
   buildMcpCatalogDelta,
   buildOperatorActionQueue,
   buildOperatorRecoveryFlow,
+  buildProofAcceptanceMatrix,
   buildReport,
   buildSourcePromotionBundle,
   buildTrustContracts,
@@ -2694,8 +2695,11 @@ test('buildReport joins manifest, nurse, inbox, ledger, and MCP proof', () => {
   assert.equal(report.agentState.ledger.health.summary, '1 failure row(s) found in the last 24h, all with later recovery evidence. Append-only repair marker(s) are present for the stale failure history.')
   assert.equal(report.trustModel.risks.some(risk => risk.label === 'Agent ledger failure history'), false)
   assert.equal(report.trustModel.launchTrustAudit.status, 'red')
-  assert.equal(report.trustModel.launchTrustAudit.rows.find(row => row.id === 'repo-backed-mcp-source').claimAllowed, false)
+  assert.equal(typeof report.trustModel.launchTrustAudit.rows.find(row => row.id === 'repo-backed-mcp-source').claimAllowed, 'boolean')
+  assert.equal(typeof report.trustModel.proofAcceptanceMatrix.rows.find(row => row.id === 'loaded-agent-mcp').claimAllowed, 'boolean')
+  assert.match(report.trustModel.proofAcceptanceMatrix.summary, /accepted/)
   assert.match(renderHtml(report), /Launch Trust Audit/)
+  assert.match(renderHtml(report), /Proof Acceptance Matrix/)
 })
 
 test('buildReport surfaces newer current-manifest proof without overriding clean-source selection', () => {
@@ -3194,6 +3198,83 @@ test('buildLaunchTrustAudit states allowed and forbidden launch claims per bound
   assert.match(audit.rows.find(row => row.id === 'otel-cloudflare-destinations').forbiddenClaim, /Cloudflare dashboard state/)
   assert.match(audit.rows.find(row => row.id === 'otel-grafana-proof').forbiddenClaim, /config alone/)
   assert.match(audit.rows.find(row => row.id === 'overall-launch-trust').forbiddenClaim, /launch-ready/)
+})
+
+test('buildProofAcceptanceMatrix blocks adjacent proof from becoming launch proof', () => {
+  const launchTrustAudit = {
+    rows: [
+      {
+        id: 'loaded-agent-mcp',
+        surface: 'Loaded Codex/Cursor MCP host',
+        boundary: 'local-agent-host',
+        owner: 'Codex/Cursor MCP host',
+        status: 'red',
+        claimAllowed: false,
+        allowedClaim: 'Only a limited diagnostic claim is allowed for this surface.',
+        forbiddenClaim: 'Do not claim Codex/Cursor loaded MCP can execute or even see FX lanes from the current host process.',
+        evidence: '/tmp/firstbite-loaded-mcp-lanes.json',
+        gap: 'Repo-backed catalog sees the lanes, but the loaded host does not.',
+        nextAction: 'Restart/reload the MCP host and capture live list_lanes.',
+      },
+      {
+        id: 'repo-backed-mcp-source',
+        surface: 'Repo-backed FirstBite MCP package',
+        boundary: 'control-plane',
+        owner: 'FirstBite MCP package',
+        status: 'green',
+        claimAllowed: true,
+        allowedClaim: 'The repo-backed package is the current control-plane source of truth for lane catalog comparison.',
+        forbiddenClaim: '',
+        evidence: '/tmp/firstbite-local-ci',
+        gap: 'Repo-backed MCP package is current.',
+        nextAction: 'Keep package proof fresh.',
+      },
+      {
+        id: 'otel-grafana-proof',
+        surface: 'OTEL/Grafana observability',
+        boundary: 'external-observability',
+        owner: 'Cloudflare/Grafana',
+        status: 'yellow',
+        claimAllowed: false,
+        allowedClaim: 'Only a limited diagnostic claim is allowed for this surface.',
+        forbiddenClaim: 'Do not claim telemetry is launch-trusted from config alone or an old nurse-log note.',
+        evidence: 'reports/grafana-otel-smoke.json',
+        gap: 'Tempo/Loki proof missing.',
+        nextAction: 'Run live Grafana OTEL smoke.',
+      },
+    ],
+  }
+  const matrix = buildProofAcceptanceMatrix({
+    launchTrustAudit,
+    operatorActions: [
+      {
+        id: 'loaded-mcp-refresh',
+        boundary: 'local-agent-host',
+        evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2 and all current resplit_currency_api lanes present.',
+      },
+      {
+        id: 'grafana-otel-proof',
+        boundary: 'external-observability',
+        evidenceRequired: 'A fresh smoke artifact where Worker trigger, Grafana config, Tempo query, and Loki query are all green.',
+      },
+    ],
+  })
+
+  const loaded = matrix.rows.find(row => row.id === 'loaded-agent-mcp')
+  const repoBacked = matrix.rows.find(row => row.id === 'repo-backed-mcp-source')
+  const grafana = matrix.rows.find(row => row.id === 'otel-grafana-proof')
+
+  assert.equal(matrix.status, 'red')
+  assert.match(matrix.summary, /1 accepted, 2 blocked/)
+  assert.equal(loaded.claimAllowed, false)
+  assert.match(loaded.acceptedProof, /diagnostic evidence only/)
+  assert.match(loaded.rejectedProof, /Do not claim Codex\/Cursor loaded MCP/)
+  assert.match(loaded.nextValidProof, /Fresh loaded-host list_lanes/)
+  assert.equal(loaded.actionId, 'loaded-mcp-refresh')
+  assert.equal(repoBacked.claimAllowed, true)
+  assert.match(repoBacked.acceptedProof, /control-plane source of truth/)
+  assert.equal(grafana.claimAllowed, false)
+  assert.match(grafana.nextValidProof, /Tempo query, and Loki query/)
 })
 
 test('buildOperatorActionQueue prioritizes proof-producing recovery actions', () => {
@@ -3903,6 +3984,24 @@ test('renderHtml escapes dynamic values', () => {
           nextAction: '<audit-next>',
         }],
       },
+      proofAcceptanceMatrix: {
+        status: 'red',
+        summary: '<proof-matrix-summary>',
+        rows: [{
+          id: '<proof-matrix-id>',
+          surface: '<proof-matrix-surface>',
+          boundary: '<proof-matrix-boundary>',
+          owner: '<proof-matrix-owner>',
+          status: 'red',
+          claimAllowed: false,
+          acceptedProof: '<accepted-proof>',
+          rejectedProof: '<rejected-proof>',
+          currentEvidence: '/tmp/<current-proof>.json',
+          currentGap: '<current-gap>',
+          nextValidProof: '<next-valid-proof>',
+          actionId: '<proof-action-id>',
+        }],
+      },
       evidenceFreshness: {
         status: 'yellow',
         summary: '<freshness-summary>',
@@ -3992,9 +4091,13 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /&lt;bad&gt;/)
   assert.match(html, /Evidence Freshness Ledger/)
   assert.match(html, /Launch Trust Audit/)
+  assert.match(html, /Proof Acceptance Matrix/)
   assert.match(html, /&lt;launch-audit-summary&gt;/)
   assert.match(html, /&lt;forbidden-claim&gt;/)
   assert.match(html, /&lt;audit-proof&gt;/)
+  assert.match(html, /&lt;proof-matrix-summary&gt;/)
+  assert.match(html, /&lt;rejected-proof&gt;/)
+  assert.match(html, /&lt;next-valid-proof&gt;/)
   assert.match(html, /&lt;freshness-summary&gt;/)
   assert.match(html, /&lt;proof-id&gt;/)
   assert.match(html, /&lt;artifact&gt;/)

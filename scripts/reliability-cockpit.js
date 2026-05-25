@@ -326,6 +326,10 @@ function buildReport({
     ledger,
     reviewScout,
   })
+  const proofAcceptanceMatrix = buildProofAcceptanceMatrix({
+    launchTrustAudit,
+    operatorActions,
+  })
 
   return {
     generatedAt,
@@ -354,6 +358,7 @@ function buildReport({
       ],
       preflight,
       launchTrustAudit,
+      proofAcceptanceMatrix,
       evidenceFreshness,
       operatorActions,
       operatorRecoveryFlow,
@@ -5264,6 +5269,71 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
   }
 }
 
+function buildProofAcceptanceMatrix({ launchTrustAudit = {}, operatorActions = [] } = {}) {
+  const auditRows = Array.isArray(launchTrustAudit?.rows) ? launchTrustAudit.rows : []
+  const actions = Array.isArray(operatorActions) ? operatorActions : []
+  const rows = auditRows.map(row => proofAcceptanceRow(row, findActionForAuditRow(row, actions)))
+  const accepted = rows.filter(row => row.claimAllowed).length
+  const blocked = rows.length - accepted
+
+  return {
+    status: worstStatus(rows.map(row => row.status)),
+    summary: `${accepted} accepted, ${blocked} blocked proof boundary(s); adjacent or stale proof stays diagnostic until the matching boundary is green.`,
+    rows,
+  }
+}
+
+function proofAcceptanceRow(row = {}, action = null) {
+  const status = normalizeStatus(row.status)
+  const claimAllowed = Boolean(row.claimAllowed && status === 'green')
+  return {
+    id: row.id || 'unknown',
+    surface: row.surface || '',
+    boundary: row.boundary || '',
+    owner: row.owner || '',
+    status,
+    claimAllowed,
+    acceptedProof: claimAllowed
+      ? row.allowedClaim || 'This proof boundary can support its launch claim.'
+      : `No launch claim accepted; diagnostic evidence only: ${row.evidence || 'missing'}`,
+    rejectedProof: claimAllowed
+      ? 'No rejected proof while this row remains green and fresh.'
+      : row.forbiddenClaim || 'Do not promote adjacent, stale, or missing evidence into this launch claim.',
+    currentEvidence: row.evidence || 'missing',
+    currentGap: row.gap || 'No gap detail recorded.',
+    nextValidProof: action?.evidenceRequired || row.nextAction || 'Turn the matching launch-trust row green with fresh evidence.',
+    actionId: action?.id || '',
+  }
+}
+
+function findActionForAuditRow(row = {}, actions = []) {
+  if (!row || actions.length === 0) {
+    return null
+  }
+
+  return actions.find(action => action.boundary && action.boundary === row.boundary)
+    || actions.find(action => action.gate && row.surface && stringsOverlap(action.gate, row.surface))
+    || actions.find(action => action.id && row.id && stringsOverlap(action.id, row.id))
+    || null
+}
+
+function stringsOverlap(left, right) {
+  const leftWords = tokenizeProofLabel(left)
+  const rightWords = tokenizeProofLabel(right)
+  if (leftWords.length === 0 || rightWords.length === 0) {
+    return false
+  }
+
+  return leftWords.some(word => word.length > 3 && rightWords.includes(word))
+}
+
+function tokenizeProofLabel(value) {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+}
+
 function trustAuditRow({
   id,
   surface,
@@ -5464,6 +5534,7 @@ function renderHtml(report) {
     renderSummary(report),
     renderTrustPreflight(report.trustModel.preflight),
     renderLaunchTrustAudit(report.trustModel.launchTrustAudit),
+    renderProofAcceptanceMatrix(report.trustModel.proofAcceptanceMatrix),
     renderEvidenceFreshnessLedger(report.trustModel.evidenceFreshness),
     renderOperatorRecoveryFlow(report.trustModel.operatorRecoveryFlow),
     renderOperatorActionQueue(report.trustModel.operatorActions),
@@ -5627,6 +5698,27 @@ function renderLaunchTrustAudit(audit) {
       <thead><tr><th>Surface</th><th>Status</th><th>Boundary</th><th>Claim allowed?</th><th>Allowed claim</th><th>Forbidden until green</th><th>Evidence</th><th>Gap / next action</th></tr></thead>
       <tbody>
         ${rows.length === 0 ? '<tr><td colspan="8">No launch trust audit rows were generated.</td></tr>' : rows.map(row => `<tr><td><code>${escapeHtml(row.id || '')}</code><div class="meta">${escapeHtml(row.surface || '')} · ${escapeHtml(row.owner || '')}</div></td><td><span class="${escapeHtml(row.status || 'yellow')}">${escapeHtml(row.status || 'unknown')}</span></td><td><code>${escapeHtml(row.boundary || '')}</code></td><td>${row.claimAllowed ? '<span class="green">yes</span>' : '<span class="red">no</span>'}</td><td>${escapeHtml(row.allowedClaim || '')}</td><td>${escapeHtml(row.forbiddenClaim || 'none')}</td><td><code>${escapeHtml(row.evidence || '')}</code></td><td>${escapeHtml(row.gap || '')}<div class="meta">${escapeHtml(row.nextAction || '')}</div></td></tr>`).join('\n')}
+      </tbody>
+    </table>
+  </section>`
+}
+
+function renderProofAcceptanceMatrix(matrix) {
+  if (!matrix) {
+    return ''
+  }
+
+  const rows = matrix.rows || []
+  return `<section>
+    <h2>Proof Acceptance Matrix</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${escapeHtml(matrix.status || 'yellow')}">${escapeHtml(matrix.status || 'unknown')}</span> ${escapeHtml(matrix.summary || '')}</div>
+      <div>Rule</div><div>Accepted proof must belong to the same boundary as the launch claim; adjacent evidence stays diagnostic.</div>
+    </div>
+    <table>
+      <thead><tr><th>Boundary</th><th>Status</th><th>Claim?</th><th>Accepted proof</th><th>Rejected proof</th><th>Current evidence / gap</th><th>Next valid proof</th></tr></thead>
+      <tbody>
+        ${rows.length === 0 ? '<tr><td colspan="7">No proof acceptance rows were generated.</td></tr>' : rows.map(row => `<tr><td><code>${escapeHtml(row.id || '')}</code><div class="meta">${escapeHtml(row.surface || '')} · <code>${escapeHtml(row.boundary || '')}</code></div></td><td><span class="${escapeHtml(row.status || 'yellow')}">${escapeHtml(row.status || 'unknown')}</span></td><td>${row.claimAllowed ? '<span class="green">accepted</span>' : '<span class="red">blocked</span>'}</td><td>${escapeHtml(row.acceptedProof || '')}</td><td>${escapeHtml(row.rejectedProof || '')}</td><td><code>${escapeHtml(row.currentEvidence || '')}</code><div class="meta">${escapeHtml(row.currentGap || '')}</div></td><td>${escapeHtml(row.nextValidProof || '')}${row.actionId ? `<div class="meta"><code>${escapeHtml(row.actionId)}</code></div>` : ''}</td></tr>`).join('\n')}
       </tbody>
     </table>
   </section>`
@@ -6573,6 +6665,7 @@ module.exports = {
   buildEvidenceFreshnessLedger,
   buildLaunchTrustAudit,
   buildMcpCatalogDelta,
+  buildProofAcceptanceMatrix,
   buildReport,
   buildSourcePromotionBundle,
   buildOperatorActionQueue,

@@ -31,6 +31,7 @@ const REQUIRED_HTML_LABELS = [
   'Operator Action Queue',
   'Trust Contracts',
   'Launch Trust Audit',
+  'Proof Acceptance Matrix',
   'Evidence Freshness Ledger',
   'FirstBite Local CI',
   'Loaded MCP Host Probe',
@@ -165,6 +166,33 @@ function verifyJsonContract(cockpit) {
 
   if (cockpit.telemetry?.grafana && !cockpit.telemetry?.cloudflare?.destinations) {
     failures.push('Grafana evidence exists but Cloudflare destination boundary is missing')
+  }
+
+  const proofRows = cockpit.trustModel?.proofAcceptanceMatrix?.rows
+  if (!Array.isArray(proofRows) || proofRows.length === 0) {
+    failures.push('proof acceptance matrix rows are missing')
+  } else {
+    const proofById = new Map(proofRows.map(row => [row.id, row]))
+    for (const rowId of ['clean-firstbite-local-ci', 'loaded-agent-mcp', 'otel-grafana-proof']) {
+      if (!proofById.has(rowId)) {
+        failures.push(`missing proof acceptance row: ${rowId}`)
+      }
+    }
+
+    const loaded = proofById.get('loaded-agent-mcp')
+    if (cockpit.localCi?.loadedMcpProbe?.status === 'red') {
+      if (loaded?.claimAllowed !== false) {
+        failures.push('loaded MCP proof row must reject launch claims while loaded host probe is red')
+      }
+      if (!/Fresh loaded-host list_lanes|Restart|reload/i.test(loaded?.nextValidProof || '')) {
+        failures.push('loaded MCP proof row does not name fresh loaded-host list_lanes or host reload proof')
+      }
+    }
+
+    const grafana = proofById.get('otel-grafana-proof')
+    if (grafana && !/Tempo|Loki|Grafana|OTEL/i.test(`${grafana.acceptedProof || ''} ${grafana.rejectedProof || ''} ${grafana.nextValidProof || ''}`)) {
+      failures.push('Grafana proof row does not describe Tempo/Loki/Grafana proof requirements')
+    }
   }
 
   return failures
