@@ -543,6 +543,25 @@
   - Live loaded `mcp__firstbite_local_ci.list_lanes` still does not expose `resplit_currency_api`; it lists only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`, so the loaded MCP host boundary remains untrusted until restart/reload plus a captured probe artifact.
 - Exact next slice: land this PR bundle, reload the in-app FirstBite MCP host and capture `reports/firstbite-loaded-mcp-lanes.json`, then run clean worktree `resplit_currency_api_all` and external Cloudflare/Grafana read-token proofs.
 
+## 2026-05-25 15:18 EDT
+
+- `NO-GO` overall launch; `GO/current` for the FirstBite operating-readout scope contract after adding current-HEAD proof.
+- Shipped delta pending source promotion: cockpit now requires `repo-head` in the FirstBite operating readout scope contract, renders expected/readout HEAD, and the verifier fails if current repo HEAD proof disappears. The local readout producer was also hardened in `ai-leo` so scoped `RESPLIT_CURRENCY_API_REPO=...` readouts capture git HEAD from the PR worktree rather than the primary checkout.
+- Fresh proof:
+  - `bash -n /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh` -> pass.
+  - `RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh --run-id fx-pr-worktree-20260525-head-proof-v2` -> wrote `/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-pr-worktree-20260525-head-proof-v2/report.json`; local CI `17/19` pass, catalog `15/16` pass, declared lanes `16/16`.
+  - Generated cockpit scope row: `repo-head` green with `readout=503bcd832b54 current=503bcd832b54`; `repo-path`, `lane-set`, and `proof-only-lanes` also green.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `101/101` focused tests green.
+  - `npm run reliability:cockpit:verify` -> green after cockpit regeneration.
+  - `npm run reliability:completion-audit` -> expected red: `0` stale/missing cockpit reports, `8` launch blockers, `8` proof blockers, `12` trust blockers.
+  - `npm run check` -> `278/278` tests green.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Known / unknown / forgotten work surfaced:
+  - known: local CI did find a real control-plane issue: readout git-state capture ignored the scoped PR worktree env and reported the primary checkout HEAD. This is not a product runtime failure, but it was a trust-system bug that could launder stale evidence.
+  - known: `resplit_currency_api_trust_preflight` remains red; clean landed-source FirstBite execution, loaded MCP host reload/capture, M4 execution, Cloudflare destination proof, and Grafana Tempo/Loki proof are still unproven.
+  - known: generated `reports/` remain untracked hold-by-default; the fresh readout is ledger evidence, not source.
+- Exact next slice: land this source bundle, regenerate cockpit at the new commit HEAD, then rerun the scoped operating readout once more so `repo-head` follows the committed HEAD before asking any agent or GUI to trust the readout.
+
 ## 2026-05-25 06:12 EDT
 
 - `NO-GO` overall launch; `YELLOW/current` for the Cloudflare/Grafana observability lane because wrangler destination intent is source-declared, but Cloudflare dashboard destination existence and Grafana Tempo/Loki delivery remain separate unproven gates.

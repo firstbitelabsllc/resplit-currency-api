@@ -296,6 +296,7 @@ function buildReport({
     reportRoot: operatingReadoutRoot || DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR,
     expectedRepo: manifest?.repo,
     expectedRepoDir: repoDir,
+    expectedRepoHead: git.head,
     generatedAt,
   })
   const mcpRefreshPlan = inspectFirstBiteMcpRefreshPlan({
@@ -327,6 +328,7 @@ function buildReport({
     operatingReadout,
     expectedRepo: manifest?.repo,
     expectedRepoDir: repoDir,
+    expectedRepoHead: git.head,
     expectedLaneIds: Object.keys(manifest?.localCi?.lanes || {}),
   })
   localCi.mcpRefreshPlan = mcpRefreshPlan
@@ -1134,6 +1136,7 @@ function inspectFirstBiteOperatingReadout({
   reportRoot = DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR,
   expectedRepo = 'resplit_currency_api',
   expectedRepoDir = null,
+  expectedRepoHead = null,
   generatedAt = new Date().toISOString(),
 } = {}) {
   const missing = {
@@ -1211,6 +1214,11 @@ function inspectFirstBiteOperatingReadout({
   const expectedRepoFailures = failedLanes.filter(lane => lane.repo === expectedRepo)
   const manifestPortability = catalog?.manifest_portability || null
   const expectedManifestState = (catalog?.manifest_states || []).find(row => row.repo === expectedRepo) || null
+  const expectedRepoGitState = Array.isArray(data.repo_git_state)
+    ? data.repo_git_state.find(row => row.repo === expectedRepo)
+      || data.repo_git_state.find(row => expectedRepoDir && row.repo_path && path.resolve(row.repo_path) === path.resolve(expectedRepoDir))
+      || null
+    : null
   const ageMinutes = ageMinutesBetween(data.created_at, generatedAt)
   const laneCount = numberOrNull(localCi.latest_lane_count) ?? latestLaneProof.length
   const passCount = numberOrNull(localCi.latest_lane_pass_count) ?? latestLaneProof.filter(lane => lane.status === 'pass').length
@@ -1282,6 +1290,8 @@ function inspectFirstBiteOperatingReadout({
     } : null,
     manifestPortability,
     expectedManifestState,
+    expectedRepoGitState,
+    expectedRepoHead,
     failedLanes,
     expectedRepoFailures,
     mousseyLocal: data.moussey_local ? {
@@ -1355,15 +1365,20 @@ function buildOperatingReadoutScopeContract({
   operatingReadout = {},
   expectedRepo = 'resplit_currency_api',
   expectedRepoDir = null,
+  expectedRepoHead = null,
   expectedLaneIds = [],
 } = {}) {
   const readoutStatus = normalizeStatus(operatingReadout.status || 'missing')
   const catalogLaneKeys = Array.isArray(operatingReadout.catalog?.laneKeys) ? operatingReadout.catalog.laneKeys : []
   const manifestState = operatingReadout.expectedManifestState || {}
+  const repoGitState = operatingReadout.expectedRepoGitState || {}
   const manifestRepoPath = manifestState.repo_path || manifestState.repoPath || null
   const declarationPath = manifestState.declaration_path || manifestState.declarationPath || null
+  const readoutRepoHead = repoGitState.head || repoGitState.head_sha || repoGitState.headSha || null
+  const currentRepoHead = expectedRepoHead || operatingReadout.expectedRepoHead || null
   const missingExpectedLaneIds = expectedLaneIds.filter(laneId => !catalogLaneKeys.includes(laneId))
   const repoPathMatches = Boolean(expectedRepoDir && manifestRepoPath && path.resolve(manifestRepoPath) === path.resolve(expectedRepoDir))
+  const repoHeadMatches = compareGitHeads(readoutRepoHead, currentRepoHead)
   const repoPresent = Boolean(operatingReadout.catalog?.repoPresent)
   const reportPresent = Boolean(operatingReadout.reportPath)
   const proofOnlySeparationKnown = operatingReadout.localCi?.proofOnlyNonCurrentLaneCount != null
@@ -1392,6 +1407,13 @@ function buildOperatingReadoutScopeContract({
       nextAction: `Do not use a primary-checkout operating readout as PR-worktree proof; regenerate from the current repo path with: ${scopedCommand}`,
     }),
     operatingReadoutScopeRow({
+      id: 'repo-head',
+      label: 'Repo HEAD',
+      status: repoHeadMatches === true ? 'green' : 'red',
+      proof: `readout=${readoutRepoHead || 'missing'} current=${currentRepoHead || 'missing'}`,
+      nextAction: `Do not use a stale or headless operating readout as current PR proof; regenerate from the current checkout with: ${scopedCommand}`,
+    }),
+    operatingReadoutScopeRow({
       id: 'lane-set',
       label: 'Lane set',
       status: missingExpectedLaneIds.length === 0 ? 'green' : 'red',
@@ -1414,17 +1436,18 @@ function buildOperatingReadoutScopeContract({
   return {
     status,
     summary: status === 'green'
-      ? 'FirstBite operating readout scope matches the current repo path and lane set.'
+      ? 'FirstBite operating readout scope matches the current repo path, HEAD, and lane set.'
       : `FirstBite operating readout is diagnostic for this checkout: ${gaps.join('; ')}.`,
     rows,
     acceptedProof: [
-      'fresh firstbite-operating-readout report generated for the current repo path',
+      'fresh firstbite-operating-readout report generated for the current repo path and current repo HEAD',
       'catalog repo key matches the current .firstbite/local-ci.json repo',
       'catalog lane_keys include every current manifest lane',
       'proof-only lanes are separated from current repo-path proof',
     ],
     rejectedProof: [
       'primary-checkout readout when the current proof target is a PR worktree',
+      'stale or headless readout when its captured repo HEAD does not match the current checkout HEAD',
       'readout catalog missing current manifest lanes',
       'proof-only non-current lane failures promoted as current proof',
       'Moussey/M4 support-only status promoted as execution proof',
@@ -1432,14 +1455,16 @@ function buildOperatingReadoutScopeContract({
     currentInvalidReason: status === 'green' ? '' : gaps.join('; '),
     expectedRepo,
     expectedRepoDir,
+    expectedRepoHead: currentRepoHead,
     expectedLaneIds,
     scopedCommand,
     readoutRepoPath: manifestRepoPath,
+    readoutRepoHead,
     declarationPath,
     missingExpectedLaneIds,
     nextAction: status === 'green'
       ? 'Keep the operating readout fresh before using it for fleet coordination.'
-      : `Treat this readout as fleet context only until its repo path and lane set match the current checkout. Run: ${scopedCommand}`,
+      : `Treat this readout as fleet context only until its repo path, repo HEAD, and lane set match the current checkout. Run: ${scopedCommand}`,
   }
 }
 
@@ -6921,6 +6946,7 @@ function renderFirstBiteOperatingReadout(readout) {
       <div>Created</div><div>${escapeHtml(checked)}</div>
       <div>Local CI latest proofs</div><div>${escapeHtml(String(readout.localCi?.latestLanePassCount ?? 'unknown'))}/${escapeHtml(String(readout.localCi?.latestLaneCount ?? 'unknown'))} pass · ${escapeHtml(String(readout.localCi?.latestLaneFailCount ?? 'unknown'))} fail</div>
       <div>Catalog</div><div>${escapeHtml(readout.catalog?.version || 'missing')} · declared ${escapeHtml(String(readout.catalog?.declaredCount ?? 'unknown'))}/${escapeHtml(String(readout.catalog?.laneCount ?? 'unknown'))} · expected repo ${readout.catalog?.repoPresent ? 'present' : 'missing'}</div>
+      <div>FX readout HEAD</div><div><code>${escapeHtml(readout.expectedRepoGitState?.head || 'missing')}</code></div>
       <div>Manifest portability</div><div>${manifest ? `fresh clone ${escapeHtml(String(manifest.fresh_clone_ready))} · active checkout ${escapeHtml(String(manifest.ready))} · uncommitted repos ${escapeHtml(String(manifest.uncommitted_repo_count ?? 'unknown'))}` : 'unknown'}</div>
       <div>FX manifest state</div><div>${fxManifest ? `${escapeHtml(fxManifest.portability_status || 'unknown')} · <code>${escapeHtml(fxManifest.porcelain || 'clean')}</code>` : 'missing from readout'}</div>
       <div>Moussey /coding</div><div>${escapeHtml(moussey?.verdict || 'unknown')} · local CI ${escapeHtml(String(localCiApi?.latest_lane_pass_count ?? 'unknown'))}/${escapeHtml(String(localCiApi?.latest_lane_count ?? 'unknown'))} pass · LAN peers ${escapeHtml(String(lanStatus?.healthy_peer_count ?? 'unknown'))}/${escapeHtml(String(lanStatus?.peer_count ?? 'unknown'))} healthy</div>
@@ -6953,6 +6979,8 @@ function renderOperatingReadoutScopeContract(contract) {
       <div>Expected repo</div><div><code>${escapeHtml(contract.expectedRepo || 'unknown')}</code></div>
       <div>Expected path</div><div><code>${escapeHtml(contract.expectedRepoDir || 'missing')}</code></div>
       <div>Readout path</div><div><code>${escapeHtml(contract.readoutRepoPath || 'missing')}</code></div>
+      <div>Expected HEAD</div><div><code>${escapeHtml(contract.expectedRepoHead || 'missing')}</code></div>
+      <div>Readout HEAD</div><div><code>${escapeHtml(contract.readoutRepoHead || 'missing')}</code></div>
       <div>Declaration</div><div><code>${escapeHtml(contract.declarationPath || 'missing')}</code></div>
       <div>Missing lanes</div><div>${contract.missingExpectedLaneIds?.length ? contract.missingExpectedLaneIds.map(lane => `<code>${escapeHtml(lane)}</code>`).join(' ') : 'none'}</div>
       <div>Scoped command</div><div><code>${escapeHtml(contract.scopedCommand || '')}</code></div>

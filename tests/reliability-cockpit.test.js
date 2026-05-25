@@ -895,6 +895,13 @@ test('inspectTrackedSourceContract exposes untracked manifest and missing HEAD s
         },
       },
     },
+    repo_git_state: [{
+      repo: 'resplit_currency_api',
+      repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+      head: '503bcd832b54',
+      dirty_count: 0,
+      status: 'captured',
+    }],
   }
   fs.writeFileSync(path.join(repoDir, '.firstbite', 'local-ci.json'), JSON.stringify(manifest, null, 2))
   const packageJson = {
@@ -1556,6 +1563,13 @@ test('inspectFirstBiteOperatingReadout prefers current repo-path reports over ne
       },
       latest_lane_proof: [],
     },
+    repo_git_state: [{
+      repo: 'resplit_currency_api',
+      repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+      head: '503bcd832b54',
+      dirty_count: 0,
+      status: 'captured',
+    }],
   }
   fs.writeFileSync(path.join(matchingDir, 'report.json'), JSON.stringify({ ...baseReadout, run_id: 'matching' }, null, 2))
   fs.writeFileSync(path.join(fleetDir, 'report.json'), JSON.stringify({
@@ -1590,12 +1604,14 @@ test('inspectFirstBiteOperatingReadout prefers current repo-path reports over ne
   assert.equal(readout.selection.skippedNewerReports, 1)
   assert.match(readout.selection.reason, /Skipped 1 newer fleet readout/)
   assert.equal(readout.expectedManifestState.repo_path, '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525')
+  assert.equal(readout.expectedRepoGitState.head, '503bcd832b54')
 })
 
 test('buildOperatingReadoutScopeContract rejects primary-checkout readouts for PR worktree proof', () => {
   const contract = buildOperatingReadoutScopeContract({
     expectedRepo: 'resplit_currency_api',
     expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    expectedRepoHead: '503bcd832b54',
     expectedLaneIds: [
       'resplit_currency_api_unit',
       'resplit_currency_api_integration',
@@ -1617,6 +1633,9 @@ test('buildOperatingReadoutScopeContract rejects primary-checkout readouts for P
         repo_path: '/Users/leokwan/Development/resplit-currency-api',
         declaration_path: '/Users/leokwan/Development/resplit-currency-api/.firstbite/local-ci.json',
       },
+      expectedRepoGitState: {
+        head: '503bcd832b54',
+      },
       localCi: {
         proofOnlyNonCurrentLaneCount: 2,
         proofOnlyNonCurrentFailCount: 1,
@@ -1632,10 +1651,11 @@ test('buildOperatingReadoutScopeContract rejects primary-checkout readouts for P
   assert.match(contract.nextAction, /fleet context only/)
 })
 
-test('buildOperatingReadoutScopeContract accepts matching current repo path and full lane set', () => {
+test('buildOperatingReadoutScopeContract rejects matching repo path when readout HEAD is stale', () => {
   const contract = buildOperatingReadoutScopeContract({
     expectedRepo: 'resplit_currency_api',
     expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    expectedRepoHead: '503bcd832b54',
     expectedLaneIds: [
       'resplit_currency_api_unit',
       'resplit_currency_api_integration',
@@ -1658,6 +1678,53 @@ test('buildOperatingReadoutScopeContract accepts matching current repo path and 
         repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
         declaration_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525/.firstbite/local-ci.json',
       },
+      expectedRepoGitState: {
+        head: '4226d2800000',
+      },
+      localCi: {
+        proofOnlyNonCurrentLaneCount: 0,
+        proofOnlyNonCurrentFailCount: 0,
+      },
+    },
+  })
+
+  assert.equal(contract.status, 'red')
+  assert.equal(contract.rows.find(row => row.id === 'repo-head').status, 'red')
+  assert.match(contract.currentInvalidReason, /Repo HEAD/)
+  assert.match(contract.currentInvalidReason, /4226d2800000/)
+  assert.match(contract.nextAction, /repo HEAD/)
+})
+
+test('buildOperatingReadoutScopeContract accepts matching current repo path and full lane set', () => {
+  const contract = buildOperatingReadoutScopeContract({
+    expectedRepo: 'resplit_currency_api',
+    expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    expectedRepoHead: '503bcd832b54',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_ui',
+      'resplit_currency_api_trust_preflight',
+    ],
+    operatingReadout: {
+      status: 'green',
+      reportPath: '/Users/leokwan/.agent-ledger/firstbite-operating-readout/pr-worktree/report.json',
+      catalog: {
+        repoPresent: true,
+        laneKeys: [
+          'resplit_currency_api_unit',
+          'resplit_currency_api_integration',
+          'resplit_currency_api_ui',
+          'resplit_currency_api_trust_preflight',
+        ],
+      },
+      expectedManifestState: {
+        repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+        declaration_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525/.firstbite/local-ci.json',
+      },
+      expectedRepoGitState: {
+        head: '503bcd832b54',
+      },
       localCi: {
         proofOnlyNonCurrentLaneCount: 0,
         proofOnlyNonCurrentFailCount: 0,
@@ -1668,13 +1735,14 @@ test('buildOperatingReadoutScopeContract accepts matching current repo path and 
   assert.equal(contract.status, 'green')
   assert.deepEqual(contract.missingExpectedLaneIds, [])
   assert.equal(contract.currentInvalidReason, '')
-  assert.match(contract.summary, /matches the current repo path and lane set/)
+  assert.match(contract.summary, /matches the current repo path, HEAD, and lane set/)
 })
 
 test('buildOperatingReadoutScopeContract keeps lane failures separate from scope proof', () => {
   const contract = buildOperatingReadoutScopeContract({
     expectedRepo: 'resplit_currency_api',
     expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    expectedRepoHead: '503bcd832b54',
     expectedLaneIds: [
       'resplit_currency_api_unit',
       'resplit_currency_api_integration',
@@ -1696,6 +1764,9 @@ test('buildOperatingReadoutScopeContract keeps lane failures separate from scope
       expectedManifestState: {
         repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
         declaration_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525/.firstbite/local-ci.json',
+      },
+      expectedRepoGitState: {
+        head: '503bcd832b54',
       },
       localCi: {
         proofOnlyNonCurrentLaneCount: 3,
