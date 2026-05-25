@@ -233,6 +233,83 @@ test('inspectFirstBiteCursorReviewScout demotes non-current packet-only actionab
   assert.match(scout.nextAction, /Rerun the read-only review scout/)
 })
 
+test('inspectFirstBiteCursorReviewScout keeps worktree scout local CI scope honest', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-worktree-'))
+  const repoDir = '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525'
+  const runDir = path.join(root, 'codex-current-pr10-review-scout-20260525-466c899')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'review.md'), 'Cursor sidecar review skipped for local-only MVP mode.\n')
+  fs.writeFileSync(path.join(runDir, 'review-packet.md'), '# Review packet\n')
+  fs.writeFileSync(path.join(runDir, 'local-ci-repo-proof.json'), JSON.stringify({ ok: true }))
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    run_id: 'codex-current-pr10-review-scout-20260525-466c899',
+    created_at: '2026-05-25T12:06:35Z',
+    repo: repoDir,
+    repo_name: 'post-pr9-main-20260525',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head_sha: '466c899',
+    run_cursor: 0,
+    cursor_mode: 'ask',
+    cursor_current_model: 'gpt-5.3-codex',
+    actionable: true,
+    local_ci: {
+      repo_name: 'post-pr9-main-20260525',
+      local_ci_repo_key: null,
+      latest_lane_count: 19,
+      latest_lane_pass_count: 17,
+      latest_lane_fail_count: 2,
+      repo_lane_count: 19,
+      repo_lane_pass_count: 17,
+      repo_lane_fail_count: 2,
+      lanes: [
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass' },
+        {
+          lane: 'resplit_currency_api_trust_preflight',
+          repo: 'resplit_currency_api',
+          kind: 'integration',
+          status: 'fail',
+          run_id: 'verify-firstbite-mcp-warn-exits-red-clean-head-20260525',
+          report_path: '/tmp/fx-report.json',
+          log_path: '/tmp/fx-run.log',
+        },
+        {
+          lane: 'resplit_ios_ui_full',
+          repo: 'resplit_ios',
+          kind: 'ui',
+          status: 'fail',
+          run_id: 'verify-resplit-ios-ui-full-expanded-lanes-20260525',
+          report_path: '/tmp/ios-report.json',
+          log_path: '/tmp/ios-run.log',
+        },
+      ],
+    },
+  }))
+
+  const scout = inspectFirstBiteCursorReviewScout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    repoName: 'resplit-currency-api',
+    repoDir,
+    git: {
+      branch: 'codex/fx-otel-grafana-config-20260525',
+      head: '466c899cb21534d718243e0e742ee258c94c00a8',
+    },
+    generatedAt: '2026-05-25T12:10:00.000Z',
+  })
+
+  assert.equal(scout.status, 'yellow')
+  assert.equal(scout.currentForCheckout, true)
+  assert.equal(scout.localCi.repoKey, null)
+  assert.equal(scout.localCi.repoScopeStatus, 'derived_from_lane_metadata')
+  assert.equal(scout.localCi.repoScopeWarning, true)
+  assert.equal(scout.localCi.repoLaneCount, 2)
+  assert.equal(scout.localCi.repoLanePassCount, 1)
+  assert.equal(scout.localCi.repoLaneFailCount, 1)
+  assert.deepEqual(scout.failedLanes.map(lane => lane.lane), ['resplit_currency_api_trust_preflight'])
+  assert.match(scout.summary, /local-CI repo key missing; derived resplit_currency_api lanes/)
+  assert.match(scout.nextAction, /local_ci_repo_key matches/)
+})
+
 test('inspectTelemetry reports missing wrangler observability as red', () => {
   const telemetry = inspectTelemetry({ name: 'resplit-fx' }, '/tmp/wrangler.jsonc', { scripts: {} }, '/tmp/repo')
 

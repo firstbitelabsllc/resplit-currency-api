@@ -1,5 +1,23 @@
 # Resplit Nurse Log
 
+## 2026-05-25 08:10 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and canonical coding-agent review-scout scope remain separate required trust contracts.
+- Shipped delta pending source promotion: the reliability cockpit now treats review-scout local-CI scope as its own trust boundary. A current-checkout packet whose `local_ci_repo_key` is missing or mismatched is kept yellow, the cockpit derives only the expected repo lanes from lane metadata, unrelated cross-repo lane failures do not contaminate FX counts, and the HTML review-scout section shows a `Local-CI scope` row with actual versus expected repo key.
+- Fresh proof:
+  - `FIRSTBITE_CURSOR_REVIEW_RUN_ID=codex-current-pr10-review-scout-20260525-466c899 bash /Users/leokwan/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo /Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 --no-cursor` -> report `/Users/leokwan/.agent-ledger/firstbite-cursor-review/codex-current-pr10-review-scout-20260525-466c899/report.json`; packet matches current PR checkout `codex/fx-otel-grafana-config-20260525` `466c899`, Cursor did not run, and `actionable=true` still has no finding payload.
+  - The current scout exposed a scope gap: because the scout ran from worktree basename `post-pr9-main-20260525`, its `local_ci_repo_key` is missing. Regenerated cockpit now reports `derived_from_lane_metadata`, counts only FX lanes `3/4` pass with `resplit_currency_api_trust_preflight` failing, and keeps the review-scout gate yellow instead of treating all `19` latest lanes as repo-scoped proof.
+  - Live loaded `mcp__firstbite_local_ci.list_lanes` still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded MCP host proof remains red/missing until host restart/reload plus captured artifact.
+  - `bash /Users/leokwan/Development/ai-leo/skills/ledger/scripts/audit_ledger_quality.sh` -> `0 failure(s), 0 warning(s)`.
+  - `/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive` -> healthy; `82 entries/24h`, `0 failures`, `3` actionable review scouts still visible.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `55/55` focused cockpit tests green, including the worktree-scout local-CI scope regression.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract` with `coding-agent-review-scout` yellow for missing `local_ci_repo_key`.
+  - `npm run check` -> strict release validation green and `232/232` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this makes the GUI harder to fool when a worktree-named scout packet carries all-lane local-CI proof. It does not fix the scout script's repo-key detection, prove the loaded in-app MCP host, prove a clean landed `resplit_currency_api_all` run, or prove Cloudflare/Grafana delivery.
+- Exact next slice: fix or rerun the review scout so `local_ci_repo_key=resplit_currency_api`, source-promote this PR bundle, restart/reload Codex/Cursor FirstBite MCP host, capture `reports/firstbite-loaded-mcp-lanes.json` from live `list_lanes`, then run clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 07:59 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and coding-agent review-scout freshness remain separate required trust contracts.
