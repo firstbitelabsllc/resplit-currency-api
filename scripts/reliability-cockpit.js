@@ -1403,6 +1403,7 @@ function inspectFirstBiteCursorReviewScout({
     hasSubstantiveFindings: false,
     localCi: null,
     failedLanes: [],
+    history: summarizeReviewScoutHistory([], { selectedRunId: null, expectedRepo, git, generatedAt }),
     summary: 'No FirstBite Cursor/Graphite review scout packet was found for this repo.',
     nextAction: 'Run the read-only no-Cursor review scout before using Cursor/Graphite packet history as local-agent review evidence.',
     command,
@@ -1447,6 +1448,12 @@ function inspectFirstBiteCursorReviewScout({
   }
 
   const latest = reports[0]
+  const history = summarizeReviewScoutHistory(reports, {
+    selectedRunId: latest.runId,
+    expectedRepo,
+    git,
+    generatedAt,
+  })
   if (latest.parseError || !latest.data) {
     return {
       ...missing,
@@ -1454,6 +1461,7 @@ function inspectFirstBiteCursorReviewScout({
       reportPath: latest.reportPath,
       runId: latest.runId,
       searchedReports: reports.length,
+      history,
       summary: `Latest FirstBite Cursor/Graphite review scout packet could not be parsed: ${latest.reportPath}.`,
       nextAction: 'Rerun the no-Cursor review scout to replace the malformed packet before using review-scout evidence.',
     }
@@ -1536,7 +1544,10 @@ function inspectFirstBiteCursorReviewScout({
   const actionabilitySummary = actionableClaimed
     ? substantive.hasSubstantiveFindings ? 'actionable finding payload present' : 'actionable=true without finding payload'
     : 'no actionable flag'
-  const summary = `FirstBite Cursor/Graphite review scout ${mode}: ${currentSummary}; ${ciSummary}; ${scopeSummary}; ${actionabilitySummary}.`
+  const historySummary = history.supersededActionableClaimCount > 0
+    ? `; ${history.supersededActionableClaimCount} older actionable claim(s) superseded by newer packets`
+    : ''
+  const summary = `FirstBite Cursor/Graphite review scout ${mode}: ${currentSummary}; ${ciSummary}; ${scopeSummary}; ${actionabilitySummary}${historySummary}.`
 
   return {
     status,
@@ -1585,6 +1596,7 @@ function inspectFirstBiteCursorReviewScout({
       latestLaneFailCount: numberOrNull(localCi.latest_lane_fail_count),
     },
     failedLanes,
+    history,
     summary,
     nextAction: status === 'red'
       ? 'Review the current actionable scout findings before treating local coding-agent review as clean.'
@@ -1592,15 +1604,84 @@ function inspectFirstBiteCursorReviewScout({
         ? 'Rerun the read-only review scout from the current checkout and compare its repo-scoped local-CI proof before using it as current evidence.'
         : repoScopeWarning
           ? 'Fix or rerun the review scout so local_ci_repo_key matches the expected repo; this cockpit derived repo lanes from lane metadata only.'
-        : !cursorReviewRan
-          ? 'Treat this as a packet-only scout; run the optional Cursor sidecar only when a spendful read-only model pass is worth it.'
           : repoLaneFailCount > 0
             ? 'Inspect the failed repo lane proof referenced by the review scout and rerun the affected FirstBite lane from current source.'
             : stale
               ? 'Refresh the review scout packet before using it as agent-review evidence.'
-              : 'Keep the review scout fresh; it is advisory beside local-CI and launch proof.',
+              : !cursorReviewRan
+                ? 'Treat this as a packet-only scout; run the optional Cursor sidecar only when a spendful read-only model pass is worth it.'
+                : 'Keep the review scout fresh; it is advisory beside local-CI and launch proof.',
     command,
   }
+}
+
+function summarizeReviewScoutHistory(reports = [], {
+  selectedRunId = null,
+  expectedRepo = null,
+  git = {},
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  const parseableReports = reports.filter(report => report?.data && !report.parseError)
+  const supersededReports = parseableReports.filter(report => report.runId !== selectedRunId)
+  const actionableReports = supersededReports.filter(report => {
+    const actionable = report.data?.actionable
+    return actionable === true || actionable === 'true'
+  })
+  const supersededActionableReports = actionableReports.slice(0, 5).map(report => {
+    const data = report.data || {}
+    const branch = data.branch || null
+    const headSha = data.head_sha || data.head || null
+    const branchMatches = compareOptionalStrings(branch, git?.branch)
+    const headMatches = compareGitHeads(headSha, git?.head)
+    const currentForCheckout = branchMatches === false || headMatches === false
+      ? false
+      : branchMatches === true || headMatches === true
+        ? true
+        : null
+    const substance = summarizeReviewScoutSubstance(data)
+    const repoLaneCounts = summarizeReviewScoutRepoLaneCounts(data.local_ci || {}, expectedRepo)
+    return {
+      runId: data.run_id || report.runId,
+      createdAt: data.created_at || data.createdAt || null,
+      ageMinutes: ageMinutesBetween(data.created_at || data.createdAt || null, generatedAt),
+      branch,
+      headSha,
+      currentForCheckout,
+      cursorReviewRan: Boolean(Number(data.run_cursor)) || data.run_cursor === true || data.run_cursor === 'true',
+      findingCount: substance.findingCount,
+      fileCount: substance.fileCount,
+      hasSubstantiveFindings: substance.hasSubstantiveFindings,
+      localCiRepoKey: data.local_ci?.local_ci_repo_key || null,
+      repoLaneCount: repoLaneCounts.repoLaneCount,
+      repoLaneFailCount: repoLaneCounts.repoLaneFailCount,
+      reportPath: report.reportPath,
+    }
+  })
+
+  return {
+    matchingReportCount: reports.length,
+    parseableReportCount: parseableReports.length,
+    supersededReportCount: supersededReports.length,
+    supersededActionableClaimCount: actionableReports.length,
+    supersededSubstantiveFindingCount: supersededActionableReports.filter(report => report.hasSubstantiveFindings).length,
+    supersededRepoLaneFailureCount: supersededActionableReports.filter(report => report.repoLaneFailCount > 0).length,
+    supersededActionableReports,
+  }
+}
+
+function summarizeReviewScoutRepoLaneCounts(localCi = {}, expectedRepo = null) {
+  const allLanes = Array.isArray(localCi.lanes) ? localCi.lanes : []
+  const localCiRepoKey = localCi.local_ci_repo_key || null
+  const repoScopeMatches = !expectedRepo || localCiRepoKey === expectedRepo
+  const lanes = repoScopeMatches || !expectedRepo
+    ? allLanes
+    : allLanes.filter(lane => lane.repo === expectedRepo || String(lane.lane || '').startsWith(`${expectedRepo}_`))
+  const failedLanes = lanes.filter(lane => lane.status && lane.status !== 'pass')
+  const repoLaneCount = repoScopeMatches ? numberOrNull(localCi.repo_lane_count) ?? lanes.length : lanes.length
+  const repoLaneFailCount = repoScopeMatches
+    ? numberOrNull(localCi.repo_lane_fail_count) ?? failedLanes.length
+    : failedLanes.length
+  return { repoLaneCount, repoLaneFailCount }
 }
 
 function matchesCursorReviewScoutRepo(report, { expectedRepo, repoName, repoDir } = {}) {
@@ -6191,6 +6272,7 @@ function renderReviewScout(reviewScout = {}) {
       <div>Checkout match</div><div>${escapeHtml(checkout)} · packet <code>${escapeHtml(reviewScout.branch || 'unknown')}</code> <code>${escapeHtml(reviewScout.headSha || 'unknown')}</code> / current <code>${escapeHtml(reviewScout.currentBranch || 'unknown')}</code> <code>${escapeHtml(reviewScout.currentHead || 'unknown')}</code></div>
       <div>Cursor sidecar</div><div>${reviewScout.cursorReviewRan ? 'ran' : 'not run'} · ${escapeHtml(reviewScout.cursorCurrentModel || reviewScout.cursorModel || 'model unknown')}</div>
       <div>Actionable payload</div><div>${reviewScout.actionableClaimed ? 'claimed' : 'not claimed'} · findings ${escapeHtml(String(reviewScout.findingCount ?? 0))} · files ${escapeHtml(String(reviewScout.fileCount ?? 0))}</div>
+      <div>Superseded actionable</div><div>${escapeHtml(String(reviewScout.history?.supersededActionableClaimCount ?? 0))} claim(s) · ${escapeHtml(String(reviewScout.history?.supersededSubstantiveFindingCount ?? 0))} with findings · ${escapeHtml(String(reviewScout.history?.supersededRepoLaneFailureCount ?? 0))} with repo lane failures</div>
       <div>Local-CI scope</div><div><span class="${reviewScout.localCi?.repoScopeWarning ? 'yellow' : 'green'}">${escapeHtml(reviewScout.localCi?.repoScopeStatus || 'unknown')}</span> · key <code>${escapeHtml(reviewScout.localCi?.repoKey || 'missing')}</code> / expected <code>${escapeHtml(reviewScout.localCi?.expectedRepo || reviewScout.expectedRepo || 'unknown')}</code></div>
       <div>Repo lanes</div><div>${escapeHtml(String(reviewScout.localCi?.repoLanePassCount ?? 'unknown'))}/${escapeHtml(String(reviewScout.localCi?.repoLaneCount ?? 'unknown'))} pass · ${escapeHtml(String(reviewScout.localCi?.repoLaneFailCount ?? 'unknown'))} fail</div>
       <div>Report</div><div><code>${escapeHtml(reviewScout.reportPath || 'missing')}</code></div>

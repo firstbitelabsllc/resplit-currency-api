@@ -1,5 +1,23 @@
 # Resplit Nurse Log
 
+## 2026-05-25 11:02 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but the coding-agent review-scout section now separates current review proof from stale/actionable scout history.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now counts superseded actionable review-scout packets, renders a `Superseded actionable` row in the cockpit GUI, includes that count in the review-scout summary, and prioritizes failed repo-lane proof ahead of the optional Cursor sidecar recommendation. This makes old packet-only `actionable=true` rows visible as history instead of letting them feel like current review pressure.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the active Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded-agent execution remains red.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `62/62` focused cockpit tests green.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; latest review scout remains stale (`b9e562c` vs `a3dafa2`) but now reports `20` older actionable claim(s) as superseded history.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green: `11` gate(s), `5` action(s), generated HTML sections present.
+  - `npm run check` -> strict release validation green and `248/248` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `9`, command drift `2`.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+- Boundary: this does not reload the loaded MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It only removes ambiguity from stale coding-agent review history in the local cockpit.
+- Exact next slice: commit/push this cockpit hardening, keep `reports/` local, rerun the read-only review scout from the final PR head, then restart/reload the FirstBite MCP host and capture fresh live loaded-host `list_lanes` proof before trusting loaded-agent execution.
+
 ## 2026-05-25 10:52 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but the MCP refresh/recovery path now carries the active checkout path instead of letting the next operator accidentally rerun against the stale canonical checkout.

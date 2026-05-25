@@ -352,6 +352,155 @@ test('inspectFirstBiteCursorReviewScout keeps worktree scout local CI scope hone
   assert.match(scout.nextAction, /local_ci_repo_key matches/)
 })
 
+test('inspectFirstBiteCursorReviewScout reports superseded actionable history and prioritizes failed lanes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-history-'))
+  const repoDir = '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525'
+  const olderRunDir = path.join(root, 'codex-stale-review-scout-20260525-b9e562c')
+  const currentRunDir = path.join(root, 'codex-current-review-scout-20260525-a3dafa2')
+  fs.mkdirSync(olderRunDir, { recursive: true })
+  fs.mkdirSync(currentRunDir, { recursive: true })
+  fs.writeFileSync(path.join(olderRunDir, 'report.json'), JSON.stringify({
+    run_id: 'codex-stale-review-scout-20260525-b9e562c',
+    created_at: '2026-05-25T13:59:56Z',
+    repo: repoDir,
+    repo_name: 'resplit-currency-api',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head_sha: 'b9e562c',
+    run_cursor: 0,
+    actionable: true,
+    findings: [{ file: 'scripts/reliability-cockpit.js', issue: 'old finding' }],
+    files: ['scripts/reliability-cockpit.js'],
+    local_ci: {
+      repo_name: 'resplit-currency-api',
+      local_ci_repo_key: 'resplit_currency_api',
+      repo_lane_count: 4,
+      repo_lane_pass_count: 3,
+      repo_lane_fail_count: 1,
+      lanes: [
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass' },
+        { lane: 'resplit_currency_api_trust_preflight', repo: 'resplit_currency_api', kind: 'integration', status: 'fail' },
+      ],
+    },
+  }))
+  fs.writeFileSync(path.join(currentRunDir, 'review.md'), 'Cursor sidecar review skipped for local-only MVP mode.\n')
+  fs.writeFileSync(path.join(currentRunDir, 'review-packet.md'), '# Review packet\n')
+  fs.writeFileSync(path.join(currentRunDir, 'local-ci-repo-proof.json'), JSON.stringify({ ok: false }))
+  fs.writeFileSync(path.join(currentRunDir, 'report.json'), JSON.stringify({
+    run_id: 'codex-current-review-scout-20260525-a3dafa2',
+    created_at: '2026-05-25T15:05:00Z',
+    repo: repoDir,
+    repo_name: 'resplit-currency-api',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head_sha: 'a3dafa2',
+    run_cursor: 0,
+    cursor_mode: 'ask',
+    cursor_current_model: 'gpt-5.3-codex',
+    actionable: true,
+    findings: null,
+    files: null,
+    local_ci: {
+      repo_name: 'resplit-currency-api',
+      local_ci_repo_key: 'resplit_currency_api',
+      repo_lane_count: 4,
+      repo_lane_pass_count: 3,
+      repo_lane_fail_count: 1,
+      lanes: [
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass' },
+        {
+          lane: 'resplit_currency_api_trust_preflight',
+          repo: 'resplit_currency_api',
+          kind: 'integration',
+          status: 'fail',
+          run_id: 'verify-firstbite-mcp-warn-exits-red-clean-head-20260525',
+          report_path: '/tmp/current-report.json',
+          log_path: '/tmp/current-run.log',
+        },
+      ],
+    },
+  }))
+  fs.utimesSync(path.join(olderRunDir, 'report.json'), new Date('2026-05-25T13:59:56Z'), new Date('2026-05-25T13:59:56Z'))
+  fs.utimesSync(path.join(currentRunDir, 'report.json'), new Date('2026-05-25T15:05:00Z'), new Date('2026-05-25T15:05:00Z'))
+
+  const scout = inspectFirstBiteCursorReviewScout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    repoName: 'resplit-currency-api',
+    repoDir,
+    git: {
+      branch: 'codex/fx-otel-grafana-config-20260525',
+      head: 'a3dafa2ddbcbb057ae0baa83cf468f9af0250a69',
+    },
+    generatedAt: '2026-05-25T15:10:00.000Z',
+  })
+
+  assert.equal(scout.status, 'yellow')
+  assert.equal(scout.currentForCheckout, true)
+  assert.equal(scout.localCi.repoLaneFailCount, 1)
+  assert.equal(scout.history.matchingReportCount, 2)
+  assert.equal(scout.history.supersededActionableClaimCount, 1)
+  assert.equal(scout.history.supersededSubstantiveFindingCount, 1)
+  assert.equal(scout.history.supersededRepoLaneFailureCount, 1)
+  assert.equal(scout.history.supersededActionableReports[0].currentForCheckout, false)
+  assert.match(scout.summary, /1 older actionable claim/)
+  assert.match(scout.nextAction, /failed repo lane proof/)
+
+  const html = renderHtml({
+    title: 'Test Reliability Cockpit',
+    generatedAt: '2026-05-25T15:10:00.000Z',
+    repo: {
+      path: repoDir,
+      git: {
+        branch: 'codex/fx-otel-grafana-config-20260525',
+        head: 'a3dafa2',
+        originMain: '16f7d4e',
+        dirtyCount: 0,
+        behindOriginMain: 0,
+      },
+    },
+    verdict: { status: 'yellow', label: 'YELLOW - proof pending' },
+    localCi: { status: 'yellow', summary: 'local CI partial', lanes: [], mcpProof: { reportRoot: '/tmp/mcp' } },
+    telemetry: {
+      status: 'yellow',
+      summary: 'telemetry pending',
+      workerName: 'resplit-fx',
+      observability: {
+        scope: 'top-level',
+        enabled: true,
+        logsEnabled: true,
+        tracesEnabled: true,
+        sampling: { logs: 0.1, traces: 0.1 },
+        persistence: { logs: true, traces: true },
+        destinationNames: ['grafana-logs-prod', 'grafana-traces-prod'],
+      },
+      cloudflare: { destinations: { status: 'missing', expected: [], destinationNames: [], checks: [] } },
+      grafana: { evidence: { status: 'missing', checks: [] } },
+    },
+    gates: { required: [] },
+    agentState: {
+      nurseLog: {},
+      inbox: { activeItems: [] },
+      ledger: {
+        repo: { status: 'missing', recentEntries: [] },
+        shared: { status: 'missing', recentEntries: [] },
+        health: { status: 'green', summary: 'healthy', failureRows: [], recoveryRows: [] },
+        activityMatrix: [],
+      },
+      reviewScout: scout,
+    },
+    trustModel: {
+      preflight: null,
+      launchTrustAudit: null,
+      evidenceFreshness: null,
+      operatorRecoveryFlow: null,
+      operatorActions: [],
+      contracts: [],
+      risks: [],
+    },
+  })
+
+  assert.match(html, /Superseded actionable/)
+})
+
 test('inspectTelemetry reports missing wrangler observability as red', () => {
   const telemetry = inspectTelemetry({ name: 'resplit-fx' }, '/tmp/wrangler.jsonc', { scripts: {} }, '/tmp/repo')
 
