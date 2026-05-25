@@ -1695,6 +1695,17 @@ test('buildReport joins manifest, nurse, inbox, ledger, and MCP proof', () => {
     proof: 'repairs:evt_fail; full MCP aggregate PASS',
     handoff_status: 'resolved',
     files: ['scripts/reliability-cockpit.js'],
+  })}\n${JSON.stringify({
+    ts: '2026-05-24T23:57:00.000Z',
+    eid: 'evt_review',
+    event: 'stop',
+    repo: 'resplit-currency-api',
+    lane: 'fx-otel-grafana-trust',
+    agent_id: 'codex/review',
+    summary: 'Draft PR remains review-needed while external Grafana proof is pending.',
+    proof: 'Cloudflare destination and Grafana read-token proof still separate from local cockpit work.',
+    handoff_status: 'needs_review',
+    files: ['scripts/reliability-cockpit.js'],
   })}\n`)
 
   const mcpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-mcp-'))
@@ -1800,8 +1811,9 @@ test('buildReport joins manifest, nurse, inbox, ledger, and MCP proof', () => {
   assert.equal(report.agentState.inbox.hasGrafanaItem, true)
   assert.equal(report.agentState.inbox.hasStaleGrafanaItem, false)
   assert.equal(report.agentState.ledger.repo.recentEntries.length, 1)
-  assert.equal(report.agentState.ledger.shared.recentEntries.length, 3)
+  assert.equal(report.agentState.ledger.shared.recentEntries.length, 4)
   assert.equal(report.agentState.ledger.shared.recentEntries[2].summary, 'Resolved stale Resplit FX cockpit red ledger marker after live freshness recovery proof.')
+  assert.equal(report.agentState.ledger.shared.recentEntries[3].handoffStatus, 'needs_review')
   assert.equal(report.agentState.ledger.health.status, 'yellow')
   assert.equal(report.agentState.ledger.health.failureRows.length, 1)
   assert.equal(report.agentState.ledger.health.recoveryRows.length, 2)

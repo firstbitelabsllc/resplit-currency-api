@@ -2733,11 +2733,11 @@ function isFailureLedgerEntry(entry) {
   if (handoff === 'in_progress' || handoff === 'done' || handoff === 'complete') {
     return false
   }
-  const hasFailureHandoff = /^(fail|failed|failure|needs_review|blocked)$/.test(handoff)
+  const hasFailureHandoff = /^(fail|failed|failure|blocked)$/.test(handoff)
   if (handoff && !hasFailureHandoff) {
     return false
   }
-  return /\b(fail|failed|failure)\b|current verdict is red|verdict.*red|RED - missing required trust contract|needs_review/i.test(text)
+  return /\b(fail|failed|failure)\b|current verdict is red|verdict.*red|RED - missing required trust contract/i.test(text)
 }
 
 function isRecoveryLedgerEntry(entry) {
