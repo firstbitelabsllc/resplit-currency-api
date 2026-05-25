@@ -2661,9 +2661,11 @@ function parseNurseLog(text) {
   const blocker = bullets.find(line => /^Current blocker:/i.test(line)) || null
   const nextSlice = bullets.find(line => /^Exact next slice:/i.test(line)) || null
   const releaseHistoryEvidence = findReleaseHistoryEvidence(bullets)
-  const releaseReadiness = /NO-GO\/release-readiness|release-history readiness remains yellow|strict release validation/i.test(section.join('\n'))
-    ? 'yellow'
-    : (/GO\/current|COMPLETE/.test(section.join('\n')) ? 'green' : 'unknown')
+  const releaseReadiness = classifyReleaseHistoryReadiness({
+    sectionText: section.join('\n'),
+    bullets,
+    releaseHistoryEvidence,
+  })
 
   return {
     status: 'parsed',
@@ -2679,6 +2681,7 @@ function parseNurseLog(text) {
 
 function findReleaseHistoryEvidence(bullets) {
   const priorityMatchers = [
+    line => isGreenReleaseHistoryProof(line),
     line => /^`?npm run validate:release`?\s*->/i.test(line),
     line => /validate:release.*expected fail/i.test(line) && !isDerivedReleaseHistorySummary(line),
     line => /available\s+\d+\/30/i.test(line) && !isDerivedReleaseHistorySummary(line),
@@ -2694,6 +2697,27 @@ function findReleaseHistoryEvidence(bullets) {
     }
   }
   return null
+}
+
+function classifyReleaseHistoryReadiness({ sectionText = '', bullets = [], releaseHistoryEvidence = null } = {}) {
+  const evidenceText = [releaseHistoryEvidence, ...bullets].filter(Boolean).join('\n')
+  if (releaseHistoryEvidence && isGreenReleaseHistoryProof(releaseHistoryEvidence)) {
+    return 'green'
+  }
+  if (/NO-GO\/release-readiness|release-history readiness remains yellow|validate:release.*expected fail|available\s+\d+\/30|missing.*20\d{2}-\d{2}-\d{2}|release-history risk|history hole/i.test(evidenceText)) {
+    return 'yellow'
+  }
+  if (isGreenReleaseHistoryProof(evidenceText)) {
+    return 'green'
+  }
+  if (/GO\/current|COMPLETE/.test(sectionText)) {
+    return 'green'
+  }
+  return 'unknown'
+}
+
+function isGreenReleaseHistoryProof(text = '') {
+  return /strict release validation.*green|validate:release.*(?:green|pass|passed|OK)|validate-package:\s*OK.*strictHistory=on|history points=30.*strictHistory=on/i.test(text)
 }
 
 function isDerivedReleaseHistorySummary(line) {

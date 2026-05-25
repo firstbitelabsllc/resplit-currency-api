@@ -77,6 +77,47 @@ test('parseNurseLog captures latest release-history blocker', () => {
   assert.match(parsed.nextSlice, /backfill/)
 })
 
+test('parseNurseLog treats green strict release validation as release-history proof', () => {
+  const log = `# Resplit Nurse Log
+
+## 2026-05-25 10:22 EDT
+
+- \`NO-GO\` overall launch; \`RED/current\` still holds because loaded MCP and Grafana remain separate gates.
+- Fresh proof:
+  - \`npm run trust:preflight\` -> expected red exit \`2\`; cockpit remains red.
+  - \`npm run check\` -> strict release validation green and \`242/242\` tests passed.
+- Exact next slice: reload the FirstBite MCP host.
+
+## 2026-05-24 04:34 EDT
+
+- \`GO/publish-recovery\`, \`NO-GO/release-readiness\` for \`resplit-currency-api\`.
+- \`npm run validate:release\` -> expected fail (\`available 18/30\`, missing \`2026-05-12\`..\`2026-05-23\`)
+`
+
+  const parsed = parseNurseLog(log)
+
+  assert.equal(parsed.latestHeading, '2026-05-25 10:22 EDT')
+  assert.equal(parsed.releaseReadiness, 'green')
+  assert.match(parsed.releaseHistoryEvidence, /strict release validation green/)
+})
+
+test('parseNurseLog keeps strict-history failures yellow without OK coverage proof', () => {
+  const log = `# Resplit Nurse Log
+
+## 2026-05-25 10:24 EDT
+
+- \`NO-GO/release-readiness\` because strict history is still incomplete.
+- Fresh proof:
+  - \`npm run validate:release\` -> expected fail (\`available 29/30\`, \`strictHistory=on\`, missing \`2026-05-12\`)
+- Exact next slice: backfill the missing source date.
+`
+
+  const parsed = parseNurseLog(log)
+
+  assert.equal(parsed.releaseReadiness, 'yellow')
+  assert.match(parsed.releaseHistoryEvidence, /expected fail/)
+})
+
 test('parseInbox detects Grafana and release-history rows', () => {
   const parsed = parseInbox(`
 - [ ] [2026-05-24] **P1 release-history risk: gap remains.**
@@ -2510,6 +2551,67 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
   assert.match(contracts.find(contract => contract.gate === 'Release-history strict coverage').current, /available 18\/30/)
   assert.match(contracts.find(contract => contract.gate === 'Release-history strict coverage').nextAction, /May 12-23/)
   assert.match(contracts.find(contract => contract.gate === 'Coding-agent review scout').nextAction, /review scout/)
+})
+
+test('buildTrustContracts clears release-history action after strict validation is green', () => {
+  const contracts = buildTrustContracts({
+    git: { branch: 'main', dirtyCount: 0, behindOriginMain: 0 },
+    localCi: {
+      status: 'red',
+      summary: 'Loaded MCP and clean local-CI proof still need work.',
+      trackedSource: { status: 'green', summary: 'tracked' },
+      cleanProofReadiness: { status: 'red', summary: 'clean proof missing' },
+      sourcePromotionBundle: { status: 'green', summary: 'source tracked' },
+      operatingReadout: { status: 'red', summary: 'trust preflight lane still fails' },
+      runnerControlPlane: { status: 'green', summary: 'runner support landed' },
+      reviewScoutProducerControlPlane: { status: 'green', summary: 'producer support landed' },
+      loadedMcpProbe: { status: 'red', summary: 'loaded host missing FX lanes' },
+      repoBackedMcpProbe: { status: 'green', summary: 'repo-backed catalog sees FX lanes' },
+    },
+    telemetry: {
+      status: 'yellow',
+      summary: 'Tempo/Loki missing',
+      cloudflare: { destinations: { status: 'yellow', summary: 'Cloudflare proof missing' } },
+      grafana: { evidence: { latestPath: '/tmp/grafana.json' } },
+    },
+    nurseLog: {
+      releaseReadiness: 'green',
+      releaseHistoryEvidence: '`npm run check` -> strict release validation green and `242/242` tests passed.',
+    },
+    ledger: { health: { status: 'green', summary: 'healthy' } },
+    reviewScout: { status: 'yellow', summary: 'review scout is stale' },
+  })
+  const releaseContract = contracts.find(contract => contract.gate === 'Release-history strict coverage')
+  const actions = buildOperatorActionQueue({
+    contracts,
+    localCi: {
+      sourcePromotionBundle: { status: 'green', commands: { writePacket: 'npm run source:promotion-packet' } },
+      cleanProofReadiness: { status: 'red', commands: { cleanWorktree: 'firstbite clean command' } },
+      loadedMcpProbe: { status: 'red', path: '/tmp/loaded.json' },
+      operatingReadout: { status: 'red', summary: 'trust preflight lane still fails' },
+    },
+    telemetry: {
+      status: 'yellow',
+      cloudflare: { destinations: { status: 'yellow', summary: 'Cloudflare proof missing' } },
+      grafana: { evidence: { latestPath: '/tmp/grafana.json' } },
+    },
+    nurseLog: {
+      releaseReadiness: 'green',
+      releaseHistoryEvidence: '`npm run check` -> strict release validation green and `242/242` tests passed.',
+    },
+    inbox: {
+      activeItems: [{
+        title: '[2026-05-24] P1 release-history risk: daily publish is fresh, but an older INBOX row remains',
+        raw: '- [ ] [2026-05-24] **P1 release-history risk: daily publish is fresh, but an older INBOX row remains.**',
+      }],
+    },
+    ledger: { health: { status: 'green' } },
+    reviewScout: { status: 'yellow', summary: 'review scout is stale' },
+  })
+
+  assert.equal(releaseContract.status, 'green')
+  assert.match(releaseContract.current, /strict release validation green/)
+  assert.equal(actions.some(action => action.id === 'release-history-backfill'), false)
 })
 
 test('buildTrustContracts uses refresh-plan proof when loaded probe is missing', () => {

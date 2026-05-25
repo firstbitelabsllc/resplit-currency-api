@@ -1,5 +1,22 @@
 # Resplit Nurse Log
 
+## 2026-05-25 10:28 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but the cockpit no longer keeps the release-history gate yellow after current strict validation is green.
+- Shipped delta pending source promotion: tightened `parseNurseLog` release-history classification so green strict-validation proof is recognized separately from old release-history/backfill warnings. The generated cockpit now removes the `release-history-backfill` operator action when the latest nurse proof says strict validation is green.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the active Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so the loaded-host boundary remains red.
+  - `node --check scripts/reliability-cockpit.js && node --test tests/reliability-cockpit.test.js` -> `59/59` focused cockpit tests green.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> cockpit report contract green; `Release-history strict coverage` is green and `release-history-backfill` is absent from the operator queue.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `Launch completion blocked: 8 non-green/missing launch boundary(s), 12 non-green trust contract(s).`
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `10`, command drift `2`.
+  - `npm run check` -> strict release validation green; package validation `OK` with `166` currencies, `history points=30`, `strictHistory=on`; `245/245` tests passed.
+  - `npm run smoke:deploy` -> `OK` for `2026-05-25`, `historyPoints=30`, Cloudflare Pages `https://resplit-currency-api.pages.dev`.
+  - Post-commit source-state proof: `npm run trust:preflight` -> expected red exit `2`; `npm run source:promotion-packet` -> expected red exit `1` with stage candidates `0`, hold-by-default `9`, command drift `2`; `npm run reliability:completion-audit` -> expected red exit `2`, still `8` non-green launch boundaries and `12` non-green trust contracts.
+- Boundary: this does not reload the loaded MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It removes stale release-history noise from the GUI so the remaining red/yellow gates are the actual launch blockers.
+- Exact next slice: push this parser fix, keep `reports/` local, then reload the FirstBite MCP host and recapture `mcp__firstbite_local_ci.list_lanes` before loaded-agent execution.
+
 ## 2026-05-25 10:22 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but launch completion is now mechanically audited instead of inferred from prose.
