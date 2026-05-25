@@ -4449,6 +4449,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const operatingReadout = localCi.operatingReadout || {}
   const runnerControlPlane = localCi.runnerControlPlane || {}
   const reviewScoutProducerControlPlane = localCi.reviewScoutProducerControlPlane || {}
+  const loadedMcpBlockedBy = loadedMcpHostReloadBlocker({ loadedMcp, mcpRefreshPlan })
   const cloudflareDestinations = telemetry.cloudflare?.destinations || {}
   const grafanaEvidence = telemetry.grafana?.evidence || {}
   const actions = []
@@ -4545,8 +4546,8 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
         : 'Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.',
       evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2 and all current resplit_currency_api lanes present.',
       unblocks: 'In-app local coding agent trust',
-      canRunNow: true,
-      blockedBy: '',
+      canRunNow: !loadedMcpBlockedBy,
+      blockedBy: loadedMcpBlockedBy,
       boundary: 'local-agent-host',
     }))
   }
@@ -4684,6 +4685,24 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   }
 
   return actions.sort((a, b) => a.priority - b.priority)
+}
+
+function loadedMcpHostReloadBlocker({ loadedMcp = {}, mcpRefreshPlan = {} } = {}) {
+  if (mcpRefreshPlan.staleProcessCount > 0) {
+    return 'Requires saving work and restarting/reloading Codex/Cursor so stale loaded MCP host processes exit and re-read repo manifests.'
+  }
+
+  const summary = [
+    loadedMcp.summary,
+    loadedMcp.freshnessSummary,
+    loadedMcp.restartHint,
+  ].filter(Boolean).join(' ')
+
+  if (loadedMcp.status === 'red' && /repo missing|missing current lanes|missing .*lanes|missing \d+\/\d+ expected lane|long-lived stdio|restart Codex|restart\/reload/i.test(summary)) {
+    return 'Requires restarting/reloading Codex/Cursor; recapturing from the same loaded MCP host cannot prove the missing repo-manifest lanes.'
+  }
+
+  return ''
 }
 
 function operatorAction(row) {

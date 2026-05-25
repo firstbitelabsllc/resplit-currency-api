@@ -1,5 +1,23 @@
 # Resplit Nurse Log
 
+## 2026-05-25 11:14 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, and the loaded Codex/Cursor MCP host is now explicitly modeled as a host-reload dependency instead of a runnable same-process action.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now marks `loaded-mcp-refresh` as `canRunNow=false` when the loaded probe or refresh plan says stale long-lived MCP host processes must restart/reload before repo-manifest lanes can be trusted. The operator recovery flow now puts this under `waitingOnDependency` with a concrete Codex/Cursor reload blocker.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the current Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded-agent execution remains red.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `62/62` focused cockpit tests green.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; `loaded-mcp-refresh` is red, `canRunNow=false`, and blocked by Codex/Cursor host restart/reload.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green: `11` gate(s), `5` action(s), generated HTML sections present.
+  - `npm run check` -> strict release validation green and `248/248` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run source:promotion-packet` -> expected red exit `1`; stage candidates `2`, hold-by-default `9`, command drift `2`; index contains only the two source/test files.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `8` non-green/missing launch boundary(s), `12` non-green trust contract(s).
+- Boundary: this does not reload the loaded MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It prevents the GUI from implying the current running MCP process can repair its own stale catalog.
+- Exact next slice: commit/push this host-reload dependency hardening, rerun the read-only review scout from the final PR head, then restart/reload the FirstBite MCP host and capture fresh live loaded-host `list_lanes` proof before trusting loaded-agent execution.
+
 ## 2026-05-25 11:02 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but the coding-agent review-scout section now separates current review proof from stale/actionable scout history.
