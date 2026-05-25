@@ -18,6 +18,7 @@ const PROOF_FRESHNESS_LIMIT_MINUTES = 60
 const DEFAULT_FIRSTBITE_LOCAL_CI_DIR = path.join(os.homedir(), 'Development', 'ai-leo', 'skills', 'resplit-watch', 'mcp', 'firstbite-local-ci')
 const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
 const DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-operating-readout')
+const RESPLIT_CURRENCY_API_REPO_ENV = 'RESPLIT_CURRENCY_API_REPO'
 const FIRSTBITE_OPERATING_READOUT_FRESHNESS_LIMIT_MINUTES = 60
 const MAX_MCP_HISTORY = 8
 const MAX_AGENT_ACTIVITY_ROWS = 8
@@ -68,6 +69,7 @@ async function main(argv, options = {}) {
     : options.repoBackedMcpProbe || captureRepoBackedMcpCatalog({
       generatedAt,
       packageDir: options.repoBackedMcpPackageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
+      repoDir,
     })
   const report = buildReport({
     repoDir,
@@ -2400,6 +2402,8 @@ function buildMcpCatalogDelta({
 function captureRepoBackedMcpCatalog({
   packageDir = DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
   generatedAt = new Date().toISOString(),
+  repoDir = null,
+  execFile = execFileSync,
 } = {}) {
   if (!fs.existsSync(path.join(packageDir, 'package.json'))) {
     return {
@@ -2409,12 +2413,17 @@ function captureRepoBackedMcpCatalog({
     }
   }
 
+  const env = { ...process.env, NO_COLOR: '1' }
+  if (repoDir) {
+    env[RESPLIT_CURRENCY_API_REPO_ENV] = repoDir
+  }
+
   try {
-    const stdout = execFileSync('npm', ['run', '--silent', 'call', '--', 'list_lanes', '{}'], {
+    const stdout = execFile('npm', ['run', '--silent', 'call', '--', 'list_lanes', '{}'], {
       cwd: packageDir,
       encoding: 'utf8',
       timeout: 20000,
-      env: { ...process.env, NO_COLOR: '1' },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const parsed = parseJsonObjectFromMixedOutput(stdout)
@@ -2422,6 +2431,7 @@ function captureRepoBackedMcpCatalog({
       checkedAt: generatedAt,
       source: 'repo-backed package:list_lanes',
       command: 'npm run --silent call -- list_lanes {}',
+      repoDir: repoDir || null,
       content: parsed.content,
       isError: parsed.isError || false,
     }
@@ -2430,6 +2440,7 @@ function captureRepoBackedMcpCatalog({
       checkedAt: generatedAt,
       source: 'repo-backed package:list_lanes',
       command: 'npm run --silent call -- list_lanes {}',
+      repoDir: repoDir || null,
       error: error.message,
       stderr: error.stderr ? String(error.stderr) : '',
     }
@@ -5018,6 +5029,7 @@ module.exports = {
   buildOperatorActionQueue,
   buildOperatorRecoveryFlow,
   buildTrustContracts,
+  captureRepoBackedMcpCatalog,
   classifyEvidenceFreshness,
   classifyLoadedMcpProbeFreshness,
   computeRisks,

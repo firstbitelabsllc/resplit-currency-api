@@ -15,6 +15,7 @@ const {
   buildReport,
   buildSourcePromotionBundle,
   buildTrustContracts,
+  captureRepoBackedMcpCatalog,
   computeRisks,
   evaluateProofManifestMatch,
   evaluateMcpProofFreshness,
@@ -1078,6 +1079,38 @@ test('inspectRepoBackedMcpCatalog reports current package catalog and portabilit
   assert.equal(probe.manifestPortability.fresh_clone_ready, true)
   assert.equal(probe.manifestPortability.ready, false)
   assert.match(probe.summary, /active_ready=false/)
+})
+
+test('captureRepoBackedMcpCatalog points package probe at the selected repo dir', () => {
+  const packageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'firstbite-package-'))
+  fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({ name: 'firstbite-local-ci' }))
+  const repoDir = '/tmp/resplit-fx-worktree'
+  let seenOptions = null
+
+  const artifact = captureRepoBackedMcpCatalog({
+    packageDir,
+    repoDir,
+    generatedAt: '2026-05-25T00:00:00.000Z',
+    execFile: (_bin, _args, options) => {
+      seenOptions = options
+      return JSON.stringify({
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            catalog: { catalog_version: 'repo-manifest-v2', lane_count: 1 },
+            repos: { resplit_currency_api: { path: repoDir } },
+            lanes: { resplit_currency_api_unit: { repo: 'resplit_currency_api' } },
+          }),
+        }],
+      })
+    },
+  })
+
+  assert.equal(seenOptions.cwd, packageDir)
+  assert.equal(seenOptions.env.RESPLIT_CURRENCY_API_REPO, repoDir)
+  assert.equal(seenOptions.env.NO_COLOR, '1')
+  assert.equal(artifact.repoDir, repoDir)
+  assert.equal(JSON.parse(artifact.content[0].text).repos.resplit_currency_api.path, repoDir)
 })
 
 test('inspectRepoBackedMcpCatalog flags package catalog command failures', () => {

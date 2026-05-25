@@ -145,6 +145,7 @@ function buildCommandPlan(options = {}) {
     commandSpec('cockpit-syntax', 'Cockpit syntax', 'node', ['--check', 'scripts/reliability-cockpit.js']),
     commandSpec('preflight-syntax', 'Preflight syntax', 'node', ['--check', 'scripts/trust-preflight.js']),
     commandSpec('source-promotion-packet-syntax', 'Source promotion packet syntax', 'node', ['--check', 'scripts/source-promotion-packet.js']),
+    commandSpec('cloudflare-destinations-syntax', 'Cloudflare destinations verifier syntax', 'node', ['--check', 'scripts/verify-cloudflare-otel-destinations.js']),
     commandSpec('grafana-verifier-syntax', 'Grafana verifier syntax', 'node', ['--check', 'scripts/verify-grafana-otel-smoke.js']),
     commandSpec('loaded-mcp-capture-syntax', 'Loaded MCP capture syntax', 'node', ['--check', 'scripts/capture-loaded-mcp-probe.js']),
     commandSpec('targeted-tests', 'Targeted cockpit tests', 'node', [
@@ -152,9 +153,17 @@ function buildCommandPlan(options = {}) {
       'tests/capture-loaded-mcp-probe.test.js',
       'tests/reliability-cockpit.test.js',
       'tests/source-promotion-packet.test.js',
+      'tests/verify-cloudflare-otel-destinations.test.js',
       'tests/verify-grafana-otel-smoke.test.js',
       'tests/trust-preflight.test.js',
     ]),
+    commandSpec('cloudflare-destinations-proof', 'Cloudflare destinations proof', 'npm', [
+      'run',
+      'observability:cloudflare-destinations',
+      '--',
+      '--output',
+      path.join(DEFAULT_OUTPUT_DIR, 'cloudflare-otel-destinations.json'),
+    ], { expectedExitCodes: [0, 2], yellowExitCodes: [2] }),
     commandSpec('grafana-missing-config-proof', 'Grafana missing-config proof', 'npm', [
       'run',
       'observability:otel-smoke',

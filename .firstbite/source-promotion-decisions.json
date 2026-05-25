@@ -45,6 +45,32 @@
         "git diff origin/main -- tests/smoke-check-deploy.test.js reviewed",
         "node --test tests/smoke-check-deploy.test.js"
       ]
+    },
+    {
+      "path": "scripts/reliability-cockpit.js",
+      "decision": "accept-current",
+      "currentHash": "2fa0b598eba3",
+      "originHash": "a8fb476b07b4",
+      "reason": "Current cockpit preserves the PR branch trust-surface work and additionally points the repo-backed FirstBite package probe at the selected --repo directory, preventing stale default-checkout catalog reads from masquerading as current worktree evidence.",
+      "evidence": [
+        "git diff -- scripts/reliability-cockpit.js reviewed",
+        "git diff origin/main --stat -- scripts/reliability-cockpit.js reviewed",
+        "node --check scripts/reliability-cockpit.js",
+        "node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js tests/verify-cloudflare-otel-destinations.test.js",
+        "npm run trust:preflight -> expected red; repo-backed package green 4/4 FX lanes; loaded MCP host still missing/stale"
+      ]
+    },
+    {
+      "path": "tests/reliability-cockpit.test.js",
+      "decision": "accept-current",
+      "currentHash": "c83fe5b9975d",
+      "originHash": "80542a682a39",
+      "reason": "Current tests preserve the PR branch cockpit coverage and add a direct package-probe assertion that RESPLIT_CURRENCY_API_REPO is passed for explicit worktree verification.",
+      "evidence": [
+        "git diff -- tests/reliability-cockpit.test.js reviewed",
+        "git diff origin/main --stat -- tests/reliability-cockpit.test.js reviewed",
+        "node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js tests/verify-cloudflare-otel-destinations.test.js"
+      ]
     }
   ]
 }

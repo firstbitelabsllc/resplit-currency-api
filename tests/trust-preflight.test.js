@@ -22,13 +22,17 @@ test('parseArgs keeps fast preflight local and read-only by default', () => {
   assert.equal(options.markdownOutput, path.join('reports', 'resplit-fx-trust-preflight.md'))
 })
 
-test('buildCommandPlan treats Grafana missing-config smoke as yellow evidence', () => {
+test('buildCommandPlan treats Cloudflare and Grafana missing-config proof as yellow evidence', () => {
   const fast = buildCommandPlan({ full: false })
+  const cloudflare = fast.find(command => command.id === 'cloudflare-destinations-proof')
   const grafana = fast.find(command => command.id === 'grafana-missing-config-proof')
 
   assert.equal(fast.some(command => command.id === 'source-promotion-packet-syntax'), true)
   assert.equal(fast.some(command => command.id === 'source-promotion-packet-generate'), true)
   assert.ok(fast.find(command => command.id === 'targeted-tests').args.includes('tests/source-promotion-packet.test.js'))
+  assert.ok(fast.find(command => command.id === 'targeted-tests').args.includes('tests/verify-cloudflare-otel-destinations.test.js'))
+  assert.deepEqual(cloudflare.expectedExitCodes, [0, 2])
+  assert.deepEqual(cloudflare.yellowExitCodes, [2])
   assert.deepEqual(grafana.expectedExitCodes, [0, 2])
   assert.deepEqual(grafana.yellowExitCodes, [2])
   assert.deepEqual(fast.find(command => command.id === 'source-promotion-packet-generate').yellowExitCodes, [1])
