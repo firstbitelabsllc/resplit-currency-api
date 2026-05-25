@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 09:58 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean landed-source local-CI execution, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and the red `resplit_currency_api_trust_preflight` lane remain separate required trust contracts.
+- Shipped cross-repo delta: `ai-leo` PR #12 (`fix: harden review scout repo identity`) merged to `ai-leo/main` at `ff23db3`. The review-scout producer script now derives canonical repo identity and manifest lane keys from `.firstbite/local-ci.json`, writes ledger rows against the canonical repo path when a worktree maps back to `~/Development/<repo>`, and separates manifest-backed lanes from stale proof-only lanes.
+- Fresh proof:
+  - `bash -n skills/resplit-watch/scripts/firstbite-cursor-review.sh` in the clean `ai-leo` worktree -> green.
+  - `shellcheck skills/resplit-watch/scripts/firstbite-cursor-review.sh` in the clean `ai-leo` worktree -> green.
+  - `FIRSTBITE_CURSOR_REVIEW_RUN_ID=codex-ai-leo-narrow-producer-smoke-v2-20260525 bash skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo /Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 --no-cursor --no-ledger` -> report `/Users/leokwan/.agent-ledger/firstbite-cursor-review/codex-ai-leo-narrow-producer-smoke-v2-20260525/report.json`; `repo_name=resplit-currency-api`, `repo_basename=post-pr9-main-20260525`, `local_ci_repo_key=resplit_currency_api`, `head_sha=770f197`; local-CI repo proof remains `3/4` FX lanes pass with `resplit_currency_api_trust_preflight` failing.
+  - `git show origin/main:skills/resplit-watch/scripts/firstbite-cursor-review.sh | rg 'MANIFEST_LOCAL_CI_REPO_KEY|MANIFEST_LOCAL_CI_LANE_KEYS_JSON|LOCAL_CI_REPO_KEY|LEDGER_REPO_PATH|local_ci_repo_key'` in `ai-leo` -> all canonical producer tokens present on `origin/main`.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract`, and `Review-scout producer durability` is now green with `durableSupports=true` at `ai-leo origin/main` `ff23db3`.
+- Boundary: this removes the producer-durability gap from the FX cockpit, but it does not restart/reload the loaded MCP host, prove clean landed-source `resplit_currency_api_all`, clear the trust-preflight red lane, or prove Cloudflare/Grafana delivery. The local primary `ai-leo` checkout is still dirty/divergent, but the durable reference is `origin/main` `ff23db3`.
+- Exact next slice: rerun the review scout from the final PR head after this nurse-log commit, restart/reload Codex/Cursor FirstBite MCP host and capture `reports/firstbite-loaded-mcp-lanes.json`, then run clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 09:50 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean landed-source local-CI execution, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and review-scout producer durability remain separate required trust contracts.
