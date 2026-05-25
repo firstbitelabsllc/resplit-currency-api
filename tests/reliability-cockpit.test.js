@@ -560,13 +560,59 @@ test('assessCleanProofReadiness blocks clean launch proof when runner target is 
   })
 
   assert.equal(readiness.status, 'red')
-  assert.match(readiness.runnerContract, /registered repo HEAD/)
+  assert.match(readiness.runnerContract, /source_ref=refs\/remotes\/origin\/main/)
   assert.match(readiness.summary, /clean-proof readiness issue/)
   assert.match(readiness.nextAction, /Land or sync/)
   assert.match(readiness.commands.cleanWorktree, /"worktree":true/)
+  assert.match(readiness.commands.cleanWorktree, /"source_ref":"refs\/remotes\/origin\/main"/)
   assert.match(readiness.commands.dirtySupporting, /"worktree":false/)
   assert.ok(readiness.reasons.some(reason => reason.area === 'manifest commands' && reason.status === 'red'))
   assert.ok(readiness.reasons.some(reason => reason.area === 'current manifest proof' && reason.status === 'yellow'))
+})
+
+test('assessCleanProofReadiness trusts pinned origin/main source_ref despite dirty registered checkout', () => {
+  const readiness = assessCleanProofReadiness({
+    lanes: [
+      { id: 'resplit_currency_api_unit' },
+      { id: 'resplit_currency_api_integration' },
+      { id: 'resplit_currency_api_ui' },
+    ],
+    proof: {
+      runId: 'clean-origin-main',
+      status: 'pass',
+      requestedSourceRef: 'refs/remotes/origin/main',
+      resolvedSourceRef: 'fb37a0fed2d098cf9a015cd0d9102a794bbaadf6',
+      executionSourceState: {
+        syncStatus: 'origin_main',
+        dirtyCount: 0,
+        aheadOriginMain: 0,
+        behindOriginMain: 0,
+      },
+    },
+    proofFreshness: { status: 'green', summary: 'fresh' },
+    proofManifestMatch: { status: 'green', summary: 'commands match' },
+    diagnosticStatus: 'green',
+    trackedSource: {
+      status: 'green',
+      summary: 'tracked source contract is clean',
+    },
+    repoBackedMcpProbe: {
+      manifestPortability: {
+        fresh_clone_ready: true,
+        ready: false,
+      },
+    },
+    git: {
+      branch: 'main',
+      dirtyCount: 43,
+      behindOriginMain: 12,
+    },
+  })
+
+  assert.equal(readiness.status, 'green')
+  assert.match(readiness.summary, /clean-origin-main/)
+  assert.equal(readiness.reasons.length, 0)
+  assert.equal(readiness.selectedProof.sourceRef, 'refs/remotes/origin/main')
 })
 
 test('buildSourcePromotionBundle turns dirty cockpit source into a tracked-source checklist', () => {
@@ -1139,6 +1185,7 @@ test('findLatestMcpProofForRepo distinguishes primary checkout from execution wo
     mode: 'execute',
     created_at: '2026-05-25T00:00:00.000Z',
     overall: 'pass',
+    source_ref: 'refs/remotes/origin/main',
     lanes: [
       {
         lane: 'lane_a',
@@ -1147,6 +1194,8 @@ test('findLatestMcpProofForRepo distinguishes primary checkout from execution wo
         command: 'npm run test',
         status: 'pass',
         source_head: 'abc',
+        requested_source_ref: 'refs/remotes/origin/main',
+        resolved_source_ref: 'abcdef1234567890',
         log_path: '/tmp/a.log',
         worktree: true,
         cwd: '/tmp/firstbite-local-ci/lane_a',
@@ -1183,6 +1232,8 @@ test('findLatestMcpProofForRepo distinguishes primary checkout from execution wo
         kind: 'ui',
         status: 'pass',
         source_head: 'abc',
+        requested_source_ref: 'refs/remotes/origin/main',
+        resolved_source_ref: 'abcdef1234567890',
         log_path: '/tmp/b.log',
         worktree: true,
         cwd: '/tmp/firstbite-local-ci/lane_b',
@@ -1225,10 +1276,14 @@ test('findLatestMcpProofForRepo distinguishes primary checkout from execution wo
 
   assert.equal(proof.latest.sourceState.syncStatus, 'not_origin_main')
   assert.equal(proof.latest.sourceState.dirtyCount, 0)
+  assert.equal(proof.latest.requestedSourceRef, 'refs/remotes/origin/main')
+  assert.equal(proof.latest.resolvedSourceRef, 'abcdef1234567890')
   assert.equal(proof.latest.primarySourceState.syncStatus, 'dirty')
   assert.equal(proof.latest.primarySourceState.dirtyCount, 12)
   assert.equal(proof.latest.lanes[0].worktree, true)
+  assert.equal(proof.latest.lanes[0].requestedSourceRef, 'refs/remotes/origin/main')
   assert.equal(proof.latest.lanes[0].executionSourceState.repoPath, '/tmp/firstbite-local-ci/lane_a')
+  assert.equal(proof.history[0].requestedSourceRef, 'refs/remotes/origin/main')
   assert.equal(proof.history[0].sourceState.syncStatus, 'not_origin_main')
   assert.equal(proof.history[0].primarySourceState.syncStatus, 'dirty')
 })
@@ -1637,12 +1692,12 @@ test('buildReport surfaces newer current-manifest proof without overriding clean
   assert.equal(report.localCi.currentManifestProof.status, 'yellow')
   assert.equal(report.localCi.cleanProofReadiness.status, 'red')
   assert.equal(report.localCi.sourcePromotionBundle.status, 'red')
-  assert.match(report.localCi.cleanProofReadiness.runnerContract, /disposable detached worktrees from the registered repo HEAD/)
+  assert.match(report.localCi.cleanProofReadiness.runnerContract, /source_ref=refs\/remotes\/origin\/main/)
   assert.match(report.localCi.summary, /Newer current-manifest proof dirty-current passed/)
   assert.match(html, /Current Manifest Proof/)
   assert.match(html, /Clean Proof Readiness/)
   assert.match(html, /Source Promotion Bundle/)
-  assert.match(html, /registered repo HEAD/)
+  assert.match(html, /source_ref=refs\/remotes\/origin\/main/)
   assert.match(html, /dirty-current/)
   assert.match(html, /supporting evidence/)
 })
