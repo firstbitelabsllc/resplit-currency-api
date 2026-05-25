@@ -20,6 +20,7 @@ test('parseArgs defaults to the Resplit FX loaded MCP probe contract', () => {
   assert.deepEqual(options.expectedLaneIds, [
     'resplit_currency_api_unit',
     'resplit_currency_api_integration',
+    'resplit_currency_api_trust_preflight',
     'resplit_currency_api_ui',
   ])
 })
@@ -56,6 +57,45 @@ test('captureLoadedMcpProbe writes a normalized durable artifact from MCP conten
   assert.equal(result.probe.status, 'red')
   assert.equal(result.probe.freshnessStatus, 'green')
   assert.match(result.probe.summary, /repo missing/)
+})
+
+test('captureLoadedMcpProbe derives expected lanes from the repo manifest', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-loaded-mcp-probe-manifest-'))
+  fs.mkdirSync(path.join(repoDir, '.firstbite'), { recursive: true })
+  fs.writeFileSync(path.join(repoDir, '.firstbite', 'local-ci.json'), JSON.stringify({
+    repo: 'resplit_currency_api',
+    localCi: {
+      lanes: {
+        resplit_currency_api_unit: { kind: 'unit' },
+        resplit_currency_api_integration: { kind: 'integration' },
+        resplit_currency_api_trust_preflight: { kind: 'integration' },
+        resplit_currency_api_ui: { kind: 'ui' },
+      },
+    },
+  }, null, 2))
+  const stdin = JSON.stringify([{
+    type: 'text',
+    text: JSON.stringify({
+      repos: {
+        resplit_currency_api: { path: repoDir },
+      },
+      lanes: {
+        resplit_currency_api_unit: { repo: 'resplit_currency_api', kind: 'unit' },
+        resplit_currency_api_integration: { repo: 'resplit_currency_api', kind: 'integration' },
+        resplit_currency_api_ui: { repo: 'resplit_currency_api', kind: 'ui' },
+      },
+    }),
+  }])
+
+  const result = captureLoadedMcpProbe(['--repo', repoDir], {
+    stdin,
+    now: () => '2026-05-25T06:10:00.000Z',
+  })
+
+  assert.equal(result.expectedContract.source, '.firstbite/local-ci.json')
+  assert.equal(result.probe.status, 'red')
+  assert.deepEqual(result.probe.missingLaneIds, ['resplit_currency_api_trust_preflight'])
+  assert.match(result.probe.summary, /missing current lanes/)
 })
 
 test('captureLoadedMcpProbe can refresh a previous artifact without claiming host reload proof', () => {

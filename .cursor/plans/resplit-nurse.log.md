@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 07:46 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, and Grafana Tempo/Loki proof remain separate required trust contracts.
+- Shipped delta pending source promotion: `npm run mcp:loaded-probe` now derives the expected repo and lane IDs from `.firstbite/local-ci.json` before evaluating a loaded Codex/Cursor MCP `list_lanes` capture. The old hardcoded three-lane default is no longer enough to make a probe look current; a loaded host that sees unit/integration/ui but misses `resplit_currency_api_trust_preflight` stays red.
+- Fresh proof:
+  - Live loaded `mcp__firstbite_local_ci.list_lanes` still lists only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded MCP host trust remains unproven until restart/reload plus captured artifact.
+  - `node --check scripts/capture-loaded-mcp-probe.js` -> green.
+  - `node --test tests/capture-loaded-mcp-probe.test.js` -> `5/5` probe tests green, including manifest-derived expected-lane coverage.
+  - `node --test tests/reliability-cockpit.test.js` -> `53/53` focused cockpit tests green.
+  - `npm run mcp:loaded-probe -- --help` -> documents that `.firstbite/local-ci.json` is the default expected contract and `--reuse-existing` is freshness-only, not reload proof.
+  - `npm run check` -> strict release validation green and `230/230` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract`.
+- Boundary: this fixes the loaded-host capture path so it follows the repo manifest, but it still does not prove the loaded in-app MCP host, a clean landed `resplit_currency_api_all` run, Cloudflare destination existence, or Grafana Tempo/Loki delivery. The local `ai-leo` checkout already has unrelated dirty changes including `skills/local-ci/SKILL.md`, so this slice did not mix cross-repo skill edits into that state.
+- Exact next slice: source-promote this PR bundle, restart/reload Codex/Cursor FirstBite MCP host, capture `reports/firstbite-loaded-mcp-lanes.json` from live `list_lanes`, then run clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 07:39 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, and Grafana Tempo/Loki proof remain separate required trust contracts.

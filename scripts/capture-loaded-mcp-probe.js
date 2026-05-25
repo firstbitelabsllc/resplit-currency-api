@@ -16,6 +16,7 @@ const REUSE_EXISTING_NOTE = 'Reused the previous loaded-host probe payload to re
 const DEFAULT_EXPECTED_LANE_IDS = [
   'resplit_currency_api_unit',
   'resplit_currency_api_integration',
+  'resplit_currency_api_trust_preflight',
   'resplit_currency_api_ui',
 ]
 
@@ -26,6 +27,7 @@ if (require.main === module) {
       process.stdout.write(helpText())
     } else {
       process.stdout.write(`loaded-mcp-probe: wrote ${result.outputPath}\n`)
+      process.stdout.write(`loaded-mcp-probe: expected ${result.expectedContract.expectedRepo} ${result.expectedContract.expectedLaneIds.length} lane(s) from ${result.expectedContract.source}\n`)
       process.stdout.write(`loaded-mcp-probe: ${result.probe.status} ${result.probe.summary}\n`)
       process.stdout.write(`loaded-mcp-probe: freshness ${result.probe.freshnessStatus} ${result.probe.freshnessSummary}\n`)
     }
@@ -43,6 +45,7 @@ function captureLoadedMcpProbe(argv, deps = {}) {
 
   const repoDir = path.resolve(options.repoDir || process.cwd())
   const outputPath = path.resolve(repoDir, options.output)
+  const expectedContract = resolveExpectedContract({ repoDir, options })
   const input = resolveInputText({ options, repoDir, outputPath, deps })
   const parsed = parsePayloadText(input.text)
   const payload = normalizeLoadedMcpPayload(wrapMcpToolResult(parsed))
@@ -66,12 +69,12 @@ function captureLoadedMcpProbe(argv, deps = {}) {
   writeJson(outputPath, artifact)
   const probe = inspectLoadedMcpProbe({
     probePath: outputPath,
-    expectedRepo: options.expectedRepo,
-    expectedLaneIds: options.expectedLaneIds,
+    expectedRepo: expectedContract.expectedRepo,
+    expectedLaneIds: expectedContract.expectedLaneIds,
     generatedAt: artifact.checkedAt,
   })
 
-  return { options, outputPath, artifact, probe }
+  return { options, outputPath, artifact, probe, expectedContract }
 }
 
 function parseArgs(argv) {
@@ -84,6 +87,8 @@ function parseArgs(argv) {
     note: DEFAULT_NOTE,
     expectedRepo: DEFAULT_EXPECTED_REPO,
     expectedLaneIds: DEFAULT_EXPECTED_LANE_IDS,
+    expectedRepoExplicit: false,
+    expectedLanesExplicit: false,
     help: false,
   }
 
@@ -119,6 +124,7 @@ function parseArgs(argv) {
       break
     case '--expected-repo':
       options.expectedRepo = requireValue(argv, index, arg)
+      options.expectedRepoExplicit = true
       index += 1
       break
     case '--expected-lanes':
@@ -126,6 +132,7 @@ function parseArgs(argv) {
         .split(',')
         .map(value => value.trim())
         .filter(Boolean)
+      options.expectedLanesExplicit = true
       index += 1
       break
     default:
@@ -134,6 +141,25 @@ function parseArgs(argv) {
   }
 
   return options
+}
+
+function resolveExpectedContract({ repoDir, options }) {
+  const manifest = readJsonIfExists(path.join(repoDir, '.firstbite', 'local-ci.json'))
+  const manifestRepo = typeof manifest?.repo === 'string' ? manifest.repo : null
+  const manifestLaneIds = Object.keys(manifest?.localCi?.lanes || {}).sort()
+  return {
+    expectedRepo: options.expectedRepoExplicit ? options.expectedRepo : (manifestRepo || options.expectedRepo),
+    expectedLaneIds: options.expectedLanesExplicit ? options.expectedLaneIds : (manifestLaneIds.length > 0 ? manifestLaneIds : options.expectedLaneIds),
+    source: manifestLaneIds.length > 0 ? '.firstbite/local-ci.json' : 'fallback-defaults',
+  }
+}
+
+function readJsonIfExists(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  } catch {
+    return null
+  }
 }
 
 function resolveInputText({ options, repoDir, outputPath, deps = {} }) {
@@ -239,6 +265,7 @@ function helpText() {
     '',
     'Captures the live loaded-host mcp__firstbite_local_ci.list_lanes output into a durable probe artifact for the reliability cockpit.',
     'Pipe the JSON object or text-content array returned by the MCP tool into stdin, or pass --input with a saved payload.',
+    'By default, expected repo and lane IDs are read from .firstbite/local-ci.json; --expected-repo and --expected-lanes override that contract.',
     '',
     'Examples:',
     '  mcp__firstbite_local_ci.list_lanes > /tmp/firstbite-loaded-mcp.json',
