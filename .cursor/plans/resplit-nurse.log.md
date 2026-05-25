@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 07:59 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and coding-agent review-scout freshness remain separate required trust contracts.
+- Shipped delta pending source promotion: the reliability cockpit now ingests `~/.agent-ledger/firstbite-cursor-review/*/report.json` as a first-class `Coding-agent review scout` contract, evidence-freshness row, launch-audit input, operator action, and HTML section. It compares the scout packet branch/head against the current checkout and demotes no-Cursor `actionable=true` packets with no finding payload to yellow advisory evidence instead of treating them as current review proof.
+- Fresh proof:
+  - Latest review-scout packet selected by the cockpit: `/Users/leokwan/.agent-ledger/firstbite-cursor-review/verify-continuation-full-20260525-review-scout-resplit_currency_api/report.json`; packet is yellow because it is for `main` `16f7d4e`, not current PR head `codex/fx-otel-grafana-config-20260525` `1ffcfb3e8d28`, Cursor did not run, and `actionable=true` has no finding payload. The same packet still records repo local-CI `3/4` pass with `resplit_currency_api_trust_preflight` failing, so it stays visible as background evidence only.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `54/54` focused cockpit tests green, including non-current packet-only review-scout regression.
+  - `npm run check` -> strict release validation green and `231/231` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract` and now includes `coding-agent-review-scout` in the Operator Action Queue.
+- Boundary: this improves trust labeling for local coding-agent review packets; it does not prove the loaded in-app MCP host, a current-checkout review scout, a clean landed `resplit_currency_api_all` run, Cloudflare destination existence, or Grafana Tempo/Loki delivery.
+- Exact next slice: rerun the read-only review scout from the current PR checkout, source-promote this PR bundle, restart/reload Codex/Cursor FirstBite MCP host, capture `reports/firstbite-loaded-mcp-lanes.json` from live `list_lanes`, then run clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 07:46 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, and Grafana Tempo/Loki proof remain separate required trust contracts.

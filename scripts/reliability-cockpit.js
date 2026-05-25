@@ -23,9 +23,11 @@ const FIRSTBITE_WARN_EXIT_BRANCH_REF = 'origin/codex/firstbite-mcp-warn-exits-20
 const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
 const DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-operating-readout')
 const DEFAULT_FIRSTBITE_MCP_REFRESH_PLAN_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-mcp-refresh-plan')
+const DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-cursor-review')
 const RESPLIT_CURRENCY_API_REPO_ENV = 'RESPLIT_CURRENCY_API_REPO'
 const FIRSTBITE_OPERATING_READOUT_FRESHNESS_LIMIT_MINUTES = 60
 const FIRSTBITE_MCP_REFRESH_PLAN_FRESHNESS_LIMIT_MINUTES = 60
+const FIRSTBITE_CURSOR_REVIEW_FRESHNESS_LIMIT_MINUTES = 60
 const MAX_MCP_HISTORY = 8
 const MAX_AGENT_ACTIVITY_ROWS = 8
 const SOURCE_PROMOTION_REQUIRED_PATHS = [
@@ -177,6 +179,7 @@ function buildReport({
   aiLeoRepoDir,
   operatingReadoutRoot,
   mcpRefreshPlanRoot,
+  cursorReviewRoot,
   sharedLedgerPath,
 } = {}) {
   const manifestPath = path.join(repoDir, '.firstbite', 'local-ci.json')
@@ -199,6 +202,7 @@ function buildReport({
     repoName: packageJson?.name || path.basename(repoDir),
     generatedAt,
   })
+  const git = gitState || getGitState(repoDir)
   const mcpProof = findLatestMcpProofForRepo({
     repoDir,
     repoKey: manifest?.repo,
@@ -239,7 +243,14 @@ function buildReport({
     aiLeoRepoDir: aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR,
     packageDir: repoBackedMcpPackageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
   })
-  const git = gitState || getGitState(repoDir)
+  const reviewScout = inspectFirstBiteCursorReviewScout({
+    reportRoot: cursorReviewRoot || DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR,
+    expectedRepo: manifest?.repo,
+    repoName: packageJson?.name || path.basename(repoDir),
+    repoDir,
+    git,
+    generatedAt,
+  })
 
   const localCi = inspectLocalCiManifest(manifest, manifestPath, mcpProof, generatedAt, loadedMcpProbe, trackedSource, repoBackedMcpCatalog, git)
   localCi.operatingReadout = operatingReadout
@@ -266,6 +277,7 @@ function buildReport({
     nurseLog,
     inbox,
     ledger,
+    reviewScout,
   })
   const contracts = buildTrustContracts({
     git,
@@ -273,6 +285,7 @@ function buildReport({
     telemetry,
     nurseLog,
     ledger,
+    reviewScout,
   })
   const operatorActions = buildOperatorActionQueue({
     localCi,
@@ -280,6 +293,7 @@ function buildReport({
     nurseLog,
     inbox,
     ledger,
+    reviewScout,
     contracts,
   })
   const operatorRecoveryFlow = buildOperatorRecoveryFlow(operatorActions)
@@ -289,6 +303,7 @@ function buildReport({
     localCi,
     telemetry,
     preflight,
+    reviewScout,
   })
   const launchTrustAudit = buildLaunchTrustAudit({
     contracts,
@@ -296,6 +311,7 @@ function buildReport({
     telemetry,
     nurseLog,
     ledger,
+    reviewScout,
   })
 
   return {
@@ -314,6 +330,7 @@ function buildReport({
       nurseLog,
       inbox,
       ledger,
+      reviewScout,
     },
     trustModel: {
       principles: [
@@ -1303,6 +1320,277 @@ function inspectFirstBiteMcpRefreshPlan({
       : staleProcessCount > 0
         ? 'Save work and restart/reload Codex/Cursor, then rerun the refresh plan and capture live loaded-host list_lanes output.'
         : 'Rerun the read-only refresh plan and inspect repo-backed catalog availability before loaded-host MCP claims.',
+  }
+}
+
+function inspectFirstBiteCursorReviewScout({
+  reportRoot = DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR,
+  expectedRepo = null,
+  repoName = null,
+  repoDir = null,
+  git = {},
+  generatedAt = new Date().toISOString(),
+} = {}) {
+  const command = repoDir
+    ? `bash ~/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo ${repoDir} --no-cursor`
+    : 'bash ~/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo <repo> --no-cursor'
+  const missing = {
+    status: 'missing',
+    reportRoot,
+    reportPath: null,
+    reviewPath: null,
+    reviewPacketPath: null,
+    localCiProofPath: null,
+    runId: null,
+    createdAt: null,
+    ageMinutes: null,
+    searchedReports: 0,
+    expectedRepo,
+    repoName,
+    branch: null,
+    headSha: null,
+    currentBranch: git?.branch || null,
+    currentHead: git?.head || null,
+    currentForCheckout: null,
+    cursorReviewRan: false,
+    actionableClaimed: false,
+    hasSubstantiveFindings: false,
+    localCi: null,
+    failedLanes: [],
+    summary: 'No FirstBite Cursor/Graphite review scout packet was found for this repo.',
+    nextAction: 'Run the read-only no-Cursor review scout before using Cursor/Graphite packet history as local-agent review evidence.',
+    command,
+  }
+  if (!fs.existsSync(reportRoot)) {
+    return missing
+  }
+
+  const allReports = fs.readdirSync(reportRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const reportPath = path.join(reportRoot, entry.name, 'report.json')
+      if (!fs.existsSync(reportPath)) {
+        return null
+      }
+      const stat = fs.statSync(reportPath)
+      let data = null
+      let parseError = null
+      try {
+        data = readJsonIfExists(reportPath)
+      } catch (error) {
+        parseError = error
+      }
+      return {
+        runId: entry.name,
+        reportPath,
+        runDir: path.join(reportRoot, entry.name),
+        mtimeMs: stat.mtimeMs,
+        data,
+        parseError,
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+  const reports = allReports.filter(report => matchesCursorReviewScoutRepo(report, { expectedRepo, repoName, repoDir }))
+
+  if (reports.length === 0) {
+    return {
+      ...missing,
+      searchedReports: allReports.length,
+    }
+  }
+
+  const latest = reports[0]
+  if (latest.parseError || !latest.data) {
+    return {
+      ...missing,
+      status: 'yellow',
+      reportPath: latest.reportPath,
+      runId: latest.runId,
+      searchedReports: reports.length,
+      summary: `Latest FirstBite Cursor/Graphite review scout packet could not be parsed: ${latest.reportPath}.`,
+      nextAction: 'Rerun the no-Cursor review scout to replace the malformed packet before using review-scout evidence.',
+    }
+  }
+
+  const data = latest.data
+  const createdAt = data.created_at || data.createdAt || null
+  const ageMinutes = ageMinutesBetween(createdAt, generatedAt)
+  const stale = ageMinutes === null || ageMinutes > FIRSTBITE_CURSOR_REVIEW_FRESHNESS_LIMIT_MINUTES
+  const branch = data.branch || null
+  const headSha = data.head_sha || data.head || null
+  const branchMatches = compareOptionalStrings(branch, git?.branch)
+  const headMatches = compareGitHeads(headSha, git?.head)
+  const currentForCheckout = branchMatches === false || headMatches === false
+    ? false
+    : branchMatches === true || headMatches === true
+      ? true
+      : null
+  const cursorReviewRan = Boolean(Number(data.run_cursor)) || data.run_cursor === true || data.run_cursor === 'true'
+  const actionableClaimed = data.actionable === true || data.actionable === 'true'
+  const substantive = summarizeReviewScoutSubstance(data)
+  const localCi = data.local_ci || {}
+  const lanes = Array.isArray(localCi.lanes) ? localCi.lanes : []
+  const failedLanes = lanes
+    .filter(lane => lane.status && lane.status !== 'pass')
+    .map(lane => ({
+      lane: lane.lane || 'unknown',
+      repo: lane.repo || null,
+      kind: lane.kind || null,
+      status: lane.status || 'unknown',
+      runId: lane.run_id || null,
+      reportPath: lane.report_path || null,
+      logPath: lane.log_path || null,
+    }))
+  const repoLaneCount = numberOrNull(localCi.repo_lane_count) ?? lanes.length
+  const repoLanePassCount = numberOrNull(localCi.repo_lane_pass_count) ?? lanes.filter(lane => lane.status === 'pass').length
+  const repoLaneFailCount = numberOrNull(localCi.repo_lane_fail_count) ?? failedLanes.length
+  const currentActionable = actionableClaimed && substantive.hasSubstantiveFindings && currentForCheckout !== false
+  const status = currentActionable
+    ? 'red'
+    : currentForCheckout === false
+      || stale
+      || !cursorReviewRan
+      || (actionableClaimed && !substantive.hasSubstantiveFindings)
+      || repoLaneFailCount > 0
+      ? 'yellow'
+      : 'green'
+  const reviewPath = data.artifacts?.review || path.join(latest.runDir, 'review.md')
+  const reviewPacketPath = data.artifacts?.review_packet || path.join(latest.runDir, 'review-packet.md')
+  const localCiProofPath = path.join(latest.runDir, 'local-ci-repo-proof.json')
+  const mode = cursorReviewRan
+    ? `Cursor ${data.cursor_current_model || data.cursor_model || 'model unknown'}`
+    : 'no-Cursor packet'
+  const currentSummary = currentForCheckout === false
+    ? `not current for checkout (${branch || 'unknown'} ${headSha || 'unknown'} vs ${git?.branch || 'unknown'} ${git?.head || 'unknown'})`
+    : currentForCheckout === true
+      ? 'matches the current checkout'
+      : 'current-checkout match unknown'
+  const ciSummary = repoLaneCount > 0
+    ? `${repoLanePassCount}/${repoLaneCount} repo lane(s) pass${repoLaneFailCount > 0 ? `, ${repoLaneFailCount} fail` : ''}`
+    : 'repo lane proof missing'
+  const actionabilitySummary = actionableClaimed
+    ? substantive.hasSubstantiveFindings ? 'actionable finding payload present' : 'actionable=true without finding payload'
+    : 'no actionable flag'
+  const summary = `FirstBite Cursor/Graphite review scout ${mode}: ${currentSummary}; ${ciSummary}; ${actionabilitySummary}.`
+
+  return {
+    status,
+    reportRoot,
+    reportPath: latest.reportPath,
+    reviewPath: fs.existsSync(reviewPath) ? reviewPath : null,
+    reviewPacketPath: fs.existsSync(reviewPacketPath) ? reviewPacketPath : null,
+    localCiProofPath: fs.existsSync(localCiProofPath) ? localCiProofPath : null,
+    runId: data.run_id || latest.runId,
+    createdAt,
+    ageMinutes,
+    freshnessLimitMinutes: FIRSTBITE_CURSOR_REVIEW_FRESHNESS_LIMIT_MINUTES,
+    searchedReports: reports.length,
+    expectedRepo,
+    repoName: data.repo_name || repoName || null,
+    repoPath: data.repo || null,
+    branch,
+    headSha,
+    currentBranch: git?.branch || null,
+    currentHead: git?.head || null,
+    currentForCheckout,
+    branchMatches,
+    headMatches,
+    cursorReviewRan,
+    cursorMode: data.cursor_mode || null,
+    cursorWorkspaceMode: data.cursor_workspace_mode || null,
+    cursorModel: data.cursor_model || null,
+    cursorCurrentModel: data.cursor_current_model || null,
+    actionableClaimed,
+    hasSubstantiveFindings: substantive.hasSubstantiveFindings,
+    findingCount: substantive.findingCount,
+    fileCount: substantive.fileCount,
+    localCi: {
+      repoName: localCi.repo_name || null,
+      repoKey: localCi.local_ci_repo_key || null,
+      repoLaneCount,
+      repoLanePassCount,
+      repoLaneFailCount,
+      latestLaneCount: numberOrNull(localCi.latest_lane_count),
+      latestLanePassCount: numberOrNull(localCi.latest_lane_pass_count),
+      latestLaneFailCount: numberOrNull(localCi.latest_lane_fail_count),
+    },
+    failedLanes,
+    summary,
+    nextAction: status === 'red'
+      ? 'Review the current actionable scout findings before treating local coding-agent review as clean.'
+      : currentForCheckout === false
+        ? 'Rerun the read-only review scout from the current checkout and compare its repo-scoped local-CI proof before using it as current evidence.'
+        : !cursorReviewRan
+          ? 'Treat this as a packet-only scout; run the optional Cursor sidecar only when a spendful read-only model pass is worth it.'
+          : repoLaneFailCount > 0
+            ? 'Inspect the failed repo lane proof referenced by the review scout and rerun the affected FirstBite lane from current source.'
+            : stale
+              ? 'Refresh the review scout packet before using it as agent-review evidence.'
+              : 'Keep the review scout fresh; it is advisory beside local-CI and launch proof.',
+    command,
+  }
+}
+
+function matchesCursorReviewScoutRepo(report, { expectedRepo, repoName, repoDir } = {}) {
+  const data = report.data
+  const runId = report.runId || ''
+  if (!data) {
+    return Boolean(expectedRepo && runId.includes(expectedRepo))
+      || Boolean(repoName && runId.includes(repoName))
+  }
+  const normalizedRepoDir = repoDir ? path.resolve(repoDir) : null
+  const reportedRepoDir = data.repo ? path.resolve(String(data.repo)) : null
+  return Boolean(expectedRepo && (
+    data.local_ci?.local_ci_repo_key === expectedRepo
+      || runId.includes(expectedRepo)
+  ))
+    || Boolean(repoName && (
+      data.repo_name === repoName
+        || path.basename(String(data.repo || '')) === repoName
+        || runId.includes(repoName)
+    ))
+    || Boolean(normalizedRepoDir && reportedRepoDir && normalizedRepoDir === reportedRepoDir)
+}
+
+function compareOptionalStrings(left, right) {
+  if (!left || !right) {
+    return null
+  }
+  return String(left) === String(right)
+}
+
+function compareGitHeads(left, right) {
+  if (!left || !right) {
+    return null
+  }
+  const leftText = String(left)
+  const rightText = String(right)
+  return leftText.startsWith(rightText) || rightText.startsWith(leftText)
+}
+
+function summarizeReviewScoutSubstance(data) {
+  const findings = data.findings
+  const files = data.files
+  const findingCount = Array.isArray(findings)
+    ? findings.length
+    : findings && typeof findings === 'object'
+      ? Object.keys(findings).length
+      : typeof findings === 'string' && findings.trim()
+        ? 1
+        : 0
+  const fileCount = Array.isArray(files)
+    ? files.length
+    : files && typeof files === 'object'
+      ? Object.keys(files).length
+      : typeof files === 'string' && files.trim()
+        ? 1
+        : 0
+  const hasText = [data.summary, data.proof].some(value => typeof value === 'string' && value.trim().length > 0)
+  return {
+    findingCount,
+    fileCount,
+    hasSubstantiveFindings: hasText || findingCount > 0 || fileCount > 0,
   }
 }
 
@@ -3419,7 +3707,7 @@ function summarizeLaneStatuses(lanes) {
   return 'unknown'
 }
 
-function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger }) {
+function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger, reviewScout }) {
   const risks = []
 
   if (git?.dirtyCount > 0) {
@@ -3562,6 +3850,14 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger }) {
     })
   }
 
+  if (reviewScout?.status && reviewScout.status !== 'green' && reviewScout.status !== 'missing') {
+    risks.push({
+      status: reviewScout.status,
+      label: 'Coding-agent review scout gap',
+      detail: reviewScout.summary,
+    })
+  }
+
   if (nurseLog.releaseReadiness === 'yellow') {
     risks.push({
       status: 'yellow',
@@ -3589,7 +3885,7 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger }) {
   return risks
 }
 
-function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
+function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, reviewScout }) {
   const proof = localCi?.mcpProof?.latest
   const evidence = telemetry?.grafana?.evidence
   const cloudflareDestinations = telemetry?.cloudflare?.destinations
@@ -3733,12 +4029,19 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
         ? 'Continue append-only handoffs; repair stale failures only with scoped later evidence.'
         : 'Resolve unrecovered ledger failure rows before using agent history as trust evidence.',
     },
+    {
+      gate: 'Coding-agent review scout',
+      status: reviewScout?.status === 'missing' ? 'yellow' : reviewScout?.status || 'yellow',
+      current: reviewScout?.summary || 'Cursor/Graphite review scout was not inspected.',
+      proof: reviewScout?.reportPath || path.join(DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR, '<run-id>', 'report.json'),
+      nextAction: reviewScout?.nextAction || 'Run the read-only no-Cursor review scout before using coding-agent review history as trust evidence.',
+    },
   )
 
   return contracts
 }
 
-function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {}, inbox = {}, ledger = {}, contracts = [] } = {}) {
+function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {}, inbox = {}, ledger = {}, reviewScout = {}, contracts = [] } = {}) {
   const byGate = new Map((contracts || []).map(contract => [contract.gate, contract]))
   const sourcePromotion = localCi.sourcePromotionBundle || {}
   const cleanProof = localCi.cleanProofReadiness || {}
@@ -3925,6 +4228,24 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
     }))
   }
 
+  if (contractNeedsAction(byGate.get('Coding-agent review scout'))) {
+    actions.push(operatorAction({
+      id: 'coding-agent-review-scout',
+      priority: 7,
+      owner: 'Cursor/Graphite review scout',
+      gate: 'Coding-agent review scout',
+      status: byGate.get('Coding-agent review scout')?.status || reviewScout.status || 'yellow',
+      proof: reviewScout.reportPath || '~/.agent-ledger/firstbite-cursor-review/<run-id>/report.json',
+      command: reviewScout.command || 'bash ~/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo <repo> --no-cursor',
+      blocker: reviewScout.summary || byGate.get('Coding-agent review scout')?.current || 'Review scout packet is missing or not current.',
+      nextAction: byGate.get('Coding-agent review scout')?.nextAction || reviewScout.nextAction || 'Refresh the review scout packet from the current checkout.',
+      evidenceRequired: 'A fresh review scout packet whose branch/head matches the current checkout, with explicit no-Cursor or Cursor-sidecar status and repo-scoped local-CI proof paths.',
+      unblocks: 'Local coding-agent review trust',
+      canRunNow: true,
+      boundary: 'local-agent-review',
+    }))
+  }
+
   if (ledger?.health?.status === 'red') {
     actions.push(operatorAction({
       id: 'ledger-health-repair',
@@ -4015,6 +4336,7 @@ function buildEvidenceFreshnessLedger({
   localCi = {},
   telemetry = {},
   preflight = null,
+  reviewScout = null,
 } = {}) {
   const sourcePacketPath = path.join(repoDir || '', DEFAULT_OUTPUT_DIR, SOURCE_PROMOTION_PACKET_BASENAME)
   const sourcePacket = readJsonIfExists(sourcePacketPath)
@@ -4149,6 +4471,20 @@ function buildEvidenceFreshnessLedger({
       missingStatus: 'red',
       missingSummary: 'FirstBite operating readout proof is missing.',
     }),
+    buildEvidenceFreshnessRow({
+      id: 'coding-agent-review-scout',
+      surface: 'Coding-agent review scout',
+      artifact: reviewScout?.reportPath || reviewScout?.reportRoot || DEFAULT_FIRSTBITE_CURSOR_REVIEW_DIR,
+      secondaryArtifact: reviewScout?.reviewPath || reviewScout?.reviewPacketPath || null,
+      checkedAt: reviewScout?.createdAt || null,
+      ageMinutes: reviewScout?.ageMinutes ?? ageMinutesBetween(reviewScout?.createdAt || null, generatedAt),
+      trustStatus: reviewScout?.status || 'missing',
+      summary: reviewScout?.summary || 'No FirstBite Cursor/Graphite review scout packet was found.',
+      nextAction: reviewScout?.command || 'bash ~/Development/ai-leo/skills/resplit-watch/scripts/firstbite-cursor-review.sh --repo <repo> --no-cursor',
+      freshForMinutes: FIRSTBITE_CURSOR_REVIEW_FRESHNESS_LIMIT_MINUTES,
+      missingStatus: 'yellow',
+      missingSummary: 'Coding-agent review scout proof is missing.',
+    }),
   ]
 
   const status = worstStatus(rows.map(row => row.freshnessStatus))
@@ -4163,7 +4499,7 @@ function buildEvidenceFreshnessLedger({
   }
 }
 
-function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, nurseLog = {}, ledger = {} } = {}) {
+function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, nurseLog = {}, ledger = {}, reviewScout = {} } = {}) {
   const byGate = new Map((contracts || []).map(contract => [contract.gate, contract]))
   const rows = [
     trustAuditRow({
@@ -4319,6 +4655,7 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
       status: worstStatus([
         byGate.get('FirstBite operating readout')?.status,
         byGate.get('Agent ledger health')?.status,
+        byGate.get('Coding-agent review scout')?.status,
         ledger?.health?.status,
       ]),
       allowedWhenGreen: 'Recent ledger and operating-readout evidence can be used as coordination context for the local agent fleet.',
@@ -4326,12 +4663,14 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
       evidence: joinEvidence([
         byGate.get('FirstBite operating readout')?.proof,
         byGate.get('Agent ledger health')?.proof,
+        byGate.get('Coding-agent review scout')?.proof,
       ]),
       gap: joinEvidence([
         byGate.get('FirstBite operating readout')?.current,
         byGate.get('Agent ledger health')?.current,
+        byGate.get('Coding-agent review scout')?.current,
       ]),
-      nextAction: byGate.get('FirstBite operating readout')?.nextAction || byGate.get('Agent ledger health')?.nextAction || 'Run fleet health and operating readout before broad launch claims.',
+      nextAction: byGate.get('FirstBite operating readout')?.nextAction || byGate.get('Coding-agent review scout')?.nextAction || reviewScout?.nextAction || byGate.get('Agent ledger health')?.nextAction || 'Run fleet health and operating readout before broad launch claims.',
     }),
   ]
 
@@ -5399,6 +5738,7 @@ function renderAgentState(agentState) {
   const sharedLedger = agentState.ledger.shared || { status: 'unknown', recentEntries: [] }
   const ledgerHealth = agentState.ledger.health || { status: 'unknown', summary: 'Ledger health was not computed.', failureRows: [], recoveryRows: [] }
   const activityMatrix = agentState.ledger.activityMatrix || []
+  const reviewScout = agentState.reviewScout || {}
   const latestShared = sharedLedger.recentEntries?.at(-1)
   const latestFailure = ledgerHealth.latestFailure || ledgerHealth.failureRows?.at?.(-1)
   const latestRecovery = ledgerHealth.latestRecovery || ledgerHealth.recoveryRows?.at?.(-1)
@@ -5425,9 +5765,45 @@ function renderAgentState(agentState) {
       <div>Latest failure</div><div>${latestFailure ? `${escapeHtml(latestFailure.ts || 'unknown')} · ${escapeHtml(latestFailure.summary || 'no summary')}` : 'none in window'}</div>
       <div>Latest recovery</div><div>${latestRecovery ? `${escapeHtml(latestRecovery.ts || 'unknown')} · ${escapeHtml(latestRecovery.summary || 'no summary')}` : 'none in window'}</div>
       <div>Latest shared</div><div>${escapeHtml(latestShared?.summary || 'none recorded')}</div>
+      <div>Review scout</div><div><span class="${escapeHtml(reviewScout.status || 'yellow')}">${escapeHtml(reviewScout.status || 'unknown')}</span> ${escapeHtml(reviewScout.summary || 'not inspected')}</div>
     </div>
   </section>
+  ${renderReviewScout(reviewScout)}
   ${renderAgentActivityMatrix(activityMatrix)}`
+}
+
+function renderReviewScout(reviewScout = {}) {
+  const failedLanes = reviewScout.failedLanes || []
+  const checked = reviewScout.createdAt
+    ? `${reviewScout.createdAt}${reviewScout.ageMinutes === null ? '' : ` (${escapeHtml(String(reviewScout.ageMinutes))}m old)`}`
+    : 'missing'
+  const checkout = reviewScout.currentForCheckout === true
+    ? 'current'
+    : reviewScout.currentForCheckout === false
+      ? 'not current'
+      : 'unknown'
+  return `<section>
+    <h2>Coding-Agent Review Scout</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${escapeHtml(reviewScout.status || 'yellow')}">${escapeHtml(reviewScout.status || 'unknown')}</span> ${escapeHtml(reviewScout.summary || '')}</div>
+      <div>Run</div><div><code>${escapeHtml(reviewScout.runId || 'missing')}</code></div>
+      <div>Checked</div><div>${escapeHtml(checked)}</div>
+      <div>Checkout match</div><div>${escapeHtml(checkout)} · packet <code>${escapeHtml(reviewScout.branch || 'unknown')}</code> <code>${escapeHtml(reviewScout.headSha || 'unknown')}</code> / current <code>${escapeHtml(reviewScout.currentBranch || 'unknown')}</code> <code>${escapeHtml(reviewScout.currentHead || 'unknown')}</code></div>
+      <div>Cursor sidecar</div><div>${reviewScout.cursorReviewRan ? 'ran' : 'not run'} · ${escapeHtml(reviewScout.cursorCurrentModel || reviewScout.cursorModel || 'model unknown')}</div>
+      <div>Actionable payload</div><div>${reviewScout.actionableClaimed ? 'claimed' : 'not claimed'} · findings ${escapeHtml(String(reviewScout.findingCount ?? 0))} · files ${escapeHtml(String(reviewScout.fileCount ?? 0))}</div>
+      <div>Repo lanes</div><div>${escapeHtml(String(reviewScout.localCi?.repoLanePassCount ?? 'unknown'))}/${escapeHtml(String(reviewScout.localCi?.repoLaneCount ?? 'unknown'))} pass · ${escapeHtml(String(reviewScout.localCi?.repoLaneFailCount ?? 'unknown'))} fail</div>
+      <div>Report</div><div><code>${escapeHtml(reviewScout.reportPath || 'missing')}</code></div>
+      <div>Review</div><div><code>${escapeHtml(reviewScout.reviewPath || 'missing')}</code></div>
+      <div>Local-CI proof</div><div><code>${escapeHtml(reviewScout.localCiProofPath || 'missing')}</code></div>
+      <div>Next action</div><div>${escapeHtml(reviewScout.nextAction || '')}</div>
+    </div>
+    <table>
+      <thead><tr><th>Lane</th><th>Status</th><th>Run</th><th>Report</th><th>Log</th></tr></thead>
+      <tbody>
+        ${failedLanes.length === 0 ? '<tr><td colspan="5">No failed repo lanes in the latest review scout packet.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.reportPath || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
+      </tbody>
+    </table>
+  </section>`
 }
 
 function renderAgentActivityMatrix(rows = []) {
@@ -5588,6 +5964,7 @@ module.exports = {
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
   inspectFirstBiteRunnerControlPlane,
+  inspectFirstBiteCursorReviewScout,
   inspectFirstBiteMcpRefreshPlan,
   inspectFirstBiteOperatingReadout,
   inspectGrafanaEvidence,

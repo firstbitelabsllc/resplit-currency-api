@@ -22,6 +22,7 @@ const {
   evaluateMcpProofFreshness,
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
+  inspectFirstBiteCursorReviewScout,
   inspectFirstBiteRunnerControlPlane,
   inspectFirstBiteMcpRefreshPlan,
   inspectFirstBiteOperatingReadout,
@@ -160,6 +161,76 @@ test('buildAgentActivityMatrix does not treat unresolved as resolved', () => {
   }], '2026-05-25T01:00:00.000Z')
 
   assert.equal(redVerdictButInProgress[0].status, 'yellow')
+})
+
+test('inspectFirstBiteCursorReviewScout demotes non-current packet-only actionable scouts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-review-scout-'))
+  const runDir = path.join(root, 'verify-cursor-model-status-20260525-resplit_currency_api')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'review.md'), 'Cursor sidecar review skipped for local-only MVP mode.\n')
+  fs.writeFileSync(path.join(runDir, 'review-packet.md'), '# Review packet\n')
+  fs.writeFileSync(path.join(runDir, 'local-ci-repo-proof.json'), JSON.stringify({ ok: true }))
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    run_id: 'verify-cursor-model-status-20260525-resplit_currency_api',
+    created_at: '2026-05-25T11:06:36Z',
+    repo: '/Users/leokwan/Development/resplit-currency-api',
+    repo_name: 'resplit-currency-api',
+    branch: 'main',
+    head_sha: '16f7d4e',
+    run_cursor: 0,
+    cursor_mode: 'ask',
+    cursor_model: 'gpt-5.3-codex-low',
+    cursor_current_model: 'gpt-5.3-codex',
+    actionable: true,
+    summary: null,
+    findings: null,
+    proof: null,
+    files: null,
+    local_ci: {
+      repo_name: 'resplit-currency-api',
+      local_ci_repo_key: 'resplit_currency_api',
+      latest_lane_count: 19,
+      latest_lane_pass_count: 17,
+      latest_lane_fail_count: 2,
+      repo_lane_count: 4,
+      repo_lane_pass_count: 3,
+      repo_lane_fail_count: 1,
+      lanes: [
+        { lane: 'resplit_currency_api_unit', repo: 'resplit_currency_api', kind: 'unit', status: 'pass' },
+        {
+          lane: 'resplit_currency_api_trust_preflight',
+          repo: 'resplit_currency_api',
+          kind: 'integration',
+          status: 'fail',
+          run_id: 'verify-firstbite-mcp-warn-exits-red-clean-head-20260525',
+          report_path: '/tmp/report.json',
+          log_path: '/tmp/run.log',
+        },
+      ],
+    },
+  }))
+
+  const scout = inspectFirstBiteCursorReviewScout({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    repoName: 'resplit-currency-api',
+    repoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    git: {
+      branch: 'codex/fx-otel-grafana-config-20260525',
+      head: '1ffcfb3e8d285dce70e08beb6d71167dac81869b',
+    },
+    generatedAt: '2026-05-25T11:47:00.000Z',
+  })
+
+  assert.equal(scout.status, 'yellow')
+  assert.equal(scout.currentForCheckout, false)
+  assert.equal(scout.cursorReviewRan, false)
+  assert.equal(scout.actionableClaimed, true)
+  assert.equal(scout.hasSubstantiveFindings, false)
+  assert.equal(scout.localCi.repoLaneFailCount, 1)
+  assert.deepEqual(scout.failedLanes.map(lane => lane.lane), ['resplit_currency_api_trust_preflight'])
+  assert.match(scout.summary, /actionable=true without finding payload/)
+  assert.match(scout.nextAction, /Rerun the read-only review scout/)
 })
 
 test('inspectTelemetry reports missing wrangler observability as red', () => {
@@ -1999,6 +2070,7 @@ test('buildReport joins manifest, nurse, inbox, ledger, and MCP proof', () => {
     gitState: { status: 'clean', dirtyCount: 0, branch: 'main', head: 'abc', originMain: 'abc', behindOriginMain: 0 },
     mcpReportRoot: mcpRoot,
     sharedLedgerPath,
+    cursorReviewRoot: path.join(repoDir, 'missing-review-scout'),
   })
 
   assert.equal(report.localCi.lanes.length, 3)
@@ -2130,6 +2202,7 @@ test('buildReport surfaces newer current-manifest proof without overriding clean
     gitState: { status: 'dirty', dirtyCount: 40, branch: 'main', head: 'abc', originMain: 'def', behindOriginMain: 10 },
     mcpReportRoot: mcpRoot,
     sharedLedgerPath: path.join(repoDir, 'missing-shared-ledger.jsonl'),
+    cursorReviewRoot: path.join(repoDir, 'missing-review-scout'),
   })
   const html = renderHtml(report)
 
@@ -2259,7 +2332,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     ledger: { health: { status: 'green', summary: 'healthy' } },
   })
 
-  assert.equal(contracts.length, 14)
+  assert.equal(contracts.length, 15)
   assert.deepEqual(contracts.map(contract => contract.gate), [
     'Primary checkout',
     'Tracked local-CI contract',
@@ -2275,6 +2348,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     'OTEL/Grafana evidence',
     'Release-history strict coverage',
     'Agent ledger health',
+    'Coding-agent review scout',
   ])
   assert.equal(contracts.find(contract => contract.gate === 'Loaded MCP host catalog').status, 'red')
   assert.equal(contracts.find(contract => contract.gate === 'Clean proof targetability').status, 'red')
@@ -2293,6 +2367,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
   assert.equal(contracts.find(contract => contract.gate === 'OTEL/Grafana evidence').proof, '/tmp/grafana-otel-smoke.json')
   assert.match(contracts.find(contract => contract.gate === 'Release-history strict coverage').current, /available 18\/30/)
   assert.match(contracts.find(contract => contract.gate === 'Release-history strict coverage').nextAction, /May 12-23/)
+  assert.match(contracts.find(contract => contract.gate === 'Coding-agent review scout').nextAction, /review scout/)
 })
 
 test('buildTrustContracts uses refresh-plan proof when loaded probe is missing', () => {
@@ -2592,6 +2667,7 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
     'release-history-backfill',
     'firstbite-operating-readout',
     'm4-peer-execute-proof',
+    'coding-agent-review-scout',
   ])
   assert.equal(actions[0].canRunNow, true)
   assert.equal(actions.find(action => action.id === 'clean-firstbite-proof').canRunNow, false)
@@ -2609,6 +2685,8 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
   assert.equal(actions.find(action => action.id === 'm4-peer-execute-proof').canRunNow, false)
   assert.match(actions.find(action => action.id === 'm4-peer-execute-proof').command, /fresh-clone-commands/)
   assert.match(actions.find(action => action.id === 'm4-peer-execute-proof').blockedBy, /M4 Pro/)
+  assert.equal(actions.find(action => action.id === 'coding-agent-review-scout').canRunNow, true)
+  assert.match(actions.find(action => action.id === 'coding-agent-review-scout').command, /firstbite-cursor-review/)
 })
 
 test('buildOperatorRecoveryFlow separates runnable work from dependencies', () => {
