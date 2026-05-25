@@ -11,6 +11,7 @@
     "test": "node --test tests/*.test.js",
     "smoke:deploy": "node scripts/smoke-check-deploy.js",
     "smoke:sideload": "bash scripts/smoke-sideload-staging.sh",
+    "observability:cloudflare-destinations": "node scripts/verify-cloudflare-otel-destinations.js",
     "observability:otel-smoke": "node scripts/verify-grafana-otel-smoke.js",
     "mcp:loaded-probe": "node scripts/capture-loaded-mcp-probe.js",
     "reliability:cockpit": "node scripts/reliability-cockpit.js",

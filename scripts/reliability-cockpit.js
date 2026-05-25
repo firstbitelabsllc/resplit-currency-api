@@ -13,6 +13,7 @@ const LOADED_MCP_REUSE_COMMAND = 'npm run mcp:loaded-probe -- --reuse-existing'
 const TRUST_PREFLIGHT_BASENAME = 'resplit-fx-trust-preflight.json'
 const SOURCE_PROMOTION_PACKET_BASENAME = 'resplit-fx-source-promotion-packet.json'
 const SOURCE_PROMOTION_PACKET_MARKDOWN = 'resplit-fx-source-promotion-packet.md'
+const CLOUDFLARE_OTEL_DESTINATIONS_BASENAME = 'cloudflare-otel-destinations.json'
 const PROOF_FRESHNESS_LIMIT_MINUTES = 60
 const DEFAULT_FIRSTBITE_LOCAL_CI_DIR = path.join(os.homedir(), 'Development', 'ai-leo', 'skills', 'resplit-watch', 'mcp', 'firstbite-local-ci')
 const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
@@ -33,6 +34,8 @@ const SOURCE_PROMOTION_REQUIRED_PATHS = [
   'tests/trust-preflight.test.js',
   'scripts/capture-loaded-mcp-probe.js',
   'tests/capture-loaded-mcp-probe.test.js',
+  'scripts/verify-cloudflare-otel-destinations.js',
+  'tests/verify-cloudflare-otel-destinations.test.js',
   'scripts/verify-grafana-otel-smoke.js',
   'tests/verify-grafana-otel-smoke.test.js',
   'scripts/audit-history-backfill-sources.js',
@@ -1439,6 +1442,7 @@ function inspectTelemetry(wrangler, wranglerPath, packageJson, repoDir, options 
     logs?.destination_name,
   ].filter(Boolean)))
   const verifierPaths = [
+    path.join(repoDir, 'scripts', 'verify-cloudflare-otel-destinations.js'),
     path.join(repoDir, 'scripts', 'verify-grafana-otel-smoke.js'),
     path.join(repoDir, 'scripts', 'verify-grafana-tempo.mjs'),
   ]
@@ -1446,6 +1450,7 @@ function inspectTelemetry(wrangler, wranglerPath, packageJson, repoDir, options 
   const hasVerifier = presentVerifierPaths.length > 0
   const observabilityScripts = Object.keys(packageJson?.scripts || {})
     .filter(script => /observability|tempo|grafana|otel/i.test(script))
+  const cloudflareDestinations = options.cloudflareDestinationsEvidence || inspectCloudflareOtelDestinations(repoDir, generatedAt)
   const evidence = options.grafanaEvidence || inspectGrafanaEvidence(repoDir, generatedAt)
 
   let status = 'red'
@@ -1485,7 +1490,62 @@ function inspectTelemetry(wrangler, wranglerPath, packageJson, repoDir, options 
       evidence,
       plan: '/Users/leokwan/Development/vidux/projects/fleet-otel-observability/PLAN.md#F-C1',
     },
+    cloudflare: {
+      destinations: cloudflareDestinations,
+    },
     summary,
+  }
+}
+
+function inspectCloudflareOtelDestinations(repoDir, generatedAt = new Date().toISOString()) {
+  const expectedPath = path.join(repoDir, DEFAULT_OUTPUT_DIR, CLOUDFLARE_OTEL_DESTINATIONS_BASENAME)
+  if (!fs.existsSync(expectedPath)) {
+    return {
+      status: 'missing',
+      latestPath: expectedPath,
+      checkedAt: null,
+      ageMinutes: null,
+      destinationNames: [],
+      expected: [],
+      checks: [],
+      summary: 'No Cloudflare Workers Observability destination proof artifact was found.',
+    }
+  }
+
+  const data = readJsonIfExists(expectedPath)
+  if (!data) {
+    return {
+      status: 'red',
+      latestPath: expectedPath,
+      checkedAt: null,
+      ageMinutes: null,
+      destinationNames: [],
+      expected: [],
+      checks: [],
+      summary: 'Cloudflare destination proof artifact could not be parsed.',
+    }
+  }
+
+  const checkedAt = data.checkedAt || data.generatedAt || null
+  const expected = Array.isArray(data.wrangler?.expected) ? data.wrangler.expected : []
+  const destinations = Array.isArray(data.destinations) ? data.destinations : []
+  const checks = Array.isArray(data.checks) ? data.checks.map(check => ({
+    id: String(check.id || check.label || 'cloudflare-destination-check'),
+    label: String(check.label || check.id || 'Cloudflare destination check'),
+    status: normalizeStatus(check.status),
+    proof: String(check.proof || ''),
+    nextAction: String(check.nextAction || ''),
+  })) : []
+
+  return {
+    status: normalizeStatus(data.status || 'yellow'),
+    latestPath: expectedPath,
+    checkedAt,
+    ageMinutes: ageMinutesBetween(checkedAt, generatedAt),
+    destinationNames: destinations.map(destination => destination.name).filter(Boolean),
+    expected,
+    checks,
+    summary: data.summary || 'Cloudflare destination proof artifact did not include a summary.',
   }
 }
 
@@ -3063,6 +3123,15 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger }) {
     })
   }
 
+  const cloudflareDestinations = telemetry.cloudflare?.destinations
+  if (cloudflareDestinations?.status && cloudflareDestinations.status !== 'green') {
+    risks.push({
+      status: cloudflareDestinations.status === 'missing' ? 'yellow' : cloudflareDestinations.status,
+      label: 'Cloudflare OTEL destination gap',
+      detail: cloudflareDestinations.summary,
+    })
+  }
+
   if (telemetry.status !== 'green') {
     risks.push({
       status: telemetry.status,
@@ -3109,6 +3178,7 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger }) {
 function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
   const proof = localCi?.mcpProof?.latest
   const evidence = telemetry?.grafana?.evidence
+  const cloudflareDestinations = telemetry?.cloudflare?.destinations
   const loadedMcp = localCi?.loadedMcpProbe
   const repoBackedMcp = localCi?.repoBackedMcpProbe
   const trackedSource = localCi?.trackedSource
@@ -3198,6 +3268,15 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
         : 'Run the repo-backed FirstBite list_lanes call and fix manifest parsing before executing lanes.',
     },
     {
+      gate: 'Cloudflare OTEL destinations',
+      status: cloudflareDestinations?.status === 'missing' ? 'yellow' : cloudflareDestinations?.status || 'yellow',
+      current: cloudflareDestinations?.summary || 'Cloudflare Workers Observability destination proof was not inspected.',
+      proof: cloudflareDestinations?.latestPath || 'reports/cloudflare-otel-destinations.json',
+      nextAction: cloudflareDestinations?.status === 'green'
+        ? 'Keep destination proof fresh before relying on Grafana delivery evidence.'
+        : 'Run npm run observability:cloudflare-destinations with a Workers Observability Read token and confirm logs/traces destinations match wrangler.jsonc.',
+    },
+    {
       gate: 'OTEL/Grafana evidence',
       status: telemetry?.status || 'red',
       current: telemetry?.summary || 'No telemetry summary available.',
@@ -3235,6 +3314,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const cleanProof = localCi.cleanProofReadiness || {}
   const loadedMcp = localCi.loadedMcpProbe || {}
   const operatingReadout = localCi.operatingReadout || {}
+  const cloudflareDestinations = telemetry.cloudflare?.destinations || {}
   const grafanaEvidence = telemetry.grafana?.evidence || {}
   const actions = []
 
@@ -3294,10 +3374,30 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
     }))
   }
 
+  if (contractNeedsAction(byGate.get('Cloudflare OTEL destinations'))) {
+    const missingReadConfig = /Missing Cloudflare read config|CLOUDFLARE_ACCOUNT_ID|CLOUDFLARE_API_TOKEN/i.test(cloudflareDestinations.summary || '')
+    actions.push(operatorAction({
+      id: 'cloudflare-otel-destinations',
+      priority: 4,
+      owner: 'Cloudflare',
+      gate: 'Cloudflare OTEL destinations',
+      status: byGate.get('Cloudflare OTEL destinations')?.status || cloudflareDestinations.status || 'yellow',
+      proof: cloudflareDestinations.latestPath || 'reports/cloudflare-otel-destinations.json',
+      command: 'npm run observability:cloudflare-destinations',
+      blocker: cloudflareDestinations.summary || byGate.get('Cloudflare OTEL destinations')?.current || 'Cloudflare destination proof was not inspected.',
+      nextAction: byGate.get('Cloudflare OTEL destinations')?.nextAction || 'Run the Cloudflare destination verifier before treating wrangler destination names as real dashboard state.',
+      evidenceRequired: 'A sanitized Cloudflare destination report where logs and traces destinations are enabled and match wrangler.jsonc.',
+      unblocks: 'OTEL/Grafana delivery proof',
+      canRunNow: !missingReadConfig,
+      blockedBy: missingReadConfig ? 'Requires CLOUDFLARE_ACCOUNT_ID and a Workers Observability Read API token.' : '',
+      boundary: 'cloudflare-control-plane',
+    }))
+  }
+
   if (contractNeedsAction(byGate.get('OTEL/Grafana evidence'))) {
     actions.push(operatorAction({
       id: 'grafana-otel-proof',
-      priority: 4,
+      priority: 5,
       owner: 'Cloudflare/Grafana',
       gate: 'OTEL/Grafana evidence',
       status: byGate.get('OTEL/Grafana evidence')?.status || telemetry.status || 'yellow',
@@ -3463,6 +3563,7 @@ function buildEvidenceFreshnessLedger({
 } = {}) {
   const sourcePacketPath = path.join(repoDir || '', DEFAULT_OUTPUT_DIR, SOURCE_PROMOTION_PACKET_BASENAME)
   const sourcePacket = readJsonIfExists(sourcePacketPath)
+  const cloudflareDestinations = telemetry?.cloudflare?.destinations || null
   const grafanaEvidence = telemetry?.grafana?.evidence || null
   const rows = [
     buildEvidenceFreshnessRow({
@@ -3528,6 +3629,18 @@ function buildEvidenceFreshnessLedger({
       nextAction: 'cd ~/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- list_lanes {}',
       missingStatus: 'red',
       missingSummary: 'Repo-backed MCP catalog proof is missing.',
+    }),
+    buildEvidenceFreshnessRow({
+      id: 'cloudflare-otel-destinations',
+      surface: 'Cloudflare OTEL destinations',
+      artifact: cloudflareDestinations?.latestPath || path.join(repoDir || '', DEFAULT_OUTPUT_DIR, CLOUDFLARE_OTEL_DESTINATIONS_BASENAME),
+      checkedAt: cloudflareDestinations?.checkedAt || null,
+      ageMinutes: cloudflareDestinations?.ageMinutes ?? ageMinutesBetween(cloudflareDestinations?.checkedAt || null, generatedAt),
+      trustStatus: cloudflareDestinations?.status || 'missing',
+      summary: cloudflareDestinations?.summary || 'No Cloudflare Workers Observability destination proof artifact was found.',
+      nextAction: 'npm run observability:cloudflare-destinations',
+      missingStatus: 'yellow',
+      missingSummary: 'Cloudflare destination proof is missing.',
     }),
     buildEvidenceFreshnessRow({
       id: 'grafana-otel-smoke',
@@ -3668,6 +3781,18 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
       evidence: byGate.get('M4 peer execution boundary')?.proof || localCi?.operatingReadout?.m4FreshClonePacket?.latestCommands || 'M4 execute report missing.',
       gap: byGate.get('M4 peer execution boundary')?.current || localCi?.operatingReadout?.peerExecutionBoundary?.summary || 'M4 peer boundary missing.',
       nextAction: byGate.get('M4 peer execution boundary')?.nextAction || 'Run the generated packet on the M4 Pro and capture local proof.',
+    }),
+    trustAuditRow({
+      id: 'otel-cloudflare-destinations',
+      surface: 'Cloudflare Workers Observability destinations',
+      boundary: 'cloudflare-control-plane',
+      owner: 'Cloudflare',
+      status: byGate.get('Cloudflare OTEL destinations')?.status || telemetry?.cloudflare?.destinations?.status || 'yellow',
+      allowedWhenGreen: 'Cloudflare dashboard destinations for logs and traces are enabled and match wrangler.jsonc by name and dataset.',
+      forbiddenUntilGreen: 'Do not claim wrangler destination names are real Cloudflare dashboard state without read-only Cloudflare API proof.',
+      evidence: byGate.get('Cloudflare OTEL destinations')?.proof || telemetry?.cloudflare?.destinations?.latestPath || 'reports/cloudflare-otel-destinations.json',
+      gap: byGate.get('Cloudflare OTEL destinations')?.current || telemetry?.cloudflare?.destinations?.summary || 'Cloudflare destination proof missing.',
+      nextAction: byGate.get('Cloudflare OTEL destinations')?.nextAction || 'Run the Cloudflare destination verifier with Workers Observability Read credentials.',
     }),
     trustAuditRow({
       id: 'otel-grafana-proof',
@@ -4653,7 +4778,18 @@ function renderTelemetry(telemetry) {
       checks: [],
       summary: 'no Grafana evidence loaded',
     }
+  const cloudflare = telemetry.cloudflare?.destinations || {
+    status: 'missing',
+    latestPath: null,
+    checkedAt: null,
+    ageMinutes: null,
+    destinationNames: [],
+    expected: [],
+    checks: [],
+    summary: 'no Cloudflare destination evidence loaded',
+  }
   const checks = Array.isArray(evidence.checks) ? evidence.checks : []
+  const cloudflareChecks = Array.isArray(cloudflare.checks) ? cloudflare.checks : []
   const persistence = telemetry.observability.persistence || {}
   return `<section class="half">
     <h2>OTEL / Grafana Readiness</h2>
@@ -4666,6 +4802,9 @@ function renderTelemetry(telemetry) {
       <div>Sampling</div><div>logs ${escapeHtml(String(telemetry.observability.sampling.logs ?? 'unknown'))} / traces ${escapeHtml(String(telemetry.observability.sampling.traces ?? 'unknown'))}</div>
       <div>Persistence</div><div>logs ${escapeHtml(formatTelemetryPersistence(persistence.logs))} / traces ${escapeHtml(formatTelemetryPersistence(persistence.traces))}</div>
       <div>Destinations</div><div>${telemetry.observability.destinationNames.length > 0 ? telemetry.observability.destinationNames.map(name => `<code>${escapeHtml(name)}</code>`).join(' ') : 'missing'}</div>
+      <div>Cloudflare proof</div><div><span class="${escapeHtml(cloudflare.status)}">${escapeHtml(cloudflare.status)}</span> ${escapeHtml(cloudflare.summary)}</div>
+      <div>Cloudflare file</div><div><code>${escapeHtml(cloudflare.latestPath || 'missing')}</code></div>
+      <div>Cloudflare names</div><div>${cloudflare.destinationNames?.length ? cloudflare.destinationNames.map(name => `<code>${escapeHtml(name)}</code>`).join(' ') : 'missing'}</div>
       <div>Verifier</div><div>${telemetry.grafana.tempoVerifierPresent ? 'present' : 'missing'}${telemetry.grafana.verifierPaths?.length ? ` <code>${escapeHtml(telemetry.grafana.verifierPaths.map(item => path.relative(process.cwd(), item)).join(', '))}</code>` : ''}</div>
       <div>Grafana evidence</div><div><span class="${escapeHtml(evidence.status)}">${escapeHtml(evidence.status)}</span> ${escapeHtml(evidence.summary)}</div>
       <div>Evidence file</div><div><code>${escapeHtml(evidence.latestPath || 'missing')}</code></div>
@@ -4674,6 +4813,10 @@ function renderTelemetry(telemetry) {
       <div>Checked</div><div>${escapeHtml(evidence.checkedAt || 'unknown')}${evidence.ageMinutes === null ? '' : ` (${escapeHtml(String(evidence.ageMinutes))}m old)`}</div>
       <div>Plan</div><div><code>${escapeHtml(telemetry.grafana.plan)}</code></div>
     </div>
+    ${cloudflareChecks.length > 0 ? `<h3>Cloudflare Destination Checklist</h3>
+    <table><thead><tr><th>Check</th><th>Status</th><th>Proof</th><th>Next</th></tr></thead><tbody>
+      ${cloudflareChecks.map(check => `<tr><td>${escapeHtml(check.label || check.id)}</td><td><span class="${escapeHtml(check.status || 'yellow')}">${escapeHtml(check.status || 'yellow')}</span></td><td>${escapeHtml(check.proof || '')}</td><td>${escapeHtml(check.nextAction || '')}</td></tr>`).join('')}
+    </tbody></table>` : ''}
     ${checks.length > 0 ? `<h3>OTEL Evidence Checklist</h3>
     <table>
       <thead><tr><th>Check</th><th>Status</th><th>Proof</th><th>Next</th></tr></thead>
@@ -4881,6 +5024,7 @@ module.exports = {
   evaluateProofManifestMatch,
   evaluateMcpProofFreshness,
   findLatestMcpProofForRepo,
+  inspectCloudflareOtelDestinations,
   inspectFirstBiteOperatingReadout,
   inspectGrafanaEvidence,
   inspectLaneLog,

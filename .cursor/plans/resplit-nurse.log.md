@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 06:12 EDT
+
+- `NO-GO` overall launch; `YELLOW/current` for the Cloudflare/Grafana observability lane because wrangler destination intent is source-declared, but Cloudflare dashboard destination existence and Grafana Tempo/Loki delivery remain separate unproven gates.
+- Shipped delta pending source promotion: added `npm run observability:cloudflare-destinations`, a read-only Cloudflare Workers Observability destination verifier, and cockpit/UI trust rows for `Cloudflare OTEL destinations` before `OTEL/Grafana evidence`.
+- Fresh proof:
+  - `node --check scripts/verify-cloudflare-otel-destinations.js` -> pass.
+  - `node --check scripts/reliability-cockpit.js` -> pass.
+  - `node --test tests/verify-cloudflare-otel-destinations.test.js tests/reliability-cockpit.test.js tests/verify-grafana-otel-smoke.test.js` -> `56/56` focused tests green.
+  - `npm run observability:cloudflare-destinations -- --output reports/cloudflare-otel-destinations.json` -> expected yellow: missing `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`; report redacts destination headers by construction.
+  - `npm run reliability:cockpit` -> cockpit remains red overall; `Cloudflare OTEL destinations` is fresh/yellow and blocks `grafana-otel-proof`.
+  - `npm run check` -> `220/220` tests green with strict release validation passing (`166 currencies`, `history points=30`).
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run source:promotion-packet` -> expected red while cockpit is red; exact stage candidates are `package.json`, `scripts/reliability-cockpit.js`, `tests/reliability-cockpit.test.js`, `scripts/verify-cloudflare-otel-destinations.js`, `tests/verify-cloudflare-otel-destinations.test.js`; generated `reports/` remain hold-by-default.
+- Current build boundary: PR branch `codex/fx-otel-grafana-config-20260525`; source diff is local until committed/pushed; do not claim launch-trusted telemetry until a Workers Observability Read-token run proves dashboard destinations and a Grafana read-token smoke proves Tempo+Loki.
+
 ## 2026-05-25 05:56 EDT
 
 - `NO-GO` overall launch; `YELLOW/current` for `resplit-currency-api` observability because Worker OTEL config is now source-declared locally, but Grafana Tempo+Loki have not both matched live telemetry.

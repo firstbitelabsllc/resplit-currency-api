@@ -19,6 +19,7 @@ const {
   evaluateProofManifestMatch,
   evaluateMcpProofFreshness,
   findLatestMcpProofForRepo,
+  inspectCloudflareOtelDestinations,
   inspectFirstBiteOperatingReadout,
   inspectGrafanaEvidence,
   inspectLaneLog,
@@ -243,6 +244,36 @@ test('inspectTelemetry recognizes the combined OTEL smoke verifier', () => {
   assert.deepEqual(telemetry.grafana.verifierPaths, [verifierPath])
   assert.deepEqual(telemetry.grafana.observabilityScripts, ['observability:otel-smoke'])
   assert.equal(telemetry.grafana.evidence.status, 'missing')
+})
+
+test('inspectCloudflareOtelDestinations reads sanitized destination proof', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-'))
+  fs.mkdirSync(path.join(repoDir, 'reports'))
+  fs.writeFileSync(path.join(repoDir, 'reports', 'cloudflare-otel-destinations.json'), JSON.stringify({
+    checkedAt: '2026-05-24T23:30:00.000Z',
+    status: 'green',
+    summary: 'Cloudflare Workers Observability destinations match wrangler.jsonc.',
+    wrangler: {
+      expected: [
+        { stream: 'logs', name: 'grafana-logs-prod', dataset: 'opentelemetry-logs' },
+      ],
+    },
+    destinations: [{ name: 'grafana-logs-prod' }],
+    checks: [{
+      id: 'logs-destination',
+      label: 'logs destination grafana-logs-prod',
+      status: 'green',
+      proof: 'Destination is enabled.',
+      nextAction: 'Keep fresh.',
+    }],
+  }))
+
+  const proof = inspectCloudflareOtelDestinations(repoDir, '2026-05-25T00:00:00.000Z')
+
+  assert.equal(proof.status, 'green')
+  assert.equal(proof.ageMinutes, 30)
+  assert.deepEqual(proof.destinationNames, ['grafana-logs-prod'])
+  assert.equal(proof.checks[0].status, 'green')
 })
 
 test('inspectGrafanaEvidence reports missing proof as missing', () => {
@@ -774,6 +805,7 @@ test('buildSourcePromotionBundle stays green after source lands even when clean 
       'check:publish': 'npm run generate && npm run validate && npm run test',
       'reliability:cockpit': 'node scripts/reliability-cockpit.js',
       'source:promotion-packet': 'node scripts/source-promotion-packet.js',
+      'observability:cloudflare-destinations': 'node scripts/verify-cloudflare-otel-destinations.js',
     },
   }
 
@@ -792,6 +824,8 @@ test('buildSourcePromotionBundle stays green after source lands even when clean 
     'tests/capture-loaded-mcp-probe.test.js',
     'scripts/verify-grafana-otel-smoke.js',
     'tests/verify-grafana-otel-smoke.test.js',
+    'scripts/verify-cloudflare-otel-destinations.js',
+    'tests/verify-cloudflare-otel-destinations.test.js',
     'scripts/audit-history-backfill-sources.js',
     'tests/audit-history-backfill-sources.test.js',
     'scripts/smoke-check-deploy.js',
@@ -1817,6 +1851,13 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     telemetry: {
       status: 'yellow',
       summary: 'Worker observability config exists; JSON proof does not show both Tempo and Loki matches.',
+      cloudflare: {
+        destinations: {
+          status: 'yellow',
+          summary: 'Cloudflare destination proof is missing.',
+          latestPath: '/tmp/cloudflare-otel-destinations.json',
+        },
+      },
       grafana: { evidence: { latestPath: '/tmp/grafana-otel-smoke.json' } },
     },
     nurseLog: {
@@ -1829,7 +1870,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     ledger: { health: { status: 'green', summary: 'healthy' } },
   })
 
-  assert.equal(contracts.length, 12)
+  assert.equal(contracts.length, 13)
   assert.deepEqual(contracts.map(contract => contract.gate), [
     'Primary checkout',
     'Tracked local-CI contract',
@@ -1840,6 +1881,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     'Selected local-CI proof',
     'Loaded MCP host catalog',
     'Repo-backed MCP package',
+    'Cloudflare OTEL destinations',
     'OTEL/Grafana evidence',
     'Release-history strict coverage',
     'Agent ledger health',
@@ -1855,6 +1897,7 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
   assert.match(contracts.find(contract => contract.gate === 'M4 peer execution boundary').current, /support-only/)
   assert.equal(contracts.find(contract => contract.gate === 'M4 peer execution boundary').proof, '/tmp/m4/fresh-clone-commands.sh')
   assert.match(contracts.find(contract => contract.gate === 'Loaded MCP host catalog').nextAction, /Restart or reload/)
+  assert.equal(contracts.find(contract => contract.gate === 'Cloudflare OTEL destinations').proof, '/tmp/cloudflare-otel-destinations.json')
   assert.equal(contracts.find(contract => contract.gate === 'OTEL/Grafana evidence').proof, '/tmp/grafana-otel-smoke.json')
   assert.match(contracts.find(contract => contract.gate === 'Release-history strict coverage').current, /available 18\/30/)
   assert.match(contracts.find(contract => contract.gate === 'Release-history strict coverage').nextAction, /May 12-23/)
@@ -1910,6 +1953,13 @@ test('buildLaunchTrustAudit states allowed and forbidden launch claims per bound
     telemetry: {
       status: 'yellow',
       summary: 'Worker observability config exists; JSON proof does not show both Tempo and Loki matches.',
+      cloudflare: {
+        destinations: {
+          status: 'yellow',
+          summary: 'Cloudflare destination proof is missing.',
+          latestPath: '/tmp/cloudflare-otel-destinations.json',
+        },
+      },
       grafana: { evidence: { latestPath: '/tmp/grafana-otel-smoke.json' } },
     },
     nurseLog: {
@@ -1948,6 +1998,13 @@ test('buildLaunchTrustAudit states allowed and forbidden launch claims per bound
     telemetry: {
       status: 'yellow',
       summary: 'Tempo/Loki missing',
+      cloudflare: {
+        destinations: {
+          status: 'yellow',
+          summary: 'Cloudflare destination proof is missing.',
+          latestPath: '/tmp/cloudflare-otel-destinations.json',
+        },
+      },
       grafana: { evidence: { latestPath: '/tmp/grafana.json' } },
     },
     nurseLog: { releaseReadiness: 'yellow', latestBullets: ['available 18/30'] },
@@ -1960,6 +2017,7 @@ test('buildLaunchTrustAudit states allowed and forbidden launch claims per bound
   assert.equal(audit.rows.find(row => row.id === 'loaded-agent-mcp').claimAllowed, false)
   assert.match(audit.rows.find(row => row.id === 'loaded-agent-mcp').forbiddenClaim, /loaded MCP/)
   assert.match(audit.rows.find(row => row.id === 'peer-execution').forbiddenClaim, /LAN pings/)
+  assert.match(audit.rows.find(row => row.id === 'otel-cloudflare-destinations').forbiddenClaim, /Cloudflare dashboard state/)
   assert.match(audit.rows.find(row => row.id === 'otel-grafana-proof').forbiddenClaim, /config alone/)
   assert.match(audit.rows.find(row => row.id === 'overall-launch-trust').forbiddenClaim, /launch-ready/)
 })
@@ -2007,6 +2065,13 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
     telemetry: {
       status: 'yellow',
       summary: 'Tempo/Loki missing',
+      cloudflare: {
+        destinations: {
+          status: 'yellow',
+          summary: 'Missing Cloudflare read config: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN.',
+          latestPath: '/tmp/cloudflare.json',
+        },
+      },
       grafana: { evidence: { latestPath: '/tmp/grafana.json' } },
     },
     nurseLog: {
@@ -2050,6 +2115,13 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
     telemetry: {
       status: 'yellow',
       summary: 'Tempo/Loki missing',
+      cloudflare: {
+        destinations: {
+          status: 'yellow',
+          summary: 'Missing Cloudflare read config: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN.',
+          latestPath: '/tmp/cloudflare.json',
+        },
+      },
       grafana: { evidence: { latestPath: '/tmp/grafana.json' } },
     },
     nurseLog: { releaseReadiness: 'yellow', latestBullets: ['available 18/30'] },
@@ -2066,6 +2138,7 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
     'source-promotion-review',
     'clean-firstbite-proof',
     'loaded-mcp-refresh',
+    'cloudflare-otel-destinations',
     'grafana-otel-proof',
     'release-history-backfill',
     'firstbite-operating-readout',
@@ -2078,6 +2151,7 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
   assert.equal(actions.find(action => action.id === 'loaded-mcp-refresh').canRunNow, true)
   assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').command, /--reuse-existing/)
   assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').nextAction, /host restart/)
+  assert.match(actions.find(action => action.id === 'cloudflare-otel-destinations').blockedBy, /Workers Observability Read/)
   assert.match(actions.find(action => action.id === 'grafana-otel-proof').blockedBy, /Grafana read env/)
   assert.match(actions.find(action => action.id === 'release-history-backfill').command, /audit:backfill-sources/)
   assert.match(actions.find(action => action.id === 'release-history-backfill').blocker, /May 12-23/)
@@ -2201,6 +2275,15 @@ test('buildEvidenceFreshnessLedger separates artifact age from trust status', ()
       },
     },
     telemetry: {
+      cloudflare: {
+        destinations: {
+          status: 'yellow',
+          latestPath: path.join(repoDir, 'reports', 'cloudflare-otel-destinations.json'),
+          checkedAt: '2026-05-25T07:38:00.000Z',
+          ageMinutes: 7,
+          summary: 'Missing Cloudflare read config.',
+        },
+      },
       grafana: {
         evidence: {
           status: 'yellow',
@@ -2216,6 +2299,7 @@ test('buildEvidenceFreshnessLedger separates artifact age from trust status', ()
   const preflight = ledger.rows.find(row => row.id === 'local-trust-preflight')
   const packet = ledger.rows.find(row => row.id === 'source-promotion-packet')
   const loaded = ledger.rows.find(row => row.id === 'loaded-mcp-host-probe')
+  const cloudflare = ledger.rows.find(row => row.id === 'cloudflare-otel-destinations')
   const grafana = ledger.rows.find(row => row.id === 'grafana-otel-smoke')
 
   assert.equal(ledger.status, 'yellow')
@@ -2225,6 +2309,8 @@ test('buildEvidenceFreshnessLedger separates artifact age from trust status', ()
   assert.equal(packet.trustStatus, 'red')
   assert.equal(loaded.freshnessStatus, 'yellow')
   assert.equal(loaded.trustStatus, 'red')
+  assert.equal(cloudflare.freshnessStatus, 'green')
+  assert.equal(cloudflare.trustStatus, 'yellow')
   assert.equal(grafana.freshnessStatus, 'green')
   assert.equal(grafana.trustStatus, 'yellow')
   assert.match(ledger.summary, /trust colors remain separate/)
