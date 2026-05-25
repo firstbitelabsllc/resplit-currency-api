@@ -31,6 +31,7 @@ test('buildCommandPlan treats Grafana missing-config smoke as yellow evidence', 
   assert.ok(fast.find(command => command.id === 'targeted-tests').args.includes('tests/source-promotion-packet.test.js'))
   assert.deepEqual(grafana.expectedExitCodes, [0, 2])
   assert.deepEqual(grafana.yellowExitCodes, [2])
+  assert.deepEqual(grafana.args.slice(-2), ['--output', path.join('reports', 'grafana-missing-config-preflight.json')])
   assert.deepEqual(fast.find(command => command.id === 'source-promotion-packet-generate').yellowExitCodes, [1])
   assert.equal(fast.some(command => command.id === 'full-test-suite'), false)
 
