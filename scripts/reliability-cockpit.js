@@ -32,6 +32,33 @@ const FIRSTBITE_MCP_REFRESH_PLAN_FRESHNESS_LIMIT_MINUTES = 60
 const FIRSTBITE_CURSOR_REVIEW_FRESHNESS_LIMIT_MINUTES = 60
 const MAX_MCP_HISTORY = 8
 const MAX_AGENT_ACTIVITY_ROWS = 8
+const RECOVERY_BOUNDARY_CLAIM_RULES = {
+  'local-ci': {
+    label: 'Clean FirstBite local CI',
+    forbiddenClaim: 'Do not claim local CI validates launch until a clean worktree=true FirstBite execute report runs from landed source.',
+    requiredProof: 'Fresh worktree=true execute report with all current resplit_currency_api lanes passing and commands matching .firstbite/local-ci.json.',
+  },
+  'local-agent-host': {
+    label: 'Loaded Codex/Cursor MCP host',
+    forbiddenClaim: 'Do not claim the loaded Codex/Cursor MCP host can execute FX lanes from a repo-backed package catalog or stale loaded-host probe.',
+    requiredProof: 'Fresh loaded-host list_lanes after Codex/Cursor restart or reload showing repo-manifest-v2 and all current resplit_currency_api lanes.',
+  },
+  'external-observability': {
+    label: 'OTEL/Grafana telemetry',
+    forbiddenClaim: 'Do not claim telemetry is launch-trusted from wrangler config, Cloudflare destination names, or an old nurse-log note alone.',
+    requiredProof: 'Fresh Grafana smoke artifact where Worker trigger, Grafana config, Tempo query, and Loki query are all green.',
+  },
+  'cloudflare-control-plane': {
+    label: 'Cloudflare OTEL destinations',
+    forbiddenClaim: 'Do not claim Cloudflare Workers Observability delivery from wrangler config alone.',
+    requiredProof: 'Sanitized Cloudflare destination report where logs and traces destinations are enabled and match wrangler.jsonc.',
+  },
+  'peer-execution': {
+    label: 'M4 peer execution',
+    forbiddenClaim: 'Do not claim peer execution readiness from Studio-side LAN, HTTP, SSH, or trigger proof alone.',
+    requiredProof: 'M4-local support preflight plus run_lanes execute report captured from the M4 host.',
+  },
+}
 const SOURCE_PROMOTION_REQUIRED_PATHS = [
   '.firstbite/local-ci.json',
   '.firstbite/source-promotion-decisions.json',
@@ -4862,6 +4889,10 @@ function buildOperatorRecoveryFlow(actions = []) {
       actions: rows.map(action => action.id),
     }
   })
+  const boundaryClaims = boundaries.map(boundary => buildRecoveryBoundaryClaim(
+    boundary.boundary,
+    actionable.filter(action => (action.boundary || 'local') === boundary.boundary),
+  ))
 
   return {
     status: worstStatus(actionable.map(action => action.status)),
@@ -4873,6 +4904,29 @@ function buildOperatorRecoveryFlow(actions = []) {
     runnableNow: runnableNow.map(recoveryFlowAction),
     waitingOnDependency: waitingOnDependency.map(recoveryFlowAction),
     boundaries,
+    boundaryClaims,
+  }
+}
+
+function buildRecoveryBoundaryClaim(boundary, actions = []) {
+  const rule = RECOVERY_BOUNDARY_CLAIM_RULES[boundary] || {
+    label: boundary,
+    forbiddenClaim: `Do not claim ${boundary} is launch-ready while non-green recovery actions remain.`,
+    requiredProof: actions.map(action => action.evidenceRequired || action.proof).filter(Boolean).join('; ') || 'Fresh proof for every non-green action on this boundary.',
+  }
+  const currentBlockers = actions.map(actionBlockerText).filter(Boolean)
+  const nextActions = actions.map(action => action.nextAction).filter(Boolean)
+
+  return {
+    boundary,
+    label: rule.label,
+    status: worstStatus(actions.map(action => action.status)),
+    claimAllowed: actions.length === 0,
+    actionIds: actions.map(action => action.id),
+    forbiddenClaim: rule.forbiddenClaim,
+    requiredProof: rule.requiredProof,
+    currentBlocker: currentBlockers.join(' | '),
+    nextAction: nextActions[0] || '',
   }
 }
 
@@ -5808,6 +5862,13 @@ function renderOperatorRecoveryFlow(flow) {
       <thead><tr><th>Boundary</th><th>Actions</th><th>Red</th><th>Yellow</th><th>Action ids</th></tr></thead>
       <tbody>
         ${(flow.boundaries || []).length === 0 ? '<tr><td colspan="5">No active boundaries.</td></tr>' : flow.boundaries.map(boundary => `<tr><td><code>${escapeHtml(boundary.boundary || '')}</code></td><td>${escapeHtml(String(boundary.count ?? 0))}</td><td>${escapeHtml(String(boundary.red ?? 0))}</td><td>${escapeHtml(String(boundary.yellow ?? 0))}</td><td>${(boundary.actions || []).map(id => `<code>${escapeHtml(id)}</code>`).join(' ')}</td></tr>`).join('\n')}
+      </tbody>
+    </table>
+    <h3>Recovery Boundary Claims</h3>
+    <table>
+      <thead><tr><th>Boundary</th><th>Status</th><th>Launch claim</th><th>Required proof</th><th>Current blocker</th><th>Action ids</th></tr></thead>
+      <tbody>
+        ${(flow.boundaryClaims || []).length === 0 ? '<tr><td colspan="6">No blocked recovery boundary claims.</td></tr>' : flow.boundaryClaims.map(claim => `<tr><td><code>${escapeHtml(claim.boundary || '')}</code><div class="meta">${escapeHtml(claim.label || '')}</div></td><td><span class="${escapeHtml(claim.status || 'yellow')}">${escapeHtml(claim.status || 'unknown')}</span></td><td>${claim.claimAllowed ? '<span class="green">allowed</span>' : `<span class="red">blocked</span><div class="meta">${escapeHtml(claim.forbiddenClaim || '')}</div>`}</td><td>${escapeHtml(claim.requiredProof || '')}${claim.nextAction ? `<div class="meta">${escapeHtml(claim.nextAction)}</div>` : ''}</td><td>${escapeHtml(claim.currentBlocker || '')}</td><td>${(claim.actionIds || []).map(id => `<code>${escapeHtml(id)}</code>`).join(' ')}</td></tr>`).join('\n')}
       </tbody>
     </table>
   </section>`

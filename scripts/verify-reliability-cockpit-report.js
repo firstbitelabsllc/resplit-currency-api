@@ -33,6 +33,8 @@ const REQUIRED_OPERATOR_ACTIONS = [
 ]
 const REQUIRED_HTML_LABELS = [
   'Operator Action Queue',
+  'Operator Recovery Flow',
+  'Recovery Boundary Claims',
   'Trust Contracts',
   'Launch Trust Audit',
   'Proof Acceptance Matrix',
@@ -85,6 +87,7 @@ function verifyCockpitReport(argv, deps = {}) {
   const failures = [
     ...verifyReportFreshness(reportFreshness),
     ...verifyJsonContract(cockpit),
+    ...verifyRecoveryFlowContract(cockpit),
     ...verifyHtmlContract({ cockpit, html }),
   ]
   const status = failures.length === 0 ? 'green' : 'red'
@@ -205,6 +208,72 @@ function verifyJsonContract(cockpit) {
   return failures
 }
 
+function verifyRecoveryFlowContract(cockpit) {
+  const failures = []
+  const flow = cockpit.trustModel?.operatorRecoveryFlow
+  if (!flow || typeof flow !== 'object') {
+    return ['operator recovery flow is missing']
+  }
+
+  const boundaryClaims = Array.isArray(flow.boundaryClaims) ? flow.boundaryClaims : null
+  if (!boundaryClaims) {
+    return ['operator recovery flow boundary claims are missing']
+  }
+
+  const actionIds = new Set((cockpit.trustModel?.operatorActions || []).map(action => action.id))
+  const claimsByBoundary = new Map(boundaryClaims.map(claim => [claim.boundary, claim]))
+
+  if (actionIds.has('clean-firstbite-proof')) {
+    requireBoundaryClaim({
+      failures,
+      claimsByBoundary,
+      boundary: 'local-ci',
+      requiredProofPattern: /worktree=true|resplit_currency_api/i,
+      forbiddenClaimPattern: /Do not claim.*local CI|FirstBite/i,
+    })
+  }
+
+  if (actionIds.has('loaded-mcp-refresh') || cockpit.localCi?.loadedMcpProbe?.status === 'red') {
+    requireBoundaryClaim({
+      failures,
+      claimsByBoundary,
+      boundary: 'local-agent-host',
+      requiredProofPattern: /list_lanes|repo-manifest-v2|restart|reload/i,
+      forbiddenClaimPattern: /Do not claim.*Codex|Do not claim.*Cursor|loaded.*MCP/i,
+    })
+  }
+
+  if (actionIds.has('grafana-otel-proof')) {
+    requireBoundaryClaim({
+      failures,
+      claimsByBoundary,
+      boundary: 'external-observability',
+      requiredProofPattern: /Tempo|Loki|Grafana|OTEL/i,
+      forbiddenClaimPattern: /Do not claim.*telemetry|config alone|nurse-log/i,
+    })
+  }
+
+  return failures
+}
+
+function requireBoundaryClaim({ failures, claimsByBoundary, boundary, requiredProofPattern, forbiddenClaimPattern }) {
+  const claim = claimsByBoundary.get(boundary)
+  if (!claim) {
+    failures.push(`missing recovery boundary claim: ${boundary}`)
+    return
+  }
+
+  if (claim.claimAllowed !== false) {
+    failures.push(`recovery boundary claim must block launch claims: ${boundary}`)
+  }
+  if (!requiredProofPattern.test(claim.requiredProof || '')) {
+    failures.push(`recovery boundary claim does not name required proof: ${boundary}`)
+  }
+  if (!forbiddenClaimPattern.test(claim.forbiddenClaim || '')) {
+    failures.push(`recovery boundary claim does not name forbidden claim: ${boundary}`)
+  }
+}
+
 function verifyHtmlContract({ cockpit, html }) {
   const failures = []
   for (const label of REQUIRED_HTML_LABELS) {
@@ -285,5 +354,6 @@ module.exports = {
   verifyCockpitReport,
   verifyHtmlContract,
   verifyJsonContract,
+  verifyRecoveryFlowContract,
   verifyReportFreshness,
 }

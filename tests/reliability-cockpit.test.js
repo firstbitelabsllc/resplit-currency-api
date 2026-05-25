@@ -3613,6 +3613,11 @@ test('buildOperatorRecoveryFlow separates runnable work from dependencies', () =
   assert.deepEqual(flow.runnableNow.map(action => action.id), ['source-promotion-review'])
   assert.deepEqual(flow.waitingOnDependency.map(action => action.id), ['clean-firstbite-proof', 'grafana-otel-proof'])
   assert.deepEqual(flow.boundaries.find(boundary => boundary.boundary === 'external-observability').actions, ['grafana-otel-proof'])
+  assert.deepEqual(flow.boundaryClaims.map(claim => claim.boundary), ['local-source', 'local-ci', 'external-observability'])
+  assert.equal(flow.boundaryClaims.find(claim => claim.boundary === 'local-ci').claimAllowed, false)
+  assert.match(flow.boundaryClaims.find(claim => claim.boundary === 'local-ci').requiredProof, /worktree=true/)
+  assert.match(flow.boundaryClaims.find(claim => claim.boundary === 'external-observability').requiredProof, /Tempo query/)
+  assert.match(flow.boundaryClaims.find(claim => claim.boundary === 'external-observability').forbiddenClaim, /config/)
 })
 
 test('buildEvidenceFreshnessLedger separates artifact age from trust status', () => {
@@ -4068,6 +4073,17 @@ test('renderHtml escapes dynamic values', () => {
           yellow: 0,
           actions: ['<next-action-id>'],
         }],
+        boundaryClaims: [{
+          boundary: '<next-boundary>',
+          label: '<boundary-label>',
+          status: 'red',
+          claimAllowed: false,
+          actionIds: ['<next-action-id>'],
+          forbiddenClaim: '<forbidden-boundary-claim>',
+          requiredProof: '<boundary-required-proof>',
+          currentBlocker: '<boundary-current-blocker>',
+          nextAction: '<boundary-next-action>',
+        }],
       },
       operatorActions: [{
         priority: 1,
@@ -4102,8 +4118,11 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /&lt;proof-id&gt;/)
   assert.match(html, /&lt;artifact&gt;/)
   assert.match(html, /Operator Recovery Flow/)
+  assert.match(html, /Recovery Boundary Claims/)
   assert.match(html, /&lt;flow-summary&gt;/)
   assert.match(html, /&lt;next-command&gt;/)
+  assert.match(html, /&lt;forbidden-boundary-claim&gt;/)
+  assert.match(html, /&lt;boundary-required-proof&gt;/)
   assert.match(html, /Operator Action Queue/)
   assert.match(html, /Source Promotion Packet Reconciliation/)
   assert.match(html, /&lt;origin-drift&gt;/)

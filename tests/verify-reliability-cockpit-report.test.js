@@ -85,6 +85,22 @@ test('verifyCockpitReport fails when JSON loses the proof acceptance matrix', ()
   assert.match(result.report.failures.join('\n'), /proof acceptance matrix rows are missing/)
 })
 
+test('verifyCockpitReport fails when JSON loses a recovery boundary claim', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-boundary-claim-'))
+  const report = buildReport()
+  report.trustModel.operatorRecoveryFlow.boundaryClaims = report.trustModel.operatorRecoveryFlow.boundaryClaims
+    .filter(claim => claim.boundary !== 'local-agent-host')
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /missing recovery boundary claim: local-agent-host/)
+})
+
 test('verifyCockpitReport fails when the generated report head is stale', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-stale-head-'))
   const report = buildReport()
@@ -152,6 +168,63 @@ function buildReport() {
     trustModel: {
       contracts: REQUIRED_CONTRACT_GATES.map(gate => ({ gate, status: 'yellow' })),
       operatorActions: REQUIRED_OPERATOR_ACTIONS.map(id => ({ id, status: 'yellow' })),
+      operatorRecoveryFlow: {
+        status: 'red',
+        summary: '1 runnable action(s) now; 2 action(s) waiting on local or external dependencies.',
+        nextLocalAction: {
+          id: 'loaded-mcp-recapture',
+          priority: 3,
+          status: 'yellow',
+          owner: 'Codex/Cursor MCP host',
+          boundary: 'local-agent-host-evidence',
+          command: 'npm run mcp:loaded-probe -- --input /tmp/firstbite-loaded-mcp.json',
+          proof: 'reports/firstbite-loaded-mcp-lanes.json',
+          blocker: 'Loaded MCP probe artifact is stale.',
+          unblocks: 'Loaded MCP evidence freshness',
+        },
+        firstBlockedAction: {
+          id: 'clean-firstbite-proof',
+          blocker: 'Source promotion bundle must land first.',
+        },
+        runnableNow: [],
+        waitingOnDependency: [],
+        boundaries: [],
+        boundaryClaims: [
+          {
+            boundary: 'local-ci',
+            label: 'Clean FirstBite local CI',
+            status: 'red',
+            claimAllowed: false,
+            actionIds: ['clean-firstbite-proof'],
+            forbiddenClaim: 'Do not claim local CI validates launch until a clean worktree=true FirstBite execute report runs from landed source.',
+            requiredProof: 'Fresh worktree=true execute report with all current resplit_currency_api lanes passing and commands matching .firstbite/local-ci.json.',
+            currentBlocker: 'Source promotion bundle must land first.',
+            nextAction: 'Run clean worktree local CI from the landed contract.',
+          },
+          {
+            boundary: 'local-agent-host',
+            label: 'Loaded Codex/Cursor MCP host',
+            status: 'red',
+            claimAllowed: false,
+            actionIds: ['loaded-mcp-refresh'],
+            forbiddenClaim: 'Do not claim the loaded Codex/Cursor MCP host can execute FX lanes from a repo-backed package catalog or stale loaded-host probe.',
+            requiredProof: 'Fresh loaded-host list_lanes after Codex/Cursor restart or reload showing repo-manifest-v2 and all current resplit_currency_api lanes.',
+            currentBlocker: 'Loaded MCP host catalog is missing current lanes.',
+            nextAction: 'Save work and restart/reload Codex/Cursor.',
+          },
+          {
+            boundary: 'external-observability',
+            label: 'OTEL/Grafana telemetry',
+            status: 'red',
+            claimAllowed: false,
+            actionIds: ['grafana-otel-proof'],
+            forbiddenClaim: 'Do not claim telemetry is launch-trusted from wrangler config, Cloudflare destination names, or an old nurse-log note alone.',
+            requiredProof: 'Fresh Grafana smoke artifact where Worker trigger, Grafana config, Tempo query, and Loki query are all green.',
+            currentBlocker: 'Grafana proof missing.',
+            nextAction: 'Run the live Grafana smoke after destinations and read credentials exist.',
+          },
+        ],
+      },
       proofAcceptanceMatrix: {
         status: 'red',
         summary: '0 accepted, 3 blocked proof boundary(s).',
@@ -206,6 +279,7 @@ function buildHtml(report) {
     report.verdict.label,
     ...REQUIRED_HTML_LABELS,
     ...REQUIRED_CONTRACT_GATES,
+    ...report.trustModel.operatorRecoveryFlow.boundaryClaims.map(claim => claim.boundary),
     ...report.localCi.loadedMcpProbe.missingLaneIds,
   ].join('\n')
 }

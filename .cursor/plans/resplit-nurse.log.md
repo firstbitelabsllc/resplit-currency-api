@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 12:53 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit now has machine-readable Recovery Boundary Claims inside `trustModel.operatorRecoveryFlow`, so each active recovery boundary says which launch claim is blocked, which proof would unblock it, and which action IDs own that proof.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` derives boundary claim rules for clean FirstBite local CI, loaded Codex/Cursor MCP host, Cloudflare OTEL destinations, Grafana/OTEL telemetry, and M4 peer execution. `scripts/verify-reliability-cockpit-report.js` now fails if the loaded-agent, clean local-CI, or Grafana recovery claim disappears or stops naming the forbidden claim and required proof.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the current Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded-agent execution remains red.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `76/76` focused cockpit/verifier tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `86/86` cockpit/verifier/completion tests passed.
+  - `npm run check` -> generate green, strict release validation green, and `263/263` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run trust:preflight` -> expected red exit `2`: commands `11` green, `3` yellow, `1` red; cockpit still `RED - missing required trust contract`.
+  - `npm run reliability:cockpit:verify` -> cockpit report contract green with Recovery Boundary Claims present and report HEAD matching the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+- Boundary: this does not restart/reload Codex/Cursor, prove the live loaded MCP tool is current, land the source bundle to `origin/main`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the recovery GUI fail verification if it stops saying which claims are forbidden until those exact proofs exist.
+- Exact next slice: commit/push this Recovery Boundary Claims hardening, regenerate the cockpit on the new commit head, then reload the long-lived Codex/Cursor FirstBite MCP host and recapture live loaded `list_lanes`.
+
 ## 2026-05-25 12:45 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit verifier now rejects stale generated reports by reusing the same checkout-HEAD freshness contract as the completion audit, so `npm run reliability:cockpit:verify` cannot pass a structurally intact GUI/report that was generated for an older commit.
