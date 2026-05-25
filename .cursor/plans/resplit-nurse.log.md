@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 16:31 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. `origin/main` advanced to `179a3f7455c` via PR #11 (`feat: prove resplit fx grafana otel`) while this PR was open, and GitHub correctly marked PR #10 dirty. I merged main into the PR worktree and resolved the trust-preflight/Wrangler conflicts without weakening the local-CI/current-source contracts.
+- Shipped delta pending source promotion: the merge keeps the newly landed Grafana OTEL smoke note and production-aware `wrangler.jsonc` observability config from main, while preserving this branch's completion-audit red-exit behavior and the current-source local-CI recovery command in the cockpit. The trust-preflight test now asserts both the Grafana missing-config output path and the completion-audit red blocker.
+- Fresh proof:
+  - Conflict resolution focused proof: `node --test tests/trust-preflight.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `114/114` tests passed.
+  - `npm run check` -> generate green, strict release validation green, and `285/285` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run reliability:cockpit` and `npm run reliability:cockpit:verify` -> green; generated report HEAD still matches the current checkout during the merge resolution.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+- Boundary: PR #11's markdown OTEL smoke note is useful context, but it does not satisfy the cockpit's machine-readable Cloudflare/Grafana proof chain in this checkout. `otel-cloudflare-destinations` and `otel-grafana-proof` remain yellow until fresh sanitized Cloudflare destination proof plus non-skipped Tempo/Loki Grafana smoke artifacts are present. Local CI remains the active red line because the current-source `resplit_currency_api_trust_preflight` lane still fails.
+- Exact next slice: commit/push the main merge, regenerate the cockpit at the merge commit HEAD, rerun completion audit, and then inspect the current-source `resplit_currency_api_trust_preflight` failure artifact to decide which trust contract should be fixed next.
+
 ## 2026-05-25 16:23 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit no longer sends operators into a readout-only loop for a lane-proof-source gap: it now prints the actual repo-backed `run_lanes` command that can create current-source FX lane proof.

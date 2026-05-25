@@ -174,7 +174,7 @@ function buildCommandPlan(options = {}) {
       '--',
       '--skip-trigger',
       '--output',
-      path.join(DEFAULT_OUTPUT_DIR, 'grafana-otel-smoke.json'),
+      path.join(DEFAULT_OUTPUT_DIR, 'grafana-missing-config-preflight.json'),
     ], { expectedExitCodes: [0, 2], yellowExitCodes: [2] }),
     commandSpec('cockpit-generate', 'Cockpit regenerate', 'npm', ['run', 'reliability:cockpit']),
     commandSpec('cockpit-report-contract', 'Cockpit report contract', 'npm', ['run', 'reliability:cockpit:verify']),

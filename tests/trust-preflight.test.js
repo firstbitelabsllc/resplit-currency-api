@@ -40,6 +40,7 @@ test('buildCommandPlan treats Cloudflare and Grafana missing-config proof as yel
   assert.deepEqual(grafana.yellowExitCodes, [2])
   assert.deepEqual(fast.find(command => command.id === 'completion-audit').expectedExitCodes, [0, 2])
   assert.deepEqual(fast.find(command => command.id === 'completion-audit').redExitCodes, [2])
+  assert.deepEqual(grafana.args.slice(-2), ['--output', path.join('reports', 'grafana-missing-config-preflight.json')])
   assert.deepEqual(fast.find(command => command.id === 'source-promotion-packet-generate').yellowExitCodes, [1])
   assert.equal(fast.some(command => command.id === 'full-test-suite'), false)
 

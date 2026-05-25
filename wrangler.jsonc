@@ -9,14 +9,12 @@
     "enabled": true,
     "logs": {
       "enabled": true,
-      "head_sampling_rate": 0.1,
-      "persist": false,
+      "head_sampling_rate": 1,
       "destinations": ["grafana-logs-prod"]
     },
     "traces": {
       "enabled": true,
-      "head_sampling_rate": 0.1,
-      "persist": false,
+      "head_sampling_rate": 1,
       "destinations": ["grafana-traces-prod"]
     }
   },
@@ -33,6 +31,19 @@
   "env": {
     "production": {
       "name": "resplit-fx",
+      "observability": {
+        "enabled": true,
+        "logs": {
+          "enabled": true,
+          "head_sampling_rate": 0.1,
+          "destinations": ["grafana-logs-prod"]
+        },
+        "traces": {
+          "enabled": true,
+          "head_sampling_rate": 0.1,
+          "destinations": ["grafana-traces-prod"]
+        }
+      },
       "vars": {
         "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
         "SENTRY_ENVIRONMENT": "production"
