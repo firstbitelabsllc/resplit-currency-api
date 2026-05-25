@@ -1198,6 +1198,58 @@ test('inspectFirstBiteRunnerControlPlane separates local support from durable ai
   assert.deepEqual(controlPlane.rows.find(row => row.id === 'prBranch').missingTokens, [])
 })
 
+test('inspectFirstBiteRunnerControlPlane treats origin/main plus active package support as durable despite stale local HEAD', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-leo-runner-durable-'))
+  const serverRel = 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs'
+  const packageDir = path.join(repoDir, 'skills', 'resplit-watch', 'mcp', 'firstbite-local-ci')
+  const serverPath = path.join(repoDir, serverRel)
+  const git = args => execFileSync('git', args, {
+    cwd: repoDir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const writeServer = text => {
+    fs.mkdirSync(path.dirname(serverPath), { recursive: true })
+    fs.writeFileSync(serverPath, text)
+  }
+  const supportedServer = [
+    'const expectedExitCodes = lane.expectedExitCodes',
+    'const yellowExitCodes = lane.yellowExitCodes',
+    'const exit_classification = "expected_yellow"',
+    'const trust_status = "yellow"',
+    'const source_ref = resolvedSourceRef',
+  ].join('\n')
+
+  git(['init', '-b', 'main'])
+  git(['config', 'user.email', 'test@example.com'])
+  git(['config', 'user.name', 'Test Runner'])
+  writeServer('const status = rc === 0 ? "pass" : "fail"\n')
+  git(['add', serverRel])
+  git(['commit', '-m', 'unsupported runner'])
+  writeServer(supportedServer)
+  git(['add', serverRel])
+  git(['commit', '-m', 'support yellow exits'])
+  git(['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+  git(['reset', '--hard', 'HEAD~1'])
+  writeServer(supportedServer)
+
+  const controlPlane = inspectFirstBiteRunnerControlPlane({
+    aiLeoRepoDir: repoDir,
+    packageDir,
+  })
+
+  assert.equal(controlPlane.status, 'green')
+  assert.equal(controlPlane.activeSupports, true)
+  assert.equal(controlPlane.headSupports, false)
+  assert.equal(controlPlane.durableSupports, true)
+  assert.match(controlPlane.summary, /local ai-leo HEAD is stale/)
+  assert.match(controlPlane.nextAction, /Restart or reload/)
+  assert.doesNotMatch(controlPlane.nextAction, /PR #11/)
+  assert.equal(controlPlane.rows.find(row => row.id === 'workingTree').status, 'green')
+  assert.equal(controlPlane.rows.find(row => row.id === 'head').status, 'red')
+  assert.equal(controlPlane.rows.find(row => row.id === 'originMain').status, 'green')
+})
+
 test('buildMcpCatalogDelta explains loaded host drift against repo-backed catalog', () => {
   const delta = buildMcpCatalogDelta({
     expectedRepo: 'resplit_currency_api',

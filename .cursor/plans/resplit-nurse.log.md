@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 07:18 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, selected clean local-CI proof, source-promotion, and external Cloudflare/Grafana proof remain separate required trust contracts.
+- Shipped delta pending source promotion: ai-leo PR #11 is now merged to `ai-leo/main` (`8b55c1685c0c`), so the FirstBite runner's expected/yellow exit handling is durable on `origin/main`. The cockpit now treats `active package + origin/main support` as a green runner-durability signal even when the local ai-leo checkout `HEAD` is stale or divergent, and keeps the stale loaded-host boundary separate.
+- Fresh proof:
+  - `gh pr view 11 --repo leojkwan/ai-leo` -> `MERGED` at `2026-05-25T11:14:55Z`, merge commit `8b55c1685c0cc0664acbacb4b1ad8378f5322533`.
+  - `git show origin/main:skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs` in ai-leo contains `expected_yellow`, `trust_status`, `exit_classification`, and `source_ref`.
+  - Repo-backed FirstBite `run_lanes` dry-run for `resplit_currency_api_trust_preflight` with `source_ref=refs/remotes/origin/codex/fx-otel-grafana-config-20260525` -> expected exits `[0,1]`, yellow exits `[1]`, report `/Users/leokwan/.agent-ledger/firstbite-local-ci-mcp/mcp-20260525T111419Z-70628/report.json`.
+  - Live loaded `mcp__firstbite_local_ci.list_lanes` still lists only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so the loaded host remains stale after ai-leo merge.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `49/49` focused cockpit tests green, including the stale-local-HEAD/durable-origin-main regression.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit verdict remains `RED - missing required trust contract`; runner durability is now green, repo-backed MCP package green, loaded MCP host missing.
+  - `npm run check` -> strict release validation green and `225/225` tests passed.
+- Boundary: this does not prove loaded MCP freshness, clean `resplit_currency_api_all` execution from landed source, Cloudflare destination existence, or Grafana Tempo/Loki delivery. The local ai-leo checkout `HEAD` is still stale/divergent even though active files and `origin/main` contain the runner support.
+- Exact next slice: restart/reload the Codex/Cursor FirstBite MCP host, capture `reports/firstbite-loaded-mcp-lanes.json`, then rerun clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 07:02 EDT
 
 - `NO-GO` overall launch; `RED/current` for the local-CI/agent/OTEL control plane because the cockpit now separates repo-backed FirstBite catalog truth, runner-package durability, loaded MCP host freshness, and external Grafana proof instead of compressing them into one local-CI color.

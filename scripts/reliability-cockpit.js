@@ -1392,20 +1392,27 @@ function inspectFirstBiteRunnerControlPlane({
   const durableSupports = Boolean(originMain?.supports)
   const prSupports = Boolean(prBranch?.supports)
   let status = 'red'
-  if (activeSupports && durableSupports && headSupports) {
+  if (activeSupports && durableSupports) {
     status = 'green'
-  } else if (activeSupports) {
+  } else if (activeSupports || durableSupports || prSupports) {
     status = 'yellow'
   }
-  const summary = status === 'green'
-    ? 'FirstBite runner expected/yellow exit support is landed on ai-leo origin/main and present in the active package.'
-    : status === 'yellow'
-      ? 'FirstBite runner expected/yellow exit support exists locally or on the PR branch, but is not landed on ai-leo origin/main.'
-      : 'Active FirstBite runner package does not preserve expected/yellow trust exits.'
-  const nextAction = status === 'green'
+  let summary = 'Active FirstBite runner package does not preserve expected/yellow trust exits.'
+  if (activeSupports && durableSupports && headSupports) {
+    summary = 'FirstBite runner expected/yellow exit support is landed on ai-leo origin/main and present in the active package.'
+  } else if (activeSupports && durableSupports) {
+    summary = 'FirstBite runner expected/yellow exit support is landed on ai-leo origin/main and present in the active package; local ai-leo HEAD is stale or divergent.'
+  } else if (durableSupports) {
+    summary = 'FirstBite runner expected/yellow exit support is landed on ai-leo origin/main, but the active package is stale.'
+  } else if (activeSupports || prSupports) {
+    summary = 'FirstBite runner expected/yellow exit support exists locally or on the PR branch, but is not landed on ai-leo origin/main.'
+  }
+  const nextAction = activeSupports && durableSupports
     ? 'Restart or reload the loaded MCP host, then capture a fresh list_lanes artifact from the in-app MCP boundary.'
-    : activeSupports || prSupports
-      ? 'Merge ai-leo PR #11, update ai-leo origin/main, restart the Codex/Cursor MCP host, and recapture reports/firstbite-loaded-mcp-lanes.json.'
+    : durableSupports
+      ? 'Update the active ai-leo FirstBite runner package from origin/main, restart the Codex/Cursor MCP host, and recapture reports/firstbite-loaded-mcp-lanes.json.'
+      : activeSupports || prSupports
+        ? 'Merge ai-leo PR #11, update ai-leo origin/main, restart the Codex/Cursor MCP host, and recapture reports/firstbite-loaded-mcp-lanes.json.'
       : 'Port expected/yellow exit support into the active FirstBite runner package before trusting local-agent lane colors.'
 
   return {
