@@ -1250,9 +1250,16 @@ function inspectFirstBiteMcpRefreshPlan({
   const missingExpectedLaneIds = expectedLaneIds.filter(laneId => !laneKeys.includes(laneId))
   const catalogHasExpectedManifest = (expectedLaneIds.length === 0 || missingExpectedLaneIds.length === 0)
     && (!expectedRepo || repoPresent)
+  const catalogLaneCount = numberOrNull(repoBackedCatalog?.lane_count)
+  const catalogDeclaredCount = numberOrNull(repoBackedCatalog?.declared_count)
+  const catalogCountsAreSelfConsistent = catalogLaneCount !== null
+    && catalogDeclaredCount !== null
+    && catalogLaneCount === catalogDeclaredCount
+  const catalogMeetsExpectedLaneFloor = expectedLaneIds.length === 0
+    || catalogLaneCount >= expectedLaneIds.length
   const catalogLooksRepoManifestV2 = repoBackedCatalog?.catalog_version === 'repo-manifest-v2'
-    && numberOrNull(repoBackedCatalog?.lane_count) >= 15
-    && numberOrNull(repoBackedCatalog?.declared_count) >= 15
+    && catalogCountsAreSelfConsistent
+    && catalogMeetsExpectedLaneFloor
   const repoBackedCatalogCurrent = catalogHasExpectedManifest
     && (Boolean(data.authority?.repoBackedCatalogCurrent) || catalogLooksRepoManifestV2)
   const verdict = data.verdict || 'unknown'

@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 07:39 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, and Grafana Tempo/Loki proof remain separate required trust contracts.
+- Shipped delta pending source promotion: the FirstBite MCP refresh-plan parser no longer hardcodes a `15` lane catalog floor. It now treats a `repo-manifest-v2` packet as current only when the packet's declared/lane counts are self-consistent and meet the expected manifest lane floor for this repo; fresh packets still go red when they omit current expected lanes such as `resplit_currency_api_trust_preflight`.
+- Fresh proof:
+  - Live loaded `mcp__firstbite_local_ci.list_lanes` still lists only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so loaded MCP host trust remains unproven until restart/reload plus captured artifact.
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `53/53` focused cockpit tests green, including the manifest-driven refresh catalog regression.
+  - `npm run check` -> strict release validation green and `229/229` tests passed.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract`. Current refresh plan is fresh but red because packet catalog `repo-manifest-v2` `15/15` is missing `resplit_currency_api_trust_preflight`; Grafana proof remains yellow with Tempo/Loki missing.
+- Boundary: this removes a stale source assumption in the cockpit; it does not prove the loaded in-app MCP host, a clean landed `resplit_currency_api_all` run, Cloudflare destination existence, or Grafana Tempo/Loki delivery.
+- Exact next slice: source-promote this PR bundle, restart/reload Codex/Cursor FirstBite MCP host, capture `reports/firstbite-loaded-mcp-lanes.json` from live `list_lanes`, then run clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 07:31 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean local-CI execution from landed source, source-promotion, Cloudflare destination proof, and Grafana Tempo/Loki proof remain separate required trust contracts.

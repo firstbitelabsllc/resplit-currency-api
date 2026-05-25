@@ -1033,6 +1033,54 @@ test('inspectFirstBiteMcpRefreshPlan surfaces stale loaded-client process audit'
   assert.match(plan.nextAction, /restart\/reload Codex\/Cursor/)
 })
 
+test('inspectFirstBiteMcpRefreshPlan accepts manifest-driven repo-backed catalogs without a fixed lane-count floor', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-manifest-floor-'))
+  const runDir = path.join(root, '20260525T112208Z-16715')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify({
+    runId: '20260525T112208Z-16715',
+    createdAt: '2026-05-25T11:22:10Z',
+    verdict: 'repo_backed_catalog_current',
+    processAudit: {
+      status: 'clean',
+      process_count: 2,
+      stale_process_count: 0,
+      current_process_count: 2,
+    },
+    repoBackedCatalog: {
+      catalog_version: 'repo-manifest-v2',
+      lane_count: 4,
+      declared_count: 4,
+      repo_keys: ['resplit_currency_api'],
+      lane_keys: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_trust_preflight',
+        'resplit_currency_api_ui',
+      ],
+    },
+  }, null, 2))
+
+  const plan = inspectFirstBiteMcpRefreshPlan({
+    reportRoot: root,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    generatedAt: '2026-05-25T11:25:10Z',
+  })
+
+  assert.equal(plan.status, 'green')
+  assert.equal(plan.repoBackedCatalogCurrent, true)
+  assert.equal(plan.repoPresent, true)
+  assert.deepEqual(plan.missingExpectedLaneIds, [])
+  assert.equal(plan.repoBackedCatalog.lane_count, 4)
+  assert.equal(plan.repoBackedCatalog.declared_count, 4)
+})
+
 test('inspectFirstBiteMcpRefreshPlan rejects stale repo-backed catalog against current manifest lanes', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-stale-'))
   const runDir = path.join(root, '20260525T112208Z-16715')
