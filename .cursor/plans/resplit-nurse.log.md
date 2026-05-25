@@ -1,5 +1,27 @@
 # Resplit Nurse Log
 
+## 2026-05-25 05:56 EDT
+
+- `NO-GO` overall launch; `YELLOW/current` for `resplit-currency-api` observability because Worker OTEL config is now source-declared locally, but Grafana Tempo+Loki have not both matched live telemetry.
+- Shipped delta pending source promotion: `wrangler.jsonc` declares first-party Cloudflare Workers Observability export to `grafana-logs-prod` and `grafana-traces-prod` with 10% head sampling and `persist: false`; `scripts/reliability-cockpit.js` now accepts first-party per-stream OTEL blocks and renders the persistence boundary; `INBOX.md` replaces the stale Worker-side SDK row with the current Cloudflare destination trust gate.
+- Fresh proof:
+  - `npm ci` -> installed Wrangler 4.75.0 locally for schema/dry-run validation.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-grafana-otel-smoke.test.js` -> `49/49` focused tests green.
+  - `npx wrangler deploy --config wrangler.jsonc --env="" --dry-run --outdir /tmp/resplit-fx-wrangler-dry-run-20260525` -> Wrangler accepted the config and exited at dry run.
+  - `npm run check` -> `213/213` tests green.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npm run observability:otel-smoke -- --skip-trigger --output reports/grafana-otel-smoke.json` -> expected yellow: Grafana read env missing, Tempo/Loki unmatched.
+  - `npm run reliability:cockpit` -> cockpit telemetry moved from red/missing config to yellow/config-present, with evidence file `reports/grafana-otel-smoke.json`.
+- Known / unknown / forgotten work surfaced:
+  - known: config alone is not launch proof; only a fresh Grafana smoke where Worker trigger, Grafana read config, Tempo query, and Loki query are all green can satisfy the OTEL gate.
+  - known: loaded in-process FirstBite MCP host catalog is still stale/missing for this generated cockpit; repo-backed MCP remains the source of truth until the host reloads.
+  - unknown: whether Cloudflare dashboard destinations named `grafana-logs-prod` and `grafana-traces-prod` already exist in the target account; merge/deploy will not prove delivery without that dashboard state plus Grafana read env.
+- Exact next slice: review and promote this source bundle, then after deploy run `npm run observability:otel-smoke -- --since-minutes 60` with Grafana read env until `reports/grafana-otel-smoke.json` shows both Tempo and Loki matched.
+- Current build boundary: trunk `origin/main` `3c5a9fd`; local branch/worktree has unpromoted OTEL config/cockpit diffs; broader launch trust remains red because external observability proof and loaded MCP host refresh are not green.
+- Latency: `hygiene` `10m`, `implementation` `12m`, `proof/wait` `8m`.
+
+<promise>SKIP: external blocker</promise>
+
 ## 2026-04-10 23:25 EDT
 
 - `NO-GO` overall launch (resplit-ios trunk dirty with active claude thread mid-fix on `PendingScanRecord` SwiftData @Model bricked-app failure); `GO/current` for `resplit-currency-api`.

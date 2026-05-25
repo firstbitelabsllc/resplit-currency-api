@@ -5,6 +5,21 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "upload_source_maps": true,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.1,
+      "persist": false,
+      "destinations": ["grafana-logs-prod"]
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1,
+      "persist": false,
+      "destinations": ["grafana-traces-prod"]
+    }
+  },
   "vars": {
     "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
     "SENTRY_ENVIRONMENT": "production"

@@ -185,8 +185,40 @@ test('inspectTelemetry reports trace config as pending proof', () => {
   assert.equal(telemetry.observability.scope, 'top-level')
   assert.equal(telemetry.observability.tracesEnabled, true)
   assert.deepEqual(telemetry.observability.destinationNames, ['grafana-traces-prod', 'grafana-logs-prod'])
+  assert.deepEqual(telemetry.observability.persistence, { logs: true, traces: true })
   assert.equal(telemetry.grafana.tempoVerifierPresent, true)
   assert.equal(telemetry.grafana.evidence.status, 'missing')
+})
+
+test('inspectTelemetry accepts first-party OTEL export blocks without root worker logs', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-'))
+
+  const telemetry = inspectTelemetry({
+    name: 'resplit-fx',
+    observability: {
+      logs: {
+        enabled: true,
+        head_sampling_rate: 0.1,
+        persist: false,
+        destinations: ['grafana-logs-prod'],
+      },
+      traces: {
+        enabled: true,
+        head_sampling_rate: 0.1,
+        persist: false,
+        destinations: ['grafana-traces-prod'],
+      },
+    },
+  }, path.join(repoDir, 'wrangler.jsonc'), {
+    scripts: { 'observability:otel-smoke': 'node scripts/verify-grafana-otel-smoke.js' },
+  }, repoDir)
+
+  assert.equal(telemetry.status, 'yellow')
+  assert.equal(telemetry.observability.enabled, true)
+  assert.equal(telemetry.observability.logsEnabled, true)
+  assert.equal(telemetry.observability.tracesEnabled, true)
+  assert.deepEqual(telemetry.observability.persistence, { logs: false, traces: false })
+  assert.match(telemetry.summary, /config exists/)
 })
 
 test('inspectTelemetry recognizes the combined OTEL smoke verifier', () => {

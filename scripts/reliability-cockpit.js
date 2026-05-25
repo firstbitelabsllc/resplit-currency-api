@@ -1426,9 +1426,10 @@ function inspectTelemetry(wrangler, wranglerPath, packageJson, repoDir, options 
   const scope = productionObservability ? 'env.production' : 'top-level'
   const logs = observability?.logs || null
   const traces = observability?.traces || null
-  const enabled = observability?.enabled === true
+  const workerLogsEnabled = observability?.enabled === true
   const tracesEnabled = traces?.enabled === true
   const logsEnabled = logs?.enabled === true
+  const enabled = workerLogsEnabled || logsEnabled || tracesEnabled
   const destinationNames = Array.from(new Set([
     ...destinationList(traces?.destinations),
     ...destinationList(logs?.destinations),
@@ -1470,6 +1471,10 @@ function inspectTelemetry(wrangler, wranglerPath, packageJson, repoDir, options 
       sampling: {
         logs: logs?.head_sampling_rate ?? observability?.head_sampling_rate ?? null,
         traces: traces?.head_sampling_rate ?? null,
+      },
+      persistence: {
+        logs: logsEnabled ? logs?.persist ?? true : null,
+        traces: tracesEnabled ? traces?.persist ?? true : null,
       },
       destinationNames,
     },
@@ -4649,6 +4654,7 @@ function renderTelemetry(telemetry) {
       summary: 'no Grafana evidence loaded',
     }
   const checks = Array.isArray(evidence.checks) ? evidence.checks : []
+  const persistence = telemetry.observability.persistence || {}
   return `<section class="half">
     <h2>OTEL / Grafana Readiness</h2>
     <div class="kv">
@@ -4658,6 +4664,7 @@ function renderTelemetry(telemetry) {
       <div>Logs</div><div>${telemetry.observability.logsEnabled ? 'enabled' : 'missing'}</div>
       <div>Traces</div><div>${telemetry.observability.tracesEnabled ? 'enabled' : 'missing'}</div>
       <div>Sampling</div><div>logs ${escapeHtml(String(telemetry.observability.sampling.logs ?? 'unknown'))} / traces ${escapeHtml(String(telemetry.observability.sampling.traces ?? 'unknown'))}</div>
+      <div>Persistence</div><div>logs ${escapeHtml(formatTelemetryPersistence(persistence.logs))} / traces ${escapeHtml(formatTelemetryPersistence(persistence.traces))}</div>
       <div>Destinations</div><div>${telemetry.observability.destinationNames.length > 0 ? telemetry.observability.destinationNames.map(name => `<code>${escapeHtml(name)}</code>`).join(' ') : 'missing'}</div>
       <div>Verifier</div><div>${telemetry.grafana.tempoVerifierPresent ? 'present' : 'missing'}${telemetry.grafana.verifierPaths?.length ? ` <code>${escapeHtml(telemetry.grafana.verifierPaths.map(item => path.relative(process.cwd(), item)).join(', '))}</code>` : ''}</div>
       <div>Grafana evidence</div><div><span class="${escapeHtml(evidence.status)}">${escapeHtml(evidence.status)}</span> ${escapeHtml(evidence.summary)}</div>
@@ -4675,6 +4682,12 @@ function renderTelemetry(telemetry) {
       </tbody>
     </table>` : ''}
   </section>`
+}
+
+function formatTelemetryPersistence(value) {
+  if (value === false) return 'external-only'
+  if (value === true) return 'dashboard+external'
+  return 'unknown'
 }
 
 function renderAgentState(agentState) {
