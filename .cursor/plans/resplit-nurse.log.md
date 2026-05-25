@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 10:22 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but launch completion is now mechanically audited instead of inferred from prose.
+- Shipped delta pending source promotion: added `npm run reliability:completion-audit` (`scripts/reliability-completion-audit.js`) and wired it into `npm run trust:preflight` as expected red launch evidence. The cockpit report verifier still proves the generated GUI contains the required sections; the completion audit separately fails until every launch-trust boundary and trust contract is green and claim-allowed.
+- Fresh proof:
+  - Live `mcp__firstbite_local_ci.list_lanes` in the active Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`, so the loaded-host boundary remains red.
+  - `node --check scripts/reliability-completion-audit.js && node --check scripts/trust-preflight.js && node --test tests/reliability-completion-audit.test.js tests/trust-preflight.test.js tests/reliability-cockpit.test.js` -> `67/67` focused tests green.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> cockpit report contract green.
+  - `npm run reliability:completion-audit` -> expected red exit `2`; `Launch completion blocked: 9 non-green/missing launch boundary(s), 13 non-green trust contract(s).`
+  - `npm run trust:preflight` -> expected red exit `2`; commands `11 green, 3 yellow, 1 red`; the red command is the expected launch completion audit, and cockpit remains `RED - missing required trust contract`.
+  - `npm run check` -> strict release validation green and `242/242` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this does not reload the loaded MCP host, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It gives the internal GUI a hard completion gate so those missing surfaces cannot be laundered as launch-ready.
+- Exact next slice: commit/push this completion-audit source, rerun the source-promotion packet from the new head, keep `reports/` local, then reload the FirstBite MCP host and recapture `mcp__firstbite_local_ci.list_lanes` before trying loaded-agent execution.
+
 ## 2026-05-25 10:13 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds, but the cockpit GUI now has its own source-backed verifier so the internal report cannot silently drop the operator trust surfaces.

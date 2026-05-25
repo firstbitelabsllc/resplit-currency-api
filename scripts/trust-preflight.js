@@ -149,10 +149,12 @@ function buildCommandPlan(options = {}) {
     commandSpec('grafana-verifier-syntax', 'Grafana verifier syntax', 'node', ['--check', 'scripts/verify-grafana-otel-smoke.js']),
     commandSpec('loaded-mcp-capture-syntax', 'Loaded MCP capture syntax', 'node', ['--check', 'scripts/capture-loaded-mcp-probe.js']),
     commandSpec('cockpit-report-verifier-syntax', 'Cockpit report verifier syntax', 'node', ['--check', 'scripts/verify-reliability-cockpit-report.js']),
+    commandSpec('completion-audit-syntax', 'Completion audit syntax', 'node', ['--check', 'scripts/reliability-completion-audit.js']),
     commandSpec('targeted-tests', 'Targeted cockpit tests', 'node', [
       '--test',
       'tests/capture-loaded-mcp-probe.test.js',
       'tests/reliability-cockpit.test.js',
+      'tests/reliability-completion-audit.test.js',
       'tests/source-promotion-packet.test.js',
       'tests/verify-cloudflare-otel-destinations.test.js',
       'tests/verify-grafana-otel-smoke.test.js',
@@ -176,6 +178,10 @@ function buildCommandPlan(options = {}) {
     ], { expectedExitCodes: [0, 2], yellowExitCodes: [2] }),
     commandSpec('cockpit-generate', 'Cockpit regenerate', 'npm', ['run', 'reliability:cockpit']),
     commandSpec('cockpit-report-contract', 'Cockpit report contract', 'npm', ['run', 'reliability:cockpit:verify']),
+    commandSpec('completion-audit', 'Launch completion audit', 'npm', ['run', 'reliability:completion-audit'], {
+      expectedExitCodes: [0, 2],
+      redExitCodes: [2],
+    }),
     commandSpec('source-promotion-packet-generate', 'Source promotion packet generate', 'npm', ['run', 'source:promotion-packet'], {
       expectedExitCodes: [0, 1],
       yellowExitCodes: [1],
@@ -206,6 +212,7 @@ function commandSpec(id, label, bin, args, overrides = {}) {
     command: [bin, ...args].join(' '),
     expectedExitCodes: overrides.expectedExitCodes || [0],
     yellowExitCodes: overrides.yellowExitCodes || [],
+    redExitCodes: overrides.redExitCodes || [],
   }
 }
 
@@ -230,8 +237,9 @@ function runCommand(spec, { repoDir }) {
 function classifyCommandResult(result) {
   const expected = result.expectedExitCodes || [0]
   const yellow = result.yellowExitCodes || []
+  const red = result.redExitCodes || []
   const status = expected.includes(result.rc)
-    ? (yellow.includes(result.rc) ? 'yellow' : 'green')
+    ? (red.includes(result.rc) ? 'red' : yellow.includes(result.rc) ? 'yellow' : 'green')
     : 'red'
 
   return {
@@ -242,6 +250,7 @@ function classifyCommandResult(result) {
     rc: result.rc,
     expectedExitCodes: expected,
     yellowExitCodes: yellow,
+    redExitCodes: red,
     durationMs: result.durationMs,
     stdoutTail: tail(result.stdout || ''),
     stderrTail: tail(result.stderr || ''),

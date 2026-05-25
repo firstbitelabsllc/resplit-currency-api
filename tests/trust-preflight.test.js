@@ -29,13 +29,17 @@ test('buildCommandPlan treats Cloudflare and Grafana missing-config proof as yel
   const grafana = fast.find(command => command.id === 'grafana-missing-config-proof')
 
   assert.equal(fast.some(command => command.id === 'source-promotion-packet-syntax'), true)
+  assert.equal(fast.some(command => command.id === 'completion-audit-syntax'), true)
   assert.equal(fast.some(command => command.id === 'source-promotion-packet-generate'), true)
   assert.ok(fast.find(command => command.id === 'targeted-tests').args.includes('tests/source-promotion-packet.test.js'))
+  assert.ok(fast.find(command => command.id === 'targeted-tests').args.includes('tests/reliability-completion-audit.test.js'))
   assert.ok(fast.find(command => command.id === 'targeted-tests').args.includes('tests/verify-cloudflare-otel-destinations.test.js'))
   assert.deepEqual(cloudflare.expectedExitCodes, [0, 2])
   assert.deepEqual(cloudflare.yellowExitCodes, [2])
   assert.deepEqual(grafana.expectedExitCodes, [0, 2])
   assert.deepEqual(grafana.yellowExitCodes, [2])
+  assert.deepEqual(fast.find(command => command.id === 'completion-audit').expectedExitCodes, [0, 2])
+  assert.deepEqual(fast.find(command => command.id === 'completion-audit').redExitCodes, [2])
   assert.deepEqual(fast.find(command => command.id === 'source-promotion-packet-generate').yellowExitCodes, [1])
   assert.equal(fast.some(command => command.id === 'full-test-suite'), false)
 
@@ -65,6 +69,17 @@ test('classifyCommandResult separates expected yellow exits from red failures', 
     yellowExitCodes: [],
     durationMs: 10,
     stderr: 'failed',
+  }).status, 'red')
+
+  assert.equal(classifyCommandResult({
+    id: 'completion-audit',
+    label: 'Completion audit',
+    command: 'npm run reliability:completion-audit',
+    rc: 2,
+    expectedExitCodes: [0, 2],
+    redExitCodes: [2],
+    durationMs: 10,
+    stdout: 'launch completion blocked',
   }).status, 'red')
 })
 

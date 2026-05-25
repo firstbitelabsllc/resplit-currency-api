@@ -16,6 +16,7 @@
     "mcp:loaded-probe": "node scripts/capture-loaded-mcp-probe.js",
     "reliability:cockpit": "node scripts/reliability-cockpit.js",
     "reliability:cockpit:verify": "node scripts/verify-reliability-cockpit-report.js",
+    "reliability:completion-audit": "node scripts/reliability-completion-audit.js",
     "source:promotion-packet": "node scripts/source-promotion-packet.js",
     "trust:preflight": "node scripts/trust-preflight.js",
     "check:publish": "npm run generate && npm run validate && npm run test",

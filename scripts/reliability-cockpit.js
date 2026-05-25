@@ -51,6 +51,8 @@ const SOURCE_PROMOTION_REQUIRED_PATHS = [
   'tests/verify-grafana-otel-smoke.test.js',
   'scripts/verify-reliability-cockpit-report.js',
   'tests/verify-reliability-cockpit-report.test.js',
+  'scripts/reliability-completion-audit.js',
+  'tests/reliability-completion-audit.test.js',
   'scripts/audit-history-backfill-sources.js',
   'tests/audit-history-backfill-sources.test.js',
   'scripts/smoke-check-deploy.js',
