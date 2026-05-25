@@ -356,10 +356,18 @@ test('evaluateMcpProofFreshness requires source state and lane artifacts', () =>
     sourceState: { syncStatus: 'dirty', dirtyCount: 1, behindOriginMain: 0, aheadOriginMain: 0 },
     lanes: [{ sourceHead: 'abc', logPath: '/tmp/run.log' }],
   }, '2026-05-25T00:00:00.000Z')
+  const warned = evaluateMcpProofFreshness({
+    status: 'warn',
+    createdAt: '2026-05-24T23:55:00.000Z',
+    sourceState: { syncStatus: 'clean', dirtyCount: 0, behindOriginMain: 0, aheadOriginMain: 0 },
+    lanes: [{ sourceHead: 'abc', logPath: '/tmp/run.log' }],
+  }, '2026-05-25T00:00:00.000Z')
 
   assert.equal(missingState.status, 'yellow')
   assert.equal(fresh.status, 'green')
   assert.equal(fresh.ageMinutes, 5)
+  assert.equal(warned.status, 'yellow')
+  assert.match(warned.summary, /expected warning/)
 })
 
 test('inspectLaneLog classifies publish grace and live smoke failures', () => {
@@ -378,6 +386,11 @@ test('inspectLaneLog classifies publish grace and live smoke failures', () => {
   const unitLog = path.join(dir, 'unit.log')
   fs.writeFileSync(unitLog, '✖ validate-package still fails when a latest currency artifact is missing\n  Error: ENOENT: no such file or directory, lstat package\n')
   assert.match(inspectLaneLog(unitLog, { kind: 'unit', status: 'fail' }).summary, /validate-package/)
+  const warnLog = path.join(dir, 'warn.log')
+  fs.writeFileSync(warnLog, '===== FINAL SUMMARY =====\nrc=1\n')
+  const warned = inspectLaneLog(warnLog, { kind: 'integration', status: 'warn', reason: 'command exited with expected yellow code 1' })
+  assert.equal(warned.status, 'yellow')
+  assert.match(warned.summary, /expected yellow code 1/)
   const publishJsonLog = path.join(dir, 'publish-json.log')
   fs.writeFileSync(publishJsonLog, '[FX_PUBLISH] {"error":"cloudflare latest date expected 2026-05-25, got 2026-05-24"}\nsmoke-check-deploy: FAILED\n')
   assert.equal(inspectLaneLog(publishJsonLog).summary, 'Error: cloudflare latest date expected 2026-05-25, got 2026-05-24')
@@ -1385,6 +1398,72 @@ test('findLatestMcpProofForRepo distinguishes primary checkout from execution wo
   assert.equal(proof.history[0].requestedSourceRef, 'refs/remotes/origin/main')
   assert.equal(proof.history[0].sourceState.syncStatus, 'not_origin_main')
   assert.equal(proof.history[0].primarySourceState.syncStatus, 'dirty')
+})
+
+test('findLatestMcpProofForRepo keeps expected yellow lane exits as yellow proof', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-'))
+  const mcpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-mcp-'))
+  fs.mkdirSync(path.join(mcpRoot, 'warn-proof'))
+  const cleanSource = {
+    repo_path: '/tmp/firstbite-clean',
+    exists: true,
+    is_git: true,
+    head: 'abc',
+    upstream_head: 'abc',
+    dirty_count: 0,
+    ahead_origin_main: 0,
+    behind_origin_main: 0,
+    sync_status: 'origin_main',
+  }
+
+  fs.writeFileSync(path.join(mcpRoot, 'warn-proof', 'report.json'), JSON.stringify({
+    run_id: 'warn-proof',
+    mode: 'execute',
+    created_at: '2026-05-25T00:00:00.000Z',
+    overall: 'warn',
+    lanes: [
+      {
+        lane: 'lane_a',
+        repo: 'repo_key',
+        kind: 'unit',
+        command: 'npm run test',
+        status: 'pass',
+        rc: 0,
+        source_head: 'abc',
+        log_path: '/tmp/a.log',
+        execution_source_state: cleanSource,
+      },
+      {
+        lane: 'lane_b',
+        repo: 'repo_key',
+        kind: 'integration',
+        command: 'npm run trust:preflight',
+        status: 'warn',
+        rc: 1,
+        reason: 'command exited with expected yellow code 1',
+        expected_exit_codes: [0, 1],
+        yellow_exit_codes: [1],
+        exit_classification: 'expected_yellow',
+        trust_status: 'yellow',
+        source_head: 'abc',
+        log_path: '/tmp/b.log',
+        execution_source_state: cleanSource,
+      },
+    ],
+  }))
+
+  const proof = findLatestMcpProofForRepo({
+    repoDir,
+    repoKey: 'repo_key',
+    expectedLaneIds: ['lane_a', 'lane_b'],
+    reportRoot: mcpRoot,
+  })
+
+  assert.equal(proof.latest.runId, 'warn-proof')
+  assert.equal(proof.latest.status, 'warn')
+  assert.equal(proof.latest.lanes[1].diagnostics.status, 'yellow')
+  assert.deepEqual(proof.latest.lanes[1].yellowExitCodes, [1])
+  assert.deepEqual(proof.history.map(item => item.trustStatus), ['yellow'])
 })
 
 test('findLatestMcpProofForRepo keeps clean execution proof ahead of newer dirty active proof', () => {

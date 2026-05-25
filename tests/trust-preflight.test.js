@@ -8,6 +8,7 @@ const {
   buildCommandPlan,
   buildTrustPreflightReport,
   classifyCommandResult,
+  exitCodeForStatus,
   parseArgs,
   renderMarkdown,
   runTrustPreflight,
@@ -65,6 +66,12 @@ test('classifyCommandResult separates expected yellow exits from red failures', 
     durationMs: 10,
     stderr: 'failed',
   }).status, 'red')
+})
+
+test('exitCodeForStatus preserves top-level yellow versus red trust state', () => {
+  assert.equal(exitCodeForStatus('green'), 0)
+  assert.equal(exitCodeForStatus('yellow'), 1)
+  assert.equal(exitCodeForStatus('red'), 2)
 })
 
 test('buildTrustPreflightReport keeps cockpit red as the overall result', () => {

@@ -22,7 +22,7 @@ if (require.main === module) {
       process.stdout.write(`trust-preflight: wrote ${result.report.outputPath}\n`)
       process.stdout.write(`trust-preflight: wrote ${result.report.markdownPath}\n`)
     }
-    process.exitCode = result.report.status === 'red' ? 1 : 0
+    process.exitCode = exitCodeForStatus(result.report.status)
   }).catch(error => {
     console.error(`trust-preflight: FAILED\n${error.stack || error.message}`)
     process.exitCode = 1
@@ -245,6 +245,16 @@ function classifyCommandResult(result) {
   }
 }
 
+function exitCodeForStatus(status) {
+  if (status === 'red') {
+    return 2
+  }
+  if (status === 'yellow') {
+    return 1
+  }
+  return 0
+}
+
 function buildTrustPreflightReport({
   repoDir,
   generatedAt,
@@ -317,9 +327,9 @@ function renderMarkdown(report) {
     '',
     '## Commands',
     '',
-    '| Check | Status | Exit | Expected | Command |',
-    '|---|---:|---:|---|---|',
-    ...report.commands.map(command => `| ${escapeMarkdown(command.label)} | ${command.status} | ${command.rc} | ${(command.expectedExitCodes || []).join(', ')} | \`${escapeMarkdown(command.command)}\` |`),
+    '| Check | Status | Exit | Expected | Yellow | Command |',
+    '|---|---:|---:|---|---|---|',
+    ...report.commands.map(command => `| ${escapeMarkdown(command.label)} | ${command.status} | ${command.rc} | ${(command.expectedExitCodes || []).join(', ')} | ${(command.yellowExitCodes || []).join(', ') || 'none'} | \`${escapeMarkdown(command.command)}\` |`),
     '',
     '## Trust Contracts',
     '',
@@ -375,6 +385,7 @@ module.exports = {
   buildCommandPlan,
   buildTrustPreflightReport,
   classifyCommandResult,
+  exitCodeForStatus,
   parseArgs,
   renderMarkdown,
   runTrustPreflight,

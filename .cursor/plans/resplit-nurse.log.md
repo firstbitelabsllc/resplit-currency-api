@@ -1,5 +1,22 @@
 # Resplit Nurse Log
 
+## 2026-05-25 06:40 EDT
+
+- `NO-GO` overall launch; `RED/current` for the local-CI/agent/OTEL control plane because the trust preflight now preserves red cockpit verdicts at the top-level FirstBite lane instead of collapsing every non-green preflight into one ambiguous exit code.
+- Shipped delta pending source promotion: `npm run trust:preflight` now exits `0=green`, `1=yellow`, `2=red`; `.firstbite/local-ci.json` declares `resplit_currency_api_trust_preflight` as `expectedExitCodes [0,1]` with `yellowExitCodes [1]`; the cockpit carries expected/yellow lane metadata, keeps expected-warning proof yellow, and keeps red/error proof red.
+- Fresh proof:
+  - FirstBite MCP package `npm run lint` -> green after local runner support for `expectedExitCodes`, `yellowExitCodes`, lane `warn`, aggregate `warn`, `exit_classification`, and `trust_status`.
+  - Repo-backed FirstBite `list_lanes` with `RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525` -> `repo-manifest-v2`, `16` lanes, `resplit_currency_api_trust_preflight` exposes `expectedExitCodes [0,1]` and `yellowExitCodes [1]`.
+  - `node --check scripts/reliability-cockpit.js` and `node --check scripts/trust-preflight.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js` -> `53/53` focused tests green.
+  - `npm run trust:preflight` -> expected red exit `2`: commands `8 green, 3 yellow, 0 red`, but cockpit verdict remains `RED - missing required trust contract`.
+  - FirstBite `run_lanes` active-checkout proof `verify-resplit-fx-trust-preflight-red-preserved-20260525` -> `overall=fail`, lane `rc=2`, `exit_classification=unexpected`, `trust_status=red`; this proves red cockpit truth is not laundered into yellow.
+  - `npm run reliability:cockpit` -> regenerated local cockpit with selected FirstBite proof red: `Manifest has 4 lane(s); latest MCP proof is fail, but resplit_currency_api_trust_preflight: command exited with code 2`.
+  - `npm run check` -> strict release validation green and `223/223` tests passed.
+  - `npm run source:promotion-packet` -> expected red while cockpit is red; source candidates are reviewed, but generated reports remain local and the launch claim stays blocked by missing trust contracts.
+- Boundary: the FirstBite MCP runner patch is local in `ai-leo` until that package is committed/reloaded; the in-app loaded MCP host is still stale until restart/reload and a fresh `reports/firstbite-loaded-mcp-lanes.json` probe.
+- Exact next slice: promote this PR bundle, commit/reload the FirstBite MCP package change, capture loaded MCP host proof, then rerun clean worktree `resplit_currency_api_all` from landed source and keep external Cloudflare/Grafana read-token proofs separate.
+
 ## 2026-05-25 06:23 EDT
 
 - `NO-GO` overall launch; `YELLOW/current` for the local-CI/agent/OTEL control plane because repo-backed FirstBite can now see the current FX trust lane, but the loaded in-app MCP host and external Cloudflare/Grafana proof are still not green.

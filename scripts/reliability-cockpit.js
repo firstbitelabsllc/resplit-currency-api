@@ -355,6 +355,7 @@ function inspectTrustPreflight(artifact, artifactPath, generatedAt = new Date().
       rc: command.rc,
       durationMs: command.durationMs,
       expectedExitCodes: command.expectedExitCodes || [],
+      yellowExitCodes: command.yellowExitCodes || [],
     })),
   }
 }
@@ -432,6 +433,8 @@ function inspectLocalCiManifest(manifest, manifestPath, mcpProof, generatedAt = 
     kind: lane.kind,
     command: lane.command,
     timeoutMs: lane.timeoutMs,
+    expectedExitCodes: lane.expectedExitCodes || [],
+    yellowExitCodes: lane.yellowExitCodes || [],
     note: lane.note || null,
   }))
 
@@ -466,7 +469,7 @@ function inspectLocalCiManifest(manifest, manifestPath, mcpProof, generatedAt = 
       && diagnosticStatus === 'green'
       && proofManifestMatch.status === 'green'
       ? 'green'
-      : proofStatus === 'fail'
+      : isRedProofStatus(proofStatus)
         ? 'red'
         : proofManifestMatch.status === 'red'
           ? 'red'
@@ -598,7 +601,7 @@ function summarizeCurrentManifestProof({
     && manifestMatch.status === 'green'
     && diagnosticStatus === 'green'
     ? (sourceTrustStatus === 'green' ? 'green' : 'yellow')
-    : proof.status === 'fail' || manifestMatch.status === 'red' || diagnosticStatus === 'red'
+    : isRedProofStatus(proof.status) || manifestMatch.status === 'red' || diagnosticStatus === 'red'
       ? 'red'
       : 'yellow'
 
@@ -660,7 +663,7 @@ function assessCleanProofReadiness({
   } else {
     if (proof.status !== 'pass') {
       reasons.push({
-        status: proof.status === 'fail' ? 'red' : 'yellow',
+        status: isRedProofStatus(proof.status) ? 'red' : 'yellow',
         area: 'selected proof',
         detail: `Selected MCP proof ${proof.runId || 'unknown'} is ${proof.status || 'unknown'}.`,
       })
@@ -2659,7 +2662,7 @@ function summarizeMcpProofForHistory(proof) {
   const diagnosticStatus = summarizeLaneDiagnostics(proof.lanes || [])
   const diagnosticSummary = summarizeLaneDiagnosticMessages(proof.lanes || [])
   const sourceTrustStatus = sourceStateTrustStatus(proof.executionSourceState || proof.sourceState)
-  const trustStatus = proof.status === 'fail' || diagnosticStatus === 'red'
+  const trustStatus = isRedProofStatus(proof.status) || diagnosticStatus === 'red'
     ? 'red'
     : proof.coverage?.complete === false || diagnosticStatus === 'yellow' || sourceTrustStatus === 'yellow'
       ? 'yellow'
@@ -2714,6 +2717,14 @@ function sourceStateTrustStatus(sourceState) {
   return 'green'
 }
 
+function isRedProofStatus(status) {
+  return status === 'fail' || status === 'error' || status === 'red'
+}
+
+function isYellowProofStatus(status) {
+  return status === 'warn' || status === 'yellow' || status === 'partial'
+}
+
 function buildMcpProof({ data, matching, reportPath, expectedLaneIds }) {
   const executionLane = matching.find(lane => lane.execution_source_state || lane.source_state) || matching[0]
   const primaryLane = matching.find(lane => lane.primary_source_state) || matching.find(lane => lane.source_state) || matching[0]
@@ -2754,6 +2765,11 @@ function buildMcpProof({ data, matching, reportPath, expectedLaneIds }) {
       command: lane.command || null,
       status: lane.status,
       rc: lane.rc ?? null,
+      reason: lane.reason || null,
+      expectedExitCodes: lane.expected_exit_codes || lane.expectedExitCodes || [],
+      yellowExitCodes: lane.yellow_exit_codes || lane.yellowExitCodes || [],
+      exitClassification: lane.exit_classification || null,
+      trustStatus: lane.trust_status || null,
       sourceHead: lane.source_head || null,
       requestedSourceRef: lane.requested_source_ref || data.source_ref || null,
       resolvedSourceRef: lane.resolved_source_ref || null,
@@ -2770,8 +2786,12 @@ function buildMcpProof({ data, matching, reportPath, expectedLaneIds }) {
 function inspectLaneLog(logPath, lane = null) {
   if (!logPath) {
     return {
-      status: lane?.status === 'fail' ? 'red' : 'unknown',
-      summary: lane?.status === 'fail' ? 'Lane failed, but no lane log path was recorded.' : 'No lane log path recorded.',
+      status: isRedProofStatus(lane?.status) ? 'red' : isYellowProofStatus(lane?.status) ? 'yellow' : 'unknown',
+      summary: isRedProofStatus(lane?.status)
+        ? 'Lane failed, but no lane log path was recorded.'
+        : isYellowProofStatus(lane?.status)
+          ? (lane?.reason || 'Lane reported an expected warning, but no lane log path was recorded.')
+          : 'No lane log path recorded.',
       tags: [],
     }
   }
@@ -2779,17 +2799,29 @@ function inspectLaneLog(logPath, lane = null) {
   const text = readTextIfExists(logPath)
   if (!text) {
     return {
-      status: lane?.status === 'fail' ? 'red' : 'unknown',
-      summary: lane?.status === 'fail' ? 'Lane failed, but the lane log is not available on this machine.' : 'Lane log is not available on this machine.',
+      status: isRedProofStatus(lane?.status) ? 'red' : isYellowProofStatus(lane?.status) ? 'yellow' : 'unknown',
+      summary: isRedProofStatus(lane?.status)
+        ? 'Lane failed, but the lane log is not available on this machine.'
+        : isYellowProofStatus(lane?.status)
+          ? (lane?.reason || 'Lane reported an expected warning, but the lane log is not available on this machine.')
+          : 'Lane log is not available on this machine.',
       tags: [],
     }
   }
 
-  if (lane?.status === 'fail' && lane?.kind && lane.kind !== 'ui') {
+  if (isRedProofStatus(lane?.status) && lane?.kind && lane.kind !== 'ui') {
     const summary = extractGenericLaneFailure(text)
     return {
       status: 'red',
       summary: summary || lane.reason || 'Lane failed; no live-smoke diagnostics expected for this lane kind.',
+      tags: [],
+    }
+  }
+
+  if (isYellowProofStatus(lane?.status) && lane?.kind && lane.kind !== 'ui') {
+    return {
+      status: 'yellow',
+      summary: lane.reason || `Lane exited with expected yellow status ${lane.status}.`,
       tags: [],
     }
   }
@@ -2840,11 +2872,19 @@ function inspectLaneLog(logPath, lane = null) {
     }
   }
 
-  if (lane?.status === 'fail') {
+  if (isRedProofStatus(lane?.status)) {
     return {
       status: 'red',
       summary: 'Lane failed; no known live-smoke diagnostic line was found in the log.',
       tags: [],
+    }
+  }
+
+  if (isYellowProofStatus(lane?.status)) {
+    return {
+      status: 'yellow',
+      summary: lane.reason || `Lane exited with expected yellow status ${lane.status}.`,
+      tags,
     }
   }
 
@@ -2944,7 +2984,7 @@ function evaluateMcpProofFreshness(proof, generatedAt = new Date().toISOString()
     }
   }
 
-  if (proof.status === 'fail') {
+  if (isRedProofStatus(proof.status)) {
     return {
       status: 'red',
       ageMinutes: ageMinutesBetween(proof.createdAt, generatedAt),
@@ -2993,6 +3033,14 @@ function evaluateMcpProofFreshness(proof, generatedAt = new Date().toISOString()
     }
   }
 
+  if (isYellowProofStatus(proof.status)) {
+    return {
+      status: 'yellow',
+      ageMinutes,
+      summary: `Latest MCP execute report is ${proof.status}; at least one trust lane has expected warning evidence.`,
+    }
+  }
+
   return {
     status: 'green',
     ageMinutes,
@@ -3015,8 +3063,11 @@ function collectReportLanes(data) {
 }
 
 function summarizeLaneStatuses(lanes) {
-  if (lanes.some(lane => lane.status === 'fail')) {
+  if (lanes.some(lane => isRedProofStatus(lane.status))) {
     return 'fail'
+  }
+  if (lanes.some(lane => isYellowProofStatus(lane.status))) {
+    return 'warn'
   }
   if (lanes.length > 0 && lanes.every(lane => lane.status === 'pass')) {
     return 'pass'
@@ -3606,7 +3657,7 @@ function buildEvidenceFreshnessLedger({
       artifact: localCi?.mcpProof?.latest?.reportPath || null,
       checkedAt: localCi?.mcpProof?.latest?.createdAt || null,
       ageMinutes: localCi?.proofFreshness?.ageMinutes ?? ageMinutesBetween(localCi?.mcpProof?.latest?.createdAt || null, generatedAt),
-      trustStatus: localCi?.mcpProof?.latest?.status === 'fail'
+      trustStatus: isRedProofStatus(localCi?.mcpProof?.latest?.status)
         ? 'red'
         : localCi?.proofFreshness?.status || localCi?.status || 'missing',
       summary: localCi?.proofFreshness?.summary || 'No selected FirstBite execute proof was found.',
@@ -4251,9 +4302,9 @@ function renderTrustPreflight(preflight) {
       <div>Cockpit verdict at run</div><div>${preflight.cockpitVerdict ? `<span class="${escapeHtml(preflight.cockpitVerdict.status || 'yellow')}">${escapeHtml(preflight.cockpitVerdict.label || preflight.cockpitVerdict.status || 'unknown')}</span>` : 'unknown'}</div>
     </div>
     <table>
-      <thead><tr><th>Check</th><th>Status</th><th>Exit</th><th>Expected</th><th>Duration</th><th>Command</th></tr></thead>
+      <thead><tr><th>Check</th><th>Status</th><th>Exit</th><th>Expected</th><th>Yellow</th><th>Duration</th><th>Command</th></tr></thead>
       <tbody>
-        ${commands.length === 0 ? '<tr><td colspan="6">Run <code>npm run trust:preflight</code> to create this artifact.</td></tr>' : commands.map(command => `<tr><td>${escapeHtml(command.label || command.id)}</td><td><span class="${escapeHtml(command.status || 'yellow')}">${escapeHtml(command.status || 'unknown')}</span></td><td>${escapeHtml(String(command.rc ?? 'n/a'))}</td><td>${escapeHtml((command.expectedExitCodes || []).join(', ') || 'n/a')}</td><td>${escapeHtml(String(command.durationMs ?? 'n/a'))}ms</td><td><code>${escapeHtml(command.command || '')}</code></td></tr>`).join('\n')}
+        ${commands.length === 0 ? '<tr><td colspan="7">Run <code>npm run trust:preflight</code> to create this artifact.</td></tr>' : commands.map(command => `<tr><td>${escapeHtml(command.label || command.id)}</td><td><span class="${escapeHtml(command.status || 'yellow')}">${escapeHtml(command.status || 'unknown')}</span></td><td>${escapeHtml(String(command.rc ?? 'n/a'))}</td><td>${escapeHtml((command.expectedExitCodes || []).join(', ') || 'n/a')}</td><td>${escapeHtml((command.yellowExitCodes || []).join(', ') || 'none')}</td><td>${escapeHtml(String(command.durationMs ?? 'n/a'))}ms</td><td><code>${escapeHtml(command.command || '')}</code></td></tr>`).join('\n')}
       </tbody>
     </table>
   </section>`
@@ -4381,9 +4432,9 @@ function renderLaneTable(localCi) {
   return `<section>
     <h2>Repo-Owned Local CI Lanes</h2>
     <table>
-      <thead><tr><th>Lane</th><th>Kind</th><th>Command</th><th>Timeout</th></tr></thead>
+      <thead><tr><th>Lane</th><th>Kind</th><th>Command</th><th>Expected</th><th>Yellow</th><th>Timeout</th></tr></thead>
       <tbody>
-        ${localCi.lanes.map(lane => `<tr><td><code>${escapeHtml(lane.id)}</code></td><td>${escapeHtml(lane.kind || '')}</td><td><code>${escapeHtml(lane.command || '')}</code>${lane.note ? `<div class="meta">${escapeHtml(lane.note)}</div>` : ''}</td><td>${escapeHtml(String(lane.timeoutMs || ''))}</td></tr>`).join('\n')}
+        ${localCi.lanes.map(lane => `<tr><td><code>${escapeHtml(lane.id)}</code></td><td>${escapeHtml(lane.kind || '')}</td><td><code>${escapeHtml(lane.command || '')}</code>${lane.note ? `<div class="meta">${escapeHtml(lane.note)}</div>` : ''}</td><td>${escapeHtml((lane.expectedExitCodes || []).join(', ') || '0')}</td><td>${escapeHtml((lane.yellowExitCodes || []).join(', ') || 'none')}</td><td>${escapeHtml(String(lane.timeoutMs || ''))}</td></tr>`).join('\n')}
       </tbody>
     </table>
   </section>`

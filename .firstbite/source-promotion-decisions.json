@@ -4,12 +4,13 @@
     {
       "path": ".firstbite/local-ci.json",
       "decision": "accept-current",
-      "currentHash": "73b23a4ce29e",
-      "originHash": "df769870bb74",
-      "reason": "Current manifest routes the integration lane through check:publish so clean local CI can prove the publish-safe contract while check remains the stricter release-history gate.",
+      "currentHash": "d7176a634981",
+      "originHash": "73b23a4ce29e",
+      "reason": "Current manifest keeps the publish-safe lane shape and adds explicit trust-preflight exit semantics: 0 green, 1 expected yellow, and 2 red/fail.",
       "evidence": [
-        "diff -u origin/main:.firstbite/local-ci.json .firstbite/local-ci.json reviewed",
-        "node --test tests/source-promotion-packet.test.js tests/reliability-cockpit.test.js tests/smoke-check-deploy.test.js"
+        "git diff -- .firstbite/local-ci.json reviewed",
+        "RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 npm run --silent call -- list_lanes '{}' shows expectedExitCodes [0,1] and yellowExitCodes [1]",
+        "npm run check -> 223/223 tests green"
       ]
     },
     {
@@ -49,27 +50,53 @@
     {
       "path": "scripts/reliability-cockpit.js",
       "decision": "accept-current",
-      "currentHash": "2fa0b598eba3",
+      "currentHash": "331e795258d5",
       "originHash": "a8fb476b07b4",
-      "reason": "Current cockpit preserves the PR branch trust-surface work and additionally points the repo-backed FirstBite package probe at the selected --repo directory, preventing stale default-checkout catalog reads from masquerading as current worktree evidence.",
+      "reason": "Current cockpit preserves the PR branch trust-surface work, carries expected/yellow lane metadata, keeps expected warning proof yellow, and keeps red/error proof red.",
       "evidence": [
         "git diff -- scripts/reliability-cockpit.js reviewed",
         "git diff origin/main --stat -- scripts/reliability-cockpit.js reviewed",
         "node --check scripts/reliability-cockpit.js",
-        "node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js tests/verify-cloudflare-otel-destinations.test.js",
-        "npm run trust:preflight -> expected red; repo-backed package green 4/4 FX lanes; loaded MCP host still missing/stale"
+        "node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js -> 53/53",
+        "FirstBite run_lanes verify-resplit-fx-trust-preflight-red-preserved-20260525 -> rc 2, trust_status red"
       ]
     },
     {
       "path": "tests/reliability-cockpit.test.js",
       "decision": "accept-current",
-      "currentHash": "c83fe5b9975d",
+      "currentHash": "892309031a62",
       "originHash": "80542a682a39",
-      "reason": "Current tests preserve the PR branch cockpit coverage and add a direct package-probe assertion that RESPLIT_CURRENCY_API_REPO is passed for explicit worktree verification.",
+      "reason": "Current tests preserve the PR branch cockpit coverage and add direct coverage for expected yellow MCP lane proof versus red failure proof.",
       "evidence": [
         "git diff -- tests/reliability-cockpit.test.js reviewed",
         "git diff origin/main --stat -- tests/reliability-cockpit.test.js reviewed",
-        "node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js tests/verify-cloudflare-otel-destinations.test.js"
+        "node --test tests/reliability-cockpit.test.js tests/trust-preflight.test.js -> 53/53",
+        "npm run check -> 223/223 tests green"
+      ]
+    },
+    {
+      "path": "scripts/trust-preflight.js",
+      "decision": "accept-current",
+      "currentHash": "d3e6ecd803e3",
+      "originHash": "916ed0596b30",
+      "reason": "Current preflight preserves command-level yellow evidence and adds top-level exit codes so FirstBite can distinguish green, yellow, and red trust states.",
+      "evidence": [
+        "git diff -- scripts/trust-preflight.js reviewed",
+        "node --check scripts/trust-preflight.js",
+        "node --test tests/trust-preflight.test.js -> green",
+        "npm run trust:preflight -> exit 2 while cockpit verdict remains red"
+      ]
+    },
+    {
+      "path": "tests/trust-preflight.test.js",
+      "decision": "accept-current",
+      "currentHash": "6b59a7252155",
+      "originHash": "4db7cb574df6",
+      "reason": "Current tests assert the top-level trust preflight exit mapping so yellow and red are not collapsed for FirstBite.",
+      "evidence": [
+        "git diff -- tests/trust-preflight.test.js reviewed",
+        "node --test tests/trust-preflight.test.js -> green",
+        "npm run check -> 223/223 tests green"
       ]
     }
   ]
