@@ -233,20 +233,20 @@ function verifyJsonContract(cockpit) {
   const operatingReadoutScopeContract = cockpit.localCi?.operatingReadoutScopeContract
   if (operatingReadoutScopeContract) {
     const rowIds = new Set((operatingReadoutScopeContract.rows || []).map(row => row.id))
-    for (const id of ['readout-report', 'repo-key', 'repo-path', 'repo-head', 'lane-set', 'proof-only-lanes']) {
+    for (const id of ['readout-report', 'repo-key', 'repo-path', 'repo-head', 'lane-set', 'lane-proof-source', 'proof-only-lanes']) {
       if (!rowIds.has(id)) {
         failures.push(`operating readout scope contract missing row: ${id}`)
       }
     }
     const accepted = (operatingReadoutScopeContract.acceptedProof || []).join(' ')
     const rejected = (operatingReadoutScopeContract.rejectedProof || []).join(' ')
-    const acceptedPatterns = [/current repo path/i, /current repo HEAD/i, /lane_keys/i, /current manifest lane/i, /proof-only/i]
-    const rejectedPatterns = [/primary-checkout/i, /PR worktree/i, /stale or headless/i, /checkout HEAD/i, /missing current manifest lanes/i, /proof-only/i, /support-only/i]
+    const acceptedPatterns = [/current repo path/i, /current repo HEAD/i, /lane_keys/i, /current manifest lane/i, /source_head/i, /proof-only/i]
+    const rejectedPatterns = [/primary-checkout/i, /PR worktree/i, /stale or headless/i, /checkout HEAD/i, /missing current manifest lanes/i, /source_head/i, /proof-only/i, /support-only/i]
     if (!acceptedPatterns.every(pattern => pattern.test(accepted))) {
-      failures.push('operating readout scope contract does not name current repo path, current repo HEAD, lane set, and proof-only separation')
+      failures.push('operating readout scope contract does not name current repo path, current repo HEAD, lane set, lane proof source_head, and proof-only separation')
     }
     if (!rejectedPatterns.every(pattern => pattern.test(rejected))) {
-      failures.push('operating readout scope contract does not reject primary-checkout, missing-lane, proof-only, and support-only evidence')
+      failures.push('operating readout scope contract does not reject primary-checkout, missing-lane, non-current source_head, proof-only, and support-only evidence')
     }
   }
 

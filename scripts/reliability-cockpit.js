@@ -1208,11 +1208,6 @@ function inspectFirstBiteOperatingReadout({
 
   const localCi = data.local_ci || {}
   const catalog = localCi.catalog || null
-  const latestLaneProof = Array.isArray(localCi.latest_lane_proof) ? localCi.latest_lane_proof : []
-  const failedLanes = latestLaneProof
-    .filter(lane => lane.status && lane.status !== 'pass')
-    .map(summarizeOperatingReadoutLane)
-  const expectedRepoFailures = failedLanes.filter(lane => lane.repo === expectedRepo)
   const manifestPortability = catalog?.manifest_portability || null
   const expectedManifestState = (catalog?.manifest_states || []).find(row => row.repo === expectedRepo) || null
   const expectedRepoGitState = Array.isArray(data.repo_git_state)
@@ -1220,6 +1215,16 @@ function inspectFirstBiteOperatingReadout({
       || data.repo_git_state.find(row => expectedRepoDir && row.repo_path && path.resolve(row.repo_path) === path.resolve(expectedRepoDir))
       || null
     : null
+  const currentExpectedRepoHead = expectedRepoHead || expectedRepoGitState?.head || null
+  const latestLaneProof = Array.isArray(localCi.latest_lane_proof) ? localCi.latest_lane_proof : []
+  const laneProofs = latestLaneProof
+    .map(lane => summarizeOperatingReadoutLane(lane, { expectedRepo, expectedRepoHead: currentExpectedRepoHead }))
+  const failedLanes = laneProofs
+    .filter(lane => lane.status && lane.status !== 'pass')
+  const expectedRepoLaneProofs = laneProofs.filter(lane => lane.repo === expectedRepo)
+  const staleExpectedRepoLaneProofs = expectedRepoLaneProofs.filter(lane => lane.currentForExpectedRepo === false)
+  const expectedRepoFailures = failedLanes.filter(lane => lane.repo === expectedRepo && lane.currentForExpectedRepo !== false)
+  const expectedRepoDiagnosticFailures = failedLanes.filter(lane => lane.repo === expectedRepo && lane.currentForExpectedRepo === false)
   const ageMinutes = ageMinutesBetween(data.created_at, generatedAt)
   const laneCount = numberOrNull(localCi.latest_lane_count) ?? latestLaneProof.length
   const passCount = numberOrNull(localCi.latest_lane_pass_count) ?? latestLaneProof.filter(lane => lane.status === 'pass').length
@@ -1235,9 +1240,13 @@ function inspectFirstBiteOperatingReadout({
   const m4FreshClonePacket = normalizeM4FreshClonePacket(data.m4_fresh_clone_packet)
   const peerExecutionBoundary = buildPeerExecutionBoundary(m4PeerProbe, m4FreshClonePacket)
   const peerBoundaryWarning = peerExecutionBoundary && peerExecutionBoundary.status !== 'green' && peerExecutionBoundary.status !== 'missing'
+  const currentExpectedRepoLaneProofCount = expectedRepoLaneProofs.filter(lane => lane.sourceHeadMatchesExpected === true).length
+  const laneProofSourceSummary = expectedRepoLaneProofs.length > 0 && currentExpectedRepoHead
+    ? `; ${expectedRepo} lane proof current ${currentExpectedRepoLaneProofCount}/${expectedRepoLaneProofs.length}`
+    : ''
   const status = catalogIncomplete || expectedRepoFailures.length > 0
     ? 'red'
-    : stale || failCount > 0 || manifestPortability?.ready === false || mousseyNotReady || peerBoundaryWarning
+    : stale || failCount > 0 || staleExpectedRepoLaneProofs.length > 0 || manifestPortability?.ready === false || mousseyNotReady || peerBoundaryWarning
       ? 'yellow'
       : 'green'
   const failSummary = failedLanes.length > 0
@@ -1251,7 +1260,7 @@ function inspectFirstBiteOperatingReadout({
     : ''
   const summary = status === 'green'
     ? `FirstBite operating readout is fresh: ${passCount}/${laneCount} lane proof(s) pass, catalog ${catalog.catalog_version || 'unknown'} has ${declaredCount ?? 'unknown'}/${catalogLaneCount ?? 'unknown'} declared lane(s), Moussey ${mousseyVerdict || 'unknown'}.`
-    : `FirstBite operating readout: ${passCount}/${laneCount} lane proof(s) pass, catalog ${catalog?.catalog_version || 'missing'} has ${declaredCount ?? 'unknown'}/${catalogLaneCount ?? 'unknown'} declared lane(s), Moussey ${mousseyVerdict || 'unknown'}${readinessSummary}${peerSummary}${failSummary}.`
+    : `FirstBite operating readout: ${passCount}/${laneCount} lane proof(s) pass, catalog ${catalog?.catalog_version || 'missing'} has ${declaredCount ?? 'unknown'}/${catalogLaneCount ?? 'unknown'} declared lane(s), Moussey ${mousseyVerdict || 'unknown'}${readinessSummary}${peerSummary}${laneProofSourceSummary}${failSummary}.`
 
   return {
     status,
@@ -1274,6 +1283,9 @@ function inspectFirstBiteOperatingReadout({
       proofOnlyLaneFailCount: numberOrNull(localCi.proof_only_lane_fail_count),
       proofOnlyNonCurrentLaneCount: numberOrNull(localCi.proof_only_non_current_lane_count),
       proofOnlyNonCurrentFailCount: numberOrNull(localCi.proof_only_non_current_fail_count),
+      expectedRepoLaneProofCount: expectedRepoLaneProofs.length,
+      expectedRepoCurrentLaneProofCount: currentExpectedRepoLaneProofCount,
+      expectedRepoStaleLaneProofCount: staleExpectedRepoLaneProofs.length,
       runRoot: localCi.run_root || null,
       xcodeLock: localCi.xcode_lock || null,
     },
@@ -1293,8 +1305,12 @@ function inspectFirstBiteOperatingReadout({
     expectedManifestState,
     expectedRepoGitState,
     expectedRepoHead,
+    laneProofs,
     failedLanes,
+    expectedRepoLaneProofs,
+    staleExpectedRepoLaneProofs,
     expectedRepoFailures,
+    expectedRepoDiagnosticFailures,
     mousseyLocal: data.moussey_local ? {
       verdict: data.moussey_local.verdict || null,
       proofRule: data.moussey_local.proof_rule || null,
@@ -1309,6 +1325,8 @@ function inspectFirstBiteOperatingReadout({
       ? 'Keep the operating readout fresh before cross-agent local-CI claims.'
       : expectedRepoFailures.length > 0
         ? 'Fix the failing resplit_currency_api lane before treating this repo as locally proven.'
+        : staleExpectedRepoLaneProofs.length > 0
+          ? 'Rerun the resplit_currency_api local-CI lane proof from the current checkout HEAD before treating this operating readout as current repo proof.'
         : peerBoundaryWarning && failCount === 0 && manifestPortability?.ready !== false && !mousseyNotReady
           ? peerExecutionBoundary.nextAction
           : 'Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.',
@@ -1385,6 +1403,23 @@ function buildOperatingReadoutScopeContract({
   const proofOnlySeparationKnown = operatingReadout.localCi?.proofOnlyNonCurrentLaneCount != null
     && operatingReadout.localCi?.proofOnlyNonCurrentFailCount != null
   const scopedCommand = firstBiteOperatingReadoutCommand({ expectedRepo, expectedRepoDir })
+  const expectedRepoLaneProofs = Array.isArray(operatingReadout.expectedRepoLaneProofs)
+    ? operatingReadout.expectedRepoLaneProofs
+    : []
+  const proofLaneIds = new Set(expectedRepoLaneProofs.map(lane => lane.lane).filter(Boolean))
+  const missingExpectedLaneProofIds = expectedLaneIds.filter(laneId => !proofLaneIds.has(laneId))
+  const staleExpectedRepoLaneProofs = expectedRepoLaneProofs.filter(lane => lane.sourceHeadMatchesExpected !== true)
+  const currentLaneProofCount = expectedRepoLaneProofs.filter(lane => lane.sourceHeadMatchesExpected === true).length
+  const laneProofExpectedCount = expectedLaneIds.length || expectedRepoLaneProofs.length
+  const laneProofSourceStatus = !currentRepoHead
+    ? 'yellow'
+    : missingExpectedLaneProofIds.length > 0 || staleExpectedRepoLaneProofs.length > 0 || expectedRepoLaneProofs.length === 0
+      ? 'red'
+      : 'green'
+  const laneProofSourceGaps = [
+    ...missingExpectedLaneProofIds.map(laneId => `${laneId}@missing`),
+    ...staleExpectedRepoLaneProofs.map(lane => `${lane.lane || 'unknown'}@${lane.sourceHead || 'missing'}`),
+  ]
   const rows = [
     operatingReadoutScopeRow({
       id: 'readout-report',
@@ -1424,6 +1459,15 @@ function buildOperatingReadoutScopeContract({
       nextAction: 'Regenerate the readout after the loaded/repo-backed FirstBite catalog includes every current manifest lane.',
     }),
     operatingReadoutScopeRow({
+      id: 'lane-proof-source',
+      label: 'Lane proof source',
+      status: laneProofSourceStatus,
+      proof: laneProofSourceStatus === 'green'
+        ? `${currentLaneProofCount}/${laneProofExpectedCount} expected lane proof(s) match current HEAD ${currentRepoHead || 'missing'}`
+        : `${currentLaneProofCount}/${laneProofExpectedCount} expected lane proof(s) match current HEAD ${currentRepoHead || 'missing'}${laneProofSourceGaps.length ? `; non-current ${laneProofSourceGaps.join(', ')}` : ''}`,
+      nextAction: `Rerun FirstBite lane proof from the current checkout HEAD before using latest_lane_proof as launch evidence. Run: ${scopedCommand}`,
+    }),
+    operatingReadoutScopeRow({
       id: 'proof-only-lanes',
       label: 'Proof-only lanes',
       status: proofOnlySeparationKnown ? 'green' : 'yellow',
@@ -1433,23 +1477,30 @@ function buildOperatingReadoutScopeContract({
   ]
   const status = worstStatus(rows.map(row => row.status))
   const gaps = rows.filter(row => row.status !== 'green').map(row => `${row.label}: ${row.proof}`)
+  const nextAction = status === 'green'
+    ? 'Keep the operating readout fresh before using it for fleet coordination.'
+    : laneProofSourceStatus !== 'green'
+      ? `Treat this readout as fleet context only until its repo path, repo HEAD, lane set, and latest_lane_proof source_head values all match the current checkout. Run: ${scopedCommand}`
+      : `Treat this readout as fleet context only until its repo path, repo HEAD, and lane set match the current checkout. Run: ${scopedCommand}`
 
   return {
     status,
     summary: status === 'green'
-      ? 'FirstBite operating readout scope matches the current repo path, HEAD, and lane set.'
+      ? 'FirstBite operating readout scope matches the current repo path, HEAD, and lane set; latest_lane_proof source_head values also match.'
       : `FirstBite operating readout is diagnostic for this checkout: ${gaps.join('; ')}.`,
     rows,
     acceptedProof: [
       'fresh firstbite-operating-readout report generated for the current repo path and current repo HEAD',
       'catalog repo key matches the current .firstbite/local-ci.json repo',
       'catalog lane_keys include every current manifest lane',
+      'latest_lane_proof source_head matches the current repo HEAD for every expected current manifest lane',
       'proof-only lanes are separated from current repo-path proof',
     ],
     rejectedProof: [
       'primary-checkout readout when the current proof target is a PR worktree',
       'stale or headless readout when its captured repo HEAD does not match the current checkout HEAD',
       'readout catalog missing current manifest lanes',
+      'latest_lane_proof from origin/main, an old PR branch, or any source_head that does not match the current checkout HEAD',
       'proof-only non-current lane failures promoted as current proof',
       'Moussey/M4 support-only status promoted as execution proof',
     ],
@@ -1463,9 +1514,9 @@ function buildOperatingReadoutScopeContract({
     readoutRepoHead,
     declarationPath,
     missingExpectedLaneIds,
-    nextAction: status === 'green'
-      ? 'Keep the operating readout fresh before using it for fleet coordination.'
-      : `Treat this readout as fleet context only until its repo path, repo HEAD, and lane set match the current checkout. Run: ${scopedCommand}`,
+    missingExpectedLaneProofIds,
+    staleExpectedRepoLaneProofs,
+    nextAction,
   }
 }
 
@@ -1485,14 +1536,19 @@ function buildLocalCiFindingTaxonomy({
   ].filter(lane => lane && lane.status === 'fail')
   const currentRepoFailures = uniqueLaneFindings(failedLanes
     .filter(lane => !expectedRepo || lane.repo === expectedRepo)
-    .map(lane => ({
-      lane: lane.lane || 'unknown',
-      repo: lane.repo || 'unknown',
-      runId: lane.runId || lane.run_id || operatingReadout.runId || null,
-      reportPath: lane.reportPath || lane.report_path || operatingReadout.reportPath || null,
-      reason: lane.reason || lane.diagnostics?.summary || `rc ${lane.rc ?? 'unknown'}`,
-      kind: classifyLocalCiLaneFinding(lane),
-    })))
+    .map(lane => {
+      const nonCurrentProof = lane.currentForExpectedRepo === false
+      return {
+        lane: lane.lane || 'unknown',
+        repo: lane.repo || 'unknown',
+        runId: lane.runId || lane.run_id || operatingReadout.runId || null,
+        reportPath: lane.reportPath || lane.report_path || operatingReadout.reportPath || null,
+        reason: nonCurrentProof
+          ? laneProofMismatchReason(lane)
+          : lane.reason || lane.diagnostics?.summary || `rc ${lane.rc ?? 'unknown'}`,
+        kind: nonCurrentProof ? 'proof-gap' : classifyLocalCiLaneFinding(lane),
+      }
+    }))
   const productFailures = currentRepoFailures.filter(finding => finding.kind === 'product-failure')
   const proofLaneFailures = currentRepoFailures.filter(finding => finding.kind === 'proof-gap')
   const externalProofActions = [
@@ -1613,6 +1669,10 @@ function classifyLocalCiLaneFinding(lane = {}) {
     return 'proof-gap'
   }
   return 'product-failure'
+}
+
+function laneProofMismatchReason(lane = {}) {
+  return `Non-current lane proof source: ${lane.lane || 'unknown'} ran at ${lane.sourceHead || 'missing'} while current checkout is ${lane.expectedRepoHead || 'missing'}; rerun this lane from the current proof repo path.`
 }
 
 function uniqueLaneFindings(findings = []) {
@@ -2365,8 +2425,14 @@ function buildPeerExecutionBoundary(m4PeerProbe, m4FreshClonePacket) {
   }
 }
 
-function summarizeOperatingReadoutLane(lane) {
+function summarizeOperatingReadoutLane(lane, { expectedRepo = null, expectedRepoHead = null } = {}) {
   const diagnostics = inspectLaneLog(lane.log_path, lane)
+  const sourceState = normalizeSourceState(lane, lane.source_state ? 'source_state' : 'execution_source_state')
+  const sourceHead = sourceState?.head || lane.source_head || null
+  const sourceHeadMatchesExpected = compareGitHeads(sourceHead, expectedRepoHead)
+  const currentForExpectedRepo = lane.repo === expectedRepo && expectedRepoHead
+    ? sourceHeadMatchesExpected
+    : null
   return {
     lane: lane.lane || 'unknown',
     repo: lane.repo || null,
@@ -2377,6 +2443,11 @@ function summarizeOperatingReadoutLane(lane) {
     logPath: lane.log_path || null,
     reason: lane.reason || diagnostics.summary || null,
     diagnostics,
+    sourceState,
+    sourceHead,
+    expectedRepoHead: expectedRepoHead || null,
+    sourceHeadMatchesExpected,
+    currentForExpectedRepo,
   }
 }
 
@@ -5532,7 +5603,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       nextAction: operatingReadoutScopeBlocked
         ? operatingReadoutScopeContract.nextAction
         : operatingReadout.nextAction || byGate.get('FirstBite operating readout')?.nextAction || 'Refresh the operating readout and inspect failed lanes.',
-      evidenceRequired: 'Fresh readout generated for the current repo path, with repo-manifest-v2 lane catalog, every current manifest lane in lane_keys, clean fleet ledger health, explicit M4 boundary, and proof-only lanes separated from current repo-path proof.',
+      evidenceRequired: 'Fresh readout generated for the current repo path, with repo-manifest-v2 lane catalog, every current manifest lane in lane_keys, latest_lane_proof source_head matching the current checkout HEAD, clean fleet ledger health, explicit M4 boundary, and proof-only lanes separated from current repo-path proof.',
       unblocks: 'Fleet-wide local agent confidence',
       canRunNow: true,
       boundary: 'local-agent-fleet',
@@ -6989,6 +7060,9 @@ function renderFirstBiteOperatingReadout(readout) {
   const peerBoundary = readout.peerExecutionBoundary
   const m4Peer = readout.m4PeerProbe
   const m4Packet = readout.m4FreshClonePacket
+  const expectedRepoLaneProofCount = readout.localCi?.expectedRepoLaneProofCount
+  const expectedRepoCurrentLaneProofCount = readout.localCi?.expectedRepoCurrentLaneProofCount
+  const expectedRepoStaleLaneProofCount = readout.localCi?.expectedRepoStaleLaneProofCount
 
   return `<h2>FirstBite Operating Readout</h2>
     <div class="kv">
@@ -6997,6 +7071,7 @@ function renderFirstBiteOperatingReadout(readout) {
       <div>Selection</div><div>${escapeHtml(readout.selection?.mode || 'unknown')} · ${escapeHtml(readout.selection?.reason || '')}</div>
       <div>Created</div><div>${escapeHtml(checked)}</div>
       <div>Local CI latest proofs</div><div>${escapeHtml(String(readout.localCi?.latestLanePassCount ?? 'unknown'))}/${escapeHtml(String(readout.localCi?.latestLaneCount ?? 'unknown'))} pass · ${escapeHtml(String(readout.localCi?.latestLaneFailCount ?? 'unknown'))} fail</div>
+      <div>FX lane proof source</div><div>${expectedRepoLaneProofCount == null ? 'unknown' : `${escapeHtml(String(expectedRepoCurrentLaneProofCount ?? 0))}/${escapeHtml(String(expectedRepoLaneProofCount))} current · ${escapeHtml(String(expectedRepoStaleLaneProofCount ?? 0))} non-current`}</div>
       <div>Catalog</div><div>${escapeHtml(readout.catalog?.version || 'missing')} · declared ${escapeHtml(String(readout.catalog?.declaredCount ?? 'unknown'))}/${escapeHtml(String(readout.catalog?.laneCount ?? 'unknown'))} · expected repo ${readout.catalog?.repoPresent ? 'present' : 'missing'}</div>
       <div>FX readout HEAD</div><div><code>${escapeHtml(readout.expectedRepoGitState?.head || 'missing')}</code></div>
       <div>Manifest portability</div><div>${manifest ? `fresh clone ${escapeHtml(String(manifest.fresh_clone_ready))} · active checkout ${escapeHtml(String(manifest.ready))} · uncommitted repos ${escapeHtml(String(manifest.uncommitted_repo_count ?? 'unknown'))}` : 'unknown'}</div>
@@ -7011,9 +7086,9 @@ function renderFirstBiteOperatingReadout(readout) {
       <div>Next action</div><div>${escapeHtml(readout.nextAction || '')}</div>
     </div>
     <table>
-      <thead><tr><th>Failed lane</th><th>Repo</th><th>Kind</th><th>Status</th><th>Reason</th><th>Run</th><th>Log</th></tr></thead>
+      <thead><tr><th>Failed lane</th><th>Repo</th><th>Kind</th><th>Status</th><th>Source</th><th>Reason</th><th>Run</th><th>Log</th></tr></thead>
       <tbody>
-        ${failedLanes.length === 0 ? '<tr><td colspan="7">No failed lanes in the latest operating readout.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td>${escapeHtml(lane.repo || '')}</td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td>${escapeHtml(lane.reason || lane.diagnostics?.summary || '')}</td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
+        ${failedLanes.length === 0 ? '<tr><td colspan="8">No failed lanes in the latest operating readout.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td>${escapeHtml(lane.repo || '')}</td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.sourceHead || 'missing')}</code>${lane.sourceHeadMatchesExpected === false ? '<div class="meta red">not current checkout proof</div>' : ''}</td><td>${escapeHtml(lane.currentForExpectedRepo === false ? laneProofMismatchReason(lane) : lane.reason || lane.diagnostics?.summary || '')}</td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
       </tbody>
     </table>`
 }

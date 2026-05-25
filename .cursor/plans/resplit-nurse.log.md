@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 16:14 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI found an even subtler trust issue: the PR-scoped FirstBite operating readout was current for this checkout, but its cited `latest_lane_proof` rows were executed from older heads, so the GUI could still over-credit stale lane proof.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now summarizes each operating-readout lane proof with `sourceHead`, compares it to the current PR checkout HEAD, separates non-current FX lane failures into diagnostic proof gaps, renders an `FX lane proof source` row, and adds a `lane-proof-source` row to the Operating Readout Scope Contract. `scripts/verify-reliability-cockpit-report.js` now fails if that row or its accepted/rejected `source_head` policy disappears. Tests cover current-source lane proof acceptance, stale source-head rejection, and verifier fixture enforcement.
+- Fresh proof:
+  - Regenerated cockpit: `operatingReadoutScopeContract.rows[lane-proof-source].status=red`; `0/4` expected FX lane proof(s) match current HEAD `bdca51eedd68`; non-current sources are `resplit_currency_api_integration@3c5a9fdec6cf`, `resplit_currency_api_trust_preflight@532421e7dd8e`, `resplit_currency_api_ui@3c5a9fdec6cf`, and `resplit_currency_api_unit@3c5a9fdec6cf`.
+  - Regenerated cockpit: `localCi.operatingReadout.expectedRepoFailures=[]`; the old trust-preflight fail is preserved under `expectedRepoDiagnosticFailures` because it ran at `532421e7dd8e` while the current checkout is `bdca51eedd68`.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `98/98` focused cockpit/verifier tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `108/108` cockpit/verifier/completion tests passed.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated report HEAD matches the current checkout and the operator action now requires `latest_lane_proof source_head` to match the current checkout HEAD.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). `agent-ledger-fleet` now explicitly blocks on `repo path`, `repo HEAD`, `lane set`, and `latest_lane_proof source_head`.
+  - `npm run check` -> generate green, strict release validation green, and `285/285` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this still does not restart/reload Codex/Cursor, prove the loaded MCP host is bound to this PR worktree, rerun current-source FX lane proof, pass `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes the local-CI GUI refuse proof laundering from `origin/main` or older PR heads even when the readout file itself is fresh.
+- Exact next slice: commit/push this lane-proof source-head contract, regenerate the cockpit at the new commit HEAD, run a fresh PR-scoped operating readout, then keep shifting work into repo-owned FirstBite proof so current-source lane evidence is produced mechanically instead of inferred.
+
 ## 2026-05-25 16:01 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. Local CI found the right class of issue, and the cockpit now preserves the exact failed-lane diagnostic instead of collapsing the FirstBite trust-preflight failure into `rc unknown`.
