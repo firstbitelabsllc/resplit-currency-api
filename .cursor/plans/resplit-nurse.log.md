@@ -397,6 +397,20 @@
 - Boundary: this does not prove loaded MCP freshness, clean `resplit_currency_api_all` execution from landed source, Cloudflare destination existence, or Grafana Tempo/Loki delivery. The local ai-leo checkout `HEAD` is still stale/divergent even though active files and `origin/main` contain the runner support.
 - Exact next slice: restart/reload the Codex/Cursor FirstBite MCP host, capture `reports/firstbite-loaded-mcp-lanes.json`, then rerun clean worktree `resplit_currency_api_all` from landed source and keep Cloudflare/Grafana read-token proofs separate.
 
+## 2026-05-25 14:19 EDT
+
+- `NO-GO` overall launch; `RED/current` for loaded-agent MCP trust now has two independent blockers: the captured artifact is repo-backed diagnostic evidence, not a live loaded Codex/Cursor MCP capture, and the loaded catalog still omits `resplit_currency_api_trust_preflight` from both raw lanes and `resplit_currency_api_all`.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now classifies loaded MCP probe source trust. Only explicit loaded-client sources such as `codex-mcp-tool:mcp__firstbite_local_ci.list_lanes` can go green; `repo-backed-cli`, package `list_lanes`, previous-artifact reuse, and unknown sources stay red even if the JSON contains every expected lane. The HTML now renders `Loaded MCP Proof Source`, and `scripts/verify-reliability-cockpit-report.js` fails if that source summary disappears.
+- Fresh proof:
+  - live `mcp__firstbite_local_ci.list_lanes` -> repo present, `15` lanes, no `resplit_currency_api_trust_preflight`, and `resplit_currency_api_all` has only unit/integration/ui.
+  - regenerated cockpit JSON -> loaded probe `sourceStatus=red`, `sourceTrusted=false`, `source=repo-backed-cli:list_lanes-current-primary-checkouts`; delta remains red for `1/4` expected FX lane, `1/4` expected all-group lane, and source red.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/capture-loaded-mcp-probe.test.js` -> `85/85`.
+  - `npm run reliability:cockpit:verify` -> green with `Loaded MCP Proof Source` present.
+  - `npm run reliability:completion-audit` -> expected red: `0` stale/missing cockpit reports, `8` launch/proof blockers, `12` non-green trust contracts.
+  - `npm run check` -> `267/267`.
+- Still red/yellow: source promotion to `origin/main`, clean FirstBite worktree proof, live loaded-client MCP capture, Cloudflare destination read proof, Grafana Tempo/Loki proof, M4 peer execution, and fleet/ledger proof. Generated `reports/` remains untracked hold-by-default.
+- Exact next slice: capture true loaded-client `mcp__firstbite_local_ci.list_lanes` into `reports/firstbite-loaded-mcp-lanes.json` after host reload, then rerun cockpit verification; a repo-backed CLI capture is now explicitly diagnostic only.
+
 ## 2026-05-25 14:12 EDT
 
 - `NO-GO` overall launch; `RED/current` for loaded-agent MCP trust because the current FirstBite catalog sees `resplit_currency_api` but omits `resplit_currency_api_trust_preflight` from both raw lanes and `resplit_currency_api_all`.

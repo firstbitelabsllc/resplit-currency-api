@@ -41,6 +41,7 @@ const REQUIRED_HTML_LABELS = [
   'Evidence Freshness Ledger',
   'FirstBite Local CI',
   'Loaded MCP Host Probe',
+  'Loaded MCP Proof Source',
   'Loaded MCP Catalog Delta',
   'Cloudflare OTEL Destinations',
   'Grafana OTEL Smoke',
@@ -297,6 +298,10 @@ function verifyHtmlContract({ cockpit, html }) {
     const missingExpected = cockpit.localCi.loadedMcpProbe.missingLaneIds || []
     if (missingExpected.length > 0 && !missingExpected.every(laneId => html.includes(escapeForHtmlText(laneId)))) {
       failures.push('HTML missing one or more loaded MCP missing-lane IDs')
+    }
+    const sourceSummary = cockpit.localCi.loadedMcpProbe.sourceSummary
+    if (sourceSummary && !html.includes(escapeForHtmlText(sourceSummary))) {
+      failures.push('HTML missing loaded MCP proof source summary')
     }
   }
 

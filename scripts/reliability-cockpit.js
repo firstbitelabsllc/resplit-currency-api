@@ -3253,14 +3253,15 @@ function inspectLoadedMcpProbe({
   const freshness = classifyLoadedMcpProbeFreshness({ checkedAt, ageMinutes })
   const catalogVersion = payload.catalog?.catalog_version || artifact.catalogVersion || null
   const source = artifact.source || 'loaded MCP list_lanes probe'
+  const sourceTrust = classifyLoadedMcpProbeSource(source)
   const status = !expectedRepo || expectedLaneIds.length === 0
     ? 'yellow'
-    : repoPresent && missingLaneIds.length === 0 && missingExpectedGroupLaneIds.length === 0
+    : repoPresent && missingLaneIds.length === 0 && missingExpectedGroupLaneIds.length === 0 && sourceTrust.status === 'green'
       ? 'green'
       : 'red'
   const summary = status === 'green'
     ? `Loaded MCP probe sees ${expectedRepo}, ${loadedLaneIds.length}/${expectedLaneIds.length} expected lane(s), and ${expectedGroupKey} includes every expected lane.`
-    : `Loaded MCP host catalog is missing current lanes for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s), group ${expectedGroupKey || 'unknown'} missing ${missingExpectedGroupLaneIds.length}/${expectedLaneIds.length} expected lane(s).`
+    : `Loaded MCP host catalog is not trusted for ${expectedRepo || 'unknown repo'}: ${repoPresent ? 'repo present' : 'repo missing'}; missing ${missingLaneIds.length}/${expectedLaneIds.length} expected lane(s), group ${expectedGroupKey || 'unknown'} missing ${missingExpectedGroupLaneIds.length}/${expectedLaneIds.length} expected lane(s), source ${sourceTrust.status}.`
 
   return {
     ...statusBase,
@@ -3270,6 +3271,9 @@ function inspectLoadedMcpProbe({
     freshnessStatus: freshness.status,
     freshnessSummary: freshness.summary,
     source,
+    sourceStatus: sourceTrust.status,
+    sourceSummary: sourceTrust.summary,
+    sourceTrusted: sourceTrust.status === 'green',
     catalogVersion,
     repoPresent,
     repoKeys,
@@ -3283,6 +3287,39 @@ function inspectLoadedMcpProbe({
     missingLaneIds,
     summary,
     restartHint: payload.catalog?.restart_hint || statusBase.restartHint,
+  }
+}
+
+function classifyLoadedMcpProbeSource(source) {
+  const normalized = String(source || '').trim()
+  if (/^(codex|cursor|claude)-mcp-tool:/i.test(normalized)
+    || /^mcp__firstbite_local_ci\.list_lanes$/i.test(normalized)
+    || /^loaded-(codex|cursor|claude)-mcp:/i.test(normalized)) {
+    return {
+      status: 'green',
+      summary: `Loaded MCP probe source is live loaded-client evidence: ${normalized}.`,
+    }
+  }
+
+  if (/previous-loaded-mcp-artifact:/i.test(normalized)) {
+    return {
+      status: 'red',
+      summary: `Loaded MCP probe source reuses a previous artifact (${normalized}); it refreshes file age but does not prove a host reload or live list_lanes result.`,
+    }
+  }
+
+  if (/repo-backed|package:list_lanes|local-cli|current-primary-checkouts/i.test(normalized)) {
+    return {
+      status: 'red',
+      summary: `Loaded MCP probe source is diagnostic repo-backed evidence (${normalized}); it cannot prove the already-loaded Codex/Cursor MCP host catalog.`,
+    }
+  }
+
+  return {
+    status: 'red',
+    summary: normalized
+      ? `Loaded MCP probe source is not an approved live loaded-client source: ${normalized}.`
+      : 'Loaded MCP probe source is missing; live loaded-client list_lanes evidence is required.',
   }
 }
 
@@ -3519,14 +3556,16 @@ function buildMcpCatalogDelta({
   const red = expectedRepoMissing
     || missingExpectedLanesInLoaded.length > 0
     || missingExpectedGroupLaneIdsInLoaded.length > 0
+    || loadedMcpProbe.sourceStatus === 'red'
   const yellow = loadedMcpProbe.freshnessStatus !== 'green'
+    || (loadedMcpProbe.sourceStatus && loadedMcpProbe.sourceStatus !== 'green')
     || missingReposInLoaded.length > 0
     || missingGroupsInLoaded.length > 0
     || missingLanesInLoaded.length > 0
   const status = red ? 'red' : yellow ? 'yellow' : 'green'
   const summary = status === 'green'
     ? `Loaded MCP host matches the repo-backed catalog for ${expectedRepo || 'expected repo'}: ${loadedMcpProbe.laneCount ?? 'unknown'} lane(s).`
-    : `Loaded MCP host differs from repo-backed catalog: missing ${missingReposInLoaded.length} repo(s), ${missingExpectedLanesInLoaded.length}/${expectedLaneIds.length} expected FX lane(s), ${missingExpectedGroupLaneIdsInLoaded.length}/${expectedLaneIds.length} expected FX group lane(s), ${missingGroupsInLoaded.length} group(s), and ${missingLanesInLoaded.length} total lane(s).`
+    : `Loaded MCP host differs from repo-backed catalog: missing ${missingReposInLoaded.length} repo(s), ${missingExpectedLanesInLoaded.length}/${expectedLaneIds.length} expected FX lane(s), ${missingExpectedGroupLaneIdsInLoaded.length}/${expectedLaneIds.length} expected FX group lane(s), ${missingGroupsInLoaded.length} group(s), ${missingLanesInLoaded.length} total lane(s), and source ${loadedMcpProbe.sourceStatus || 'unknown'}.`
 
   return {
     status,
@@ -3538,6 +3577,8 @@ function buildMcpCatalogDelta({
     repoBackedLaneCount: repoBackedMcpProbe.laneCount ?? null,
     loadedCatalogVersion: loadedMcpProbe.catalogVersion || null,
     repoBackedCatalogVersion: repoBackedMcpProbe.catalogVersion || null,
+    loadedSourceStatus: loadedMcpProbe.sourceStatus || null,
+    loadedSourceSummary: loadedMcpProbe.sourceSummary || null,
     missingReposInLoaded,
     missingGroupsInLoaded,
     missingLanesInLoaded,
@@ -6355,6 +6396,7 @@ function renderMcpCatalogDelta(delta) {
   const missingRepos = (delta.missingReposInLoaded || []).length > 0 ? delta.missingReposInLoaded.join(', ') : 'none'
   const missingGroups = (delta.missingGroupsInLoaded || []).length > 0 ? delta.missingGroupsInLoaded.join(', ') : 'none'
   const missingExpected = (delta.missingExpectedLanesInLoaded || []).length > 0 ? delta.missingExpectedLanesInLoaded.join(', ') : 'none'
+  const missingExpectedGroup = (delta.missingExpectedGroupLaneIdsInLoaded || []).length > 0 ? delta.missingExpectedGroupLaneIdsInLoaded.join(', ') : 'none'
   const missingLanes = (delta.missingLanesInLoaded || []).length > 0 ? delta.missingLanesInLoaded.join(', ') : 'none'
 
   return `<h2>Loaded MCP Catalog Delta</h2>
@@ -6364,8 +6406,10 @@ function renderMcpCatalogDelta(delta) {
       <div>Repo-backed checked</div><div>${escapeHtml(delta.repoBackedCheckedAt || 'unknown')}</div>
       <div>Lane counts</div><div>loaded ${escapeHtml(String(delta.loadedLaneCount ?? 'unknown'))} / repo-backed ${escapeHtml(String(delta.repoBackedLaneCount ?? 'unknown'))}</div>
       <div>Catalog versions</div><div>loaded ${escapeHtml(delta.loadedCatalogVersion || 'unknown')} / repo-backed ${escapeHtml(delta.repoBackedCatalogVersion || 'unknown')}</div>
+      <div>Loaded proof source</div><div><span class="${escapeHtml(delta.loadedSourceStatus || 'yellow')}">${escapeHtml(delta.loadedSourceStatus || 'unknown')}</span> ${escapeHtml(delta.loadedSourceSummary || 'No loaded proof source summary recorded.')}</div>
       <div>Missing repos in loaded host</div><div><code>${escapeHtml(missingRepos)}</code></div>
       <div>Missing expected FX lanes</div><div><code>${escapeHtml(missingExpected)}</code></div>
+      <div>Missing expected all-group lanes</div><div><code>${escapeHtml(missingExpectedGroup)}</code></div>
       <div>Missing groups in loaded host</div><div><code>${escapeHtml(missingGroups)}</code></div>
       <div>Missing total lanes in loaded host</div><div><code>${escapeHtml(missingLanes)}</code></div>
       <div>Next action</div><div>${escapeHtml(delta.nextAction || '')}</div>
@@ -6421,20 +6465,24 @@ function renderLoadedMcpProbe(probe) {
   const statusClass = probe.status === 'green' ? 'green' : probe.status === 'red' ? 'red' : 'yellow'
   const missing = (probe.missingLaneIds || []).length > 0 ? probe.missingLaneIds.join(', ') : 'none'
   const loaded = (probe.loadedLaneIds || []).length > 0 ? probe.loadedLaneIds.join(', ') : 'none'
+  const groupLoaded = (probe.expectedGroupLaneIds || []).length > 0 ? probe.expectedGroupLaneIds.join(', ') : 'none'
   const checked = probe.checkedAt
     ? `${probe.checkedAt}${probe.ageMinutes === null ? '' : ` (${probe.ageMinutes}m old)`}`
     : 'unknown'
   const freshnessClass = probe.freshnessStatus === 'green' ? 'green' : probe.freshnessStatus === 'red' ? 'red' : 'yellow'
+  const sourceClass = probe.sourceStatus === 'green' ? 'green' : 'red'
 
   return `<h2>Loaded MCP Host Probe</h2>
     <div class="kv">
       <div>Status</div><div><span class="${statusClass}">${escapeHtml(probe.status || 'unknown')}</span> ${escapeHtml(probe.summary || '')}</div>
       <div>Source</div><div>${escapeHtml(probe.source || 'unknown')}</div>
+      <div>Loaded MCP Proof Source</div><div><span class="${sourceClass}">${escapeHtml(probe.sourceStatus || 'unknown')}</span> ${escapeHtml(probe.sourceSummary || 'Live loaded-client source proof is missing.')}</div>
       <div>Checked</div><div>${escapeHtml(checked)}</div>
       <div>Freshness</div><div><span class="${freshnessClass}">${escapeHtml(probe.freshnessStatus || 'unknown')}</span> ${escapeHtml(probe.freshnessSummary || '')}</div>
       <div>Expected repo</div><div><code>${escapeHtml(probe.expectedRepo || 'unknown')}</code></div>
       <div>Catalog</div><div>${escapeHtml(probe.catalogVersion || 'unknown')} · ${escapeHtml(String(probe.laneCount ?? 'unknown'))} loaded lane(s)</div>
       <div>Loaded FX lanes</div><div><code>${escapeHtml(loaded)}</code></div>
+      <div>Loaded all-group lanes</div><div><code>${escapeHtml(groupLoaded)}</code></div>
       <div>Missing FX lanes</div><div><code>${escapeHtml(missing)}</code></div>
       <div>Probe file</div><div><code>${escapeHtml(probe.path || 'missing')}</code></div>
       <div>Restart hint</div><div>${escapeHtml(probe.restartHint || '')}</div>

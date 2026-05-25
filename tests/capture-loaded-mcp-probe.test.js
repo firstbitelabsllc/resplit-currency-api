@@ -95,7 +95,7 @@ test('captureLoadedMcpProbe derives expected lanes from the repo manifest', () =
   assert.equal(result.expectedContract.source, '.firstbite/local-ci.json')
   assert.equal(result.probe.status, 'red')
   assert.deepEqual(result.probe.missingLaneIds, ['resplit_currency_api_trust_preflight'])
-  assert.match(result.probe.summary, /missing current lanes/)
+  assert.match(result.probe.summary, /not trusted/)
 })
 
 test('captureLoadedMcpProbe can refresh a previous artifact without claiming host reload proof', () => {

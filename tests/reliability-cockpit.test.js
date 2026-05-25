@@ -1728,7 +1728,8 @@ test('inspectLoadedMcpProbe detects stale in-process lane catalogs', () => {
   assert.equal(probe.repoPresent, false)
   assert.equal(probe.missingLaneIds.length, 3)
   assert.equal(probe.freshnessStatus, 'green')
-  assert.match(probe.summary, /missing current lanes/)
+  assert.equal(probe.sourceStatus, 'green')
+  assert.match(probe.summary, /not trusted/)
 })
 
 test('inspectLoadedMcpProbe marks old probe artifacts as stale evidence', () => {
@@ -1736,6 +1737,7 @@ test('inspectLoadedMcpProbe marks old probe artifacts as stale evidence', () => 
   const probePath = path.join(dir, 'firstbite-loaded-mcp-lanes.json')
   fs.writeFileSync(probePath, JSON.stringify({
     checkedAt: '2026-05-25T00:00:00.000Z',
+    source: 'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
     repos: { resplit_currency_api: { path: '/repo' } },
     groups: {
       resplit_currency_api_all: [
@@ -1760,6 +1762,7 @@ test('inspectLoadedMcpProbe marks old probe artifacts as stale evidence', () => 
 
   assert.equal(probe.status, 'green')
   assert.equal(probe.freshnessStatus, 'yellow')
+  assert.equal(probe.sourceStatus, 'green')
   assert.match(probe.freshnessSummary, /120m old/)
 })
 
@@ -1768,7 +1771,7 @@ test('inspectLoadedMcpProbe accepts a current repo-manifest catalog', () => {
   const probePath = path.join(dir, 'firstbite-loaded-mcp-lanes.json')
   fs.writeFileSync(probePath, JSON.stringify({
     checkedAt: '2026-05-25T00:00:00.000Z',
-    source: 'repo-backed package:list_lanes',
+    source: 'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
     catalog: { catalog_version: 'repo-manifest-v2', restart_hint: 'restart host app' },
     repos: { resplit_currency_api: { path: '/repo' } },
     groups: {
@@ -1797,6 +1800,53 @@ test('inspectLoadedMcpProbe accepts a current repo-manifest catalog', () => {
   assert.deepEqual(probe.missingLaneIds, [])
   assert.deepEqual(probe.missingExpectedGroupLaneIds, [])
   assert.equal(probe.catalogVersion, 'repo-manifest-v2')
+  assert.equal(probe.sourceStatus, 'green')
+  assert.equal(probe.sourceTrusted, true)
+})
+
+test('inspectLoadedMcpProbe rejects repo-backed diagnostic sources even when lanes and groups match', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-mcp-probe-source-'))
+  const probePath = path.join(dir, 'firstbite-loaded-mcp-lanes.json')
+  fs.writeFileSync(probePath, JSON.stringify({
+    checkedAt: '2026-05-25T00:00:00.000Z',
+    source: 'repo-backed-cli:list_lanes-current-primary-checkouts',
+    catalog: { catalog_version: 'repo-manifest-v2' },
+    repos: { resplit_currency_api: { path: '/repo' } },
+    groups: {
+      resplit_currency_api_all: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_trust_preflight',
+        'resplit_currency_api_ui',
+      ],
+    },
+    lanes: {
+      resplit_currency_api_unit: { repo: 'resplit_currency_api' },
+      resplit_currency_api_integration: { repo: 'resplit_currency_api' },
+      resplit_currency_api_trust_preflight: { repo: 'resplit_currency_api' },
+      resplit_currency_api_ui: { repo: 'resplit_currency_api' },
+    },
+  }))
+
+  const probe = inspectLoadedMcpProbe({
+    probePath,
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    generatedAt: '2026-05-25T00:05:00.000Z',
+  })
+
+  assert.equal(probe.status, 'red')
+  assert.equal(probe.sourceStatus, 'red')
+  assert.equal(probe.sourceTrusted, false)
+  assert.deepEqual(probe.missingLaneIds, [])
+  assert.deepEqual(probe.missingExpectedGroupLaneIds, [])
+  assert.match(probe.sourceSummary, /diagnostic repo-backed evidence/)
+  assert.match(probe.summary, /source red/)
 })
 
 test('inspectLoadedMcpProbe rejects catalogs whose all-group skips an expected lane', () => {
@@ -2217,6 +2267,46 @@ test('buildMcpCatalogDelta rejects loaded all-group drift even when lanes exist'
   assert.deepEqual(delta.missingExpectedLanesInLoaded, [])
   assert.deepEqual(delta.missingExpectedGroupLaneIdsInLoaded, ['resplit_currency_api_trust_preflight'])
   assert.match(delta.summary, /expected FX group lane/)
+})
+
+test('buildMcpCatalogDelta rejects diagnostic loaded-probe sources even when catalogs match', () => {
+  const expectedLaneIds = [
+    'resplit_currency_api_unit',
+    'resplit_currency_api_integration',
+    'resplit_currency_api_trust_preflight',
+    'resplit_currency_api_ui',
+  ]
+  const delta = buildMcpCatalogDelta({
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds,
+    loadedMcpProbe: {
+      status: 'red',
+      freshnessStatus: 'green',
+      sourceStatus: 'red',
+      sourceSummary: 'Loaded MCP probe source is diagnostic repo-backed evidence.',
+      checkedAt: '2026-05-25T08:00:00.000Z',
+      laneCount: 16,
+      catalogVersion: 'repo-manifest-v2',
+      repoKeys: ['resplit_currency_api'],
+      groupKeys: ['resplit_currency_api_all'],
+      allLaneIds: expectedLaneIds,
+      missingExpectedGroupLaneIds: [],
+    },
+    repoBackedMcpProbe: {
+      status: 'green',
+      checkedAt: '2026-05-25T08:00:00.000Z',
+      laneCount: 16,
+      catalogVersion: 'repo-manifest-v2',
+      repoKeys: ['resplit_currency_api'],
+      groupKeys: ['resplit_currency_api_all'],
+      allLaneIds: expectedLaneIds,
+    },
+  })
+
+  assert.equal(delta.status, 'red')
+  assert.equal(delta.loadedSourceStatus, 'red')
+  assert.match(delta.loadedSourceSummary, /diagnostic repo-backed/)
+  assert.match(delta.summary, /source red/)
 })
 
 test('computeRisks flags loaded MCP catalog drift from probe artifacts', () => {
@@ -3953,11 +4043,33 @@ test('renderHtml escapes dynamic values', () => {
         repoBackedLaneCount: 15,
         loadedCatalogVersion: '<loaded-version>',
         repoBackedCatalogVersion: '<repo-version>',
+        loadedSourceStatus: 'red',
+        loadedSourceSummary: '<loaded-source-summary>',
         missingReposInLoaded: ['<missing-repo>'],
         missingExpectedLanesInLoaded: ['<missing-lane>'],
+        missingExpectedGroupLaneIdsInLoaded: ['<missing-group-lane>'],
         missingGroupsInLoaded: ['<missing-group>'],
         missingLanesInLoaded: ['<missing-total-lane>'],
         nextAction: '<delta-next>',
+      },
+      loadedMcpProbe: {
+        status: 'red',
+        summary: '<loaded-probe-summary>',
+        source: '<loaded-probe-source>',
+        sourceStatus: 'red',
+        sourceSummary: '<loaded-probe-source-summary>',
+        checkedAt: '<loaded-probe-checked>',
+        ageMinutes: 1,
+        freshnessStatus: 'green',
+        freshnessSummary: '<loaded-probe-freshness>',
+        expectedRepo: '<loaded-probe-repo>',
+        catalogVersion: '<loaded-probe-version>',
+        laneCount: 12,
+        loadedLaneIds: ['<loaded-lane>'],
+        expectedGroupLaneIds: ['<loaded-group-lane>'],
+        missingLaneIds: ['<missing-loaded-lane>'],
+        path: '/tmp/<loaded-probe>.json',
+        restartHint: '<loaded-probe-restart>',
       },
       sourcePromotionPacket: {
         status: 'red',
@@ -4231,6 +4343,10 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /&lt;next-command&gt;/)
   assert.match(html, /&lt;forbidden-boundary-claim&gt;/)
   assert.match(html, /&lt;boundary-required-proof&gt;/)
+  assert.match(html, /Loaded MCP Proof Source/)
+  assert.match(html, /&lt;loaded-source-summary&gt;/)
+  assert.match(html, /&lt;loaded-probe-source-summary&gt;/)
+  assert.match(html, /&lt;missing-group-lane&gt;/)
   assert.match(html, /Operator Action Queue/)
   assert.match(html, /Source Promotion Packet Reconciliation/)
   assert.match(html, /&lt;origin-drift&gt;/)
