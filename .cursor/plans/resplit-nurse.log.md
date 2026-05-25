@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 12:00 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The stale refresh-packet producer has a durable repair on `ai-leo` draft stack PR #13, and the FX cockpit no longer sees lane-count continuation proof drift after regenerating the packet.
+- Shipped delta pending source promotion: `ai-leo` commit `74208f5` on `codex/local-ci-refresh-count-20260525` changes `skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh` to derive refresh packet lane-count expectations from the repo-backed catalog instead of hard-coding `15`. The PR is intentionally stacked on `codex/local-ci-handoff-hardening-20260525` because the packet producer script is not on `origin/main` yet.
+- Fresh proof:
+  - `bash -n skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh` in the clean `ai-leo` worktree -> green.
+  - `git diff --check -- skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh` in the clean `ai-leo` worktree -> green.
+  - `FIRSTBITE_MCP_REFRESH_PLAN_RUN_ID=codex-fx-refresh-plan-derived-count-clean-20260525 RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 bash /Users/leokwan/Development/ai-leo-worktrees/local-ci-refresh-count-20260525/skills/local-ci/scripts/firstbite-mcp-refresh-plan.sh --json` -> repo-backed catalog `repo-manifest-v2`, `16/16` declared lanes, continuation expected-proof text now says `lane_count=16`, and host-app refresh proof now says `16` lanes.
+  - The same packet still reports the real blocker: `16/21` loaded MCP server processes are stale, so a Codex/Cursor host restart/reload plus recapture is still required before trusting the loaded in-app MCP tool.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> cockpit report contract green; `continuationProofDrift=[]`, MCP refresh plan remains yellow on stale loaded clients, and next action is host-app reload/recapture rather than packet-producer repair.
+- Boundary: this does not restart/reload Codex/Cursor, prove the live loaded MCP tool is current, land the `ai-leo` producer stack, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It only closes the stale continuation-proof producer defect and records the remaining host boundary honestly.
+- Exact next slice: reload the long-lived Codex/Cursor FirstBite MCP host, recapture live loaded `list_lanes`, then continue PR #10 toward clean landed-source local-CI, M4 peer, Cloudflare destination, and Grafana Tempo/Loki proof.
+
 ## 2026-05-25 11:50 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit now catches stale FirstBite refresh-plan continuation instructions instead of trusting a packet that says the old lane count while the repo-backed catalog proves the new one.
