@@ -70,6 +70,7 @@ function captureLoadedMcpProbe(argv, deps = {}) {
   const probe = inspectLoadedMcpProbe({
     probePath: outputPath,
     expectedRepo: expectedContract.expectedRepo,
+    expectedRepoPath: repoDir,
     expectedLaneIds: expectedContract.expectedLaneIds,
     generatedAt: artifact.checkedAt,
   })

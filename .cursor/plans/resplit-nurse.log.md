@@ -1,5 +1,17 @@
 # Resplit Nurse Log
 
+## 2026-05-25 15:39 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI found a second loaded-host trust issue worth locking down: the live Codex MCP tool is now fresh and source-valid, but it is bound to the primary `/Users/leokwan/Development/resplit-currency-api` checkout, not the PR worktree, and it still misses `resplit_currency_api_trust_preflight`.
+- Shipped delta pending source promotion: loaded MCP capture now records `expectedRepoPath`, `actualRepoPath`, and `repoPathMatchesExpected`; the Loaded MCP Host Probe, Catalog Delta, and Live Capture Contract render that binding. The cockpit/verifier now fail if this path binding disappears, so a future loaded host cannot look trusted merely by listing lanes from the wrong checkout.
+- Fresh proof:
+  - `mcp__firstbite_local_ci.list_lanes` in this Codex host returned live source evidence with `repo-manifest-v2`, `15` lanes, `resplit_currency_api` present, `resplit_currency_api_all` missing `resplit_currency_api_trust_preflight`, and FX repo path `/Users/leokwan/Development/resplit-currency-api`.
+  - `node scripts/capture-loaded-mcp-probe.js --repo /Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 --source codex-mcp-tool:mcp__firstbite_local_ci.list_lanes` -> regenerated `reports/firstbite-loaded-mcp-lanes.json`; source/freshness green, loaded-host catalog red on wrong checkout path plus missing trust-preflight lane.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green with report HEAD matching current checkout and loaded repo path fields rendered.
+  - `node --test tests/reliability-cockpit.test.js tests/capture-loaded-mcp-probe.test.js tests/verify-reliability-cockpit-report.test.js` -> `99/99` focused tests green, including wrong-checkout loaded MCP and verifier path-binding regression coverage.
+- Boundary: this does not reload Codex/Cursor, make the loaded MCP host trusted, clear `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It turns the user's local-CI question into a mechanical answer: yes, local CI exposed a real control-plane trust issue, and the GUI now refuses to launder it.
+- Exact next slice: run full completion/check gates, commit/push this loaded-host path-binding hardening, regenerate cockpit at the new commit HEAD, then keep working the remaining red proof rows in this order: loaded host reload/path recapture, clean landed-source FirstBite, trust-preflight, M4 peer execute, Cloudflare destination read, Grafana Tempo/Loki.
+
 ## 2026-05-25 15:08 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit now classifies local-CI findings by failure class instead of leaving every red lane in one bucket: product failure, launch proof gap, stale agent/control-plane, and peer execution boundary.

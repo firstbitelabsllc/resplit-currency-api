@@ -122,6 +122,27 @@ test('verifyCockpitReport fails when operating readout scope rules disappear', (
   assert.match(result.report.failures.join('\n'), /operating readout scope contract does not reject primary-checkout/)
 })
 
+test('verifyCockpitReport fails when loaded MCP path binding disappears', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-loaded-path-'))
+  const report = buildReport()
+  delete report.localCi.loadedMcpProbe.expectedRepoPath
+  delete report.localCi.loadedMcpProbe.actualRepoPath
+  delete report.localCi.loadedMcpProbe.repoPathMatchesExpected
+  delete report.localCi.mcpCatalogDelta.loadedRepoPathMatchesExpected
+  delete report.localCi.loadedMcpCaptureContract.currentRepoPathMatch
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /loaded MCP probe does not record expected repo path/)
+  assert.match(result.report.failures.join('\n'), /loaded MCP probe does not record actual repo path/)
+  assert.match(result.report.failures.join('\n'), /loaded MCP live capture contract does not record repo path match status/)
+})
+
 test('verifyCockpitReport fails when the generated report head is stale', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-stale-head-'))
   const report = buildReport()
@@ -168,6 +189,10 @@ function buildReport() {
         source: 'repo-backed-cli:list_lanes-current-primary-checkouts',
         sourceStatus: 'red',
         sourceSummary: 'Loaded MCP probe source is diagnostic repo-backed evidence.',
+        repoPresent: true,
+        expectedRepoPath: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+        actualRepoPath: '/Users/leokwan/Development/resplit-currency-api',
+        repoPathMatchesExpected: false,
         missingLaneIds: [
           'resplit_currency_api_unit',
           'resplit_currency_api_integration',
@@ -177,6 +202,9 @@ function buildReport() {
       },
       mcpCatalogDelta: {
         status: 'red',
+        loadedExpectedRepoPath: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+        loadedActualRepoPath: '/Users/leokwan/Development/resplit-currency-api',
+        loadedRepoPathMatchesExpected: false,
       },
       loadedMcpCaptureContract: {
         status: 'red',
@@ -190,6 +218,9 @@ function buildReport() {
           '--reuse-existing',
         ],
         currentInvalidReason: 'Loaded MCP probe source is diagnostic repo-backed evidence.',
+        expectedRepoPath: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+        currentRepoPath: '/Users/leokwan/Development/resplit-currency-api',
+        currentRepoPathMatch: false,
       },
       operatingReadout: {
         status: 'red',
@@ -434,8 +465,12 @@ function buildHtml(report) {
     ...REQUIRED_CONTRACT_GATES,
     ...report.trustModel.operatorRecoveryFlow.boundaryClaims.map(claim => claim.boundary),
     ...report.localCi.loadedMcpProbe.missingLaneIds,
+    report.localCi.loadedMcpProbe.actualRepoPath,
+    report.localCi.loadedMcpProbe.expectedRepoPath,
     report.localCi.loadedMcpProbe.sourceSummary,
     report.localCi.loadedMcpCaptureContract.currentInvalidReason,
+    report.localCi.loadedMcpCaptureContract.currentRepoPath,
+    report.localCi.loadedMcpCaptureContract.expectedRepoPath,
     ...report.localCi.loadedMcpCaptureContract.acceptedSources,
     ...report.localCi.loadedMcpCaptureContract.rejectedSources,
     report.telemetry.observabilityProofChain.currentInvalidReason,

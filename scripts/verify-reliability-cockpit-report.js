@@ -180,6 +180,26 @@ function verifyJsonContract(cockpit) {
   if (cockpit.localCi?.loadedMcpProbe?.status && !cockpit.localCi?.loadedMcpCaptureContract?.status) {
     failures.push('loaded MCP probe exists but live capture contract is missing')
   }
+  const loadedMcpProbe = cockpit.localCi?.loadedMcpProbe
+  if (loadedMcpProbe?.status && loadedMcpProbe.status !== 'missing') {
+    if (!loadedMcpProbe.expectedRepoPath) {
+      failures.push('loaded MCP probe does not record expected repo path')
+    }
+    if (loadedMcpProbe.repoPresent && !loadedMcpProbe.actualRepoPath) {
+      failures.push('loaded MCP probe does not record actual repo path')
+    }
+    if (!Object.prototype.hasOwnProperty.call(loadedMcpProbe, 'repoPathMatchesExpected')) {
+      failures.push('loaded MCP probe does not record repo path match status')
+    }
+    const delta = cockpit.localCi?.mcpCatalogDelta
+    if (delta?.status && !Object.prototype.hasOwnProperty.call(delta, 'loadedRepoPathMatchesExpected')) {
+      failures.push('loaded MCP catalog delta does not record repo path match status')
+    }
+    const captureContract = cockpit.localCi?.loadedMcpCaptureContract
+    if (captureContract?.status && !Object.prototype.hasOwnProperty.call(captureContract, 'currentRepoPathMatch')) {
+      failures.push('loaded MCP live capture contract does not record repo path match status')
+    }
+  }
   if (cockpit.localCi?.operatingReadout?.status && !cockpit.localCi?.operatingReadoutScopeContract?.status) {
     failures.push('FirstBite operating readout exists but scope contract is missing')
   }
@@ -379,6 +399,16 @@ function verifyHtmlContract({ cockpit, html }) {
       }
       if (captureContract.currentInvalidReason && !html.includes(escapeForHtmlText(captureContract.currentInvalidReason))) {
         failures.push('HTML missing loaded MCP live capture invalid reason')
+      }
+      for (const value of [
+        cockpit.localCi.loadedMcpProbe.actualRepoPath,
+        cockpit.localCi.loadedMcpProbe.expectedRepoPath,
+        captureContract.currentRepoPath,
+        captureContract.expectedRepoPath,
+      ].filter(Boolean)) {
+        if (!html.includes(escapeForHtmlText(value))) {
+          failures.push(`HTML missing loaded MCP repo path: ${value}`)
+        }
       }
       if (!html.includes('Loaded MCP Live Capture Contract')) {
         failures.push('HTML missing loaded MCP live capture section')

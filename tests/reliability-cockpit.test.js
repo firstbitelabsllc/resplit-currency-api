@@ -2368,6 +2368,58 @@ test('inspectLoadedMcpProbe rejects catalogs whose all-group skips an expected l
   assert.match(probe.summary, /group resplit_currency_api_all missing 1\/4/)
 })
 
+test('inspectLoadedMcpProbe rejects live loaded catalogs from the wrong checkout path', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-mcp-probe-path-'))
+  const expectedRepoPath = path.join(dir, 'pr-worktree')
+  const staleRepoPath = path.join(dir, 'primary-checkout')
+  const probePath = path.join(dir, 'firstbite-loaded-mcp-lanes.json')
+  fs.writeFileSync(probePath, JSON.stringify({
+    checkedAt: '2026-05-25T00:00:00.000Z',
+    source: 'codex-mcp-tool:mcp__firstbite_local_ci.list_lanes',
+    catalog: {
+      catalog_version: 'repo-manifest-v2',
+      manifest_states: [{ repo: 'resplit_currency_api', repo_path: staleRepoPath }],
+    },
+    repos: { resplit_currency_api: { path: staleRepoPath } },
+    groups: {
+      resplit_currency_api_all: [
+        'resplit_currency_api_unit',
+        'resplit_currency_api_integration',
+        'resplit_currency_api_trust_preflight',
+        'resplit_currency_api_ui',
+      ],
+    },
+    lanes: {
+      resplit_currency_api_unit: { repo: 'resplit_currency_api' },
+      resplit_currency_api_integration: { repo: 'resplit_currency_api' },
+      resplit_currency_api_trust_preflight: { repo: 'resplit_currency_api' },
+      resplit_currency_api_ui: { repo: 'resplit_currency_api' },
+    },
+  }))
+
+  const probe = inspectLoadedMcpProbe({
+    probePath,
+    expectedRepo: 'resplit_currency_api',
+    expectedRepoPath,
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_trust_preflight',
+      'resplit_currency_api_ui',
+    ],
+    generatedAt: '2026-05-25T00:05:00.000Z',
+  })
+
+  assert.equal(probe.status, 'red')
+  assert.equal(probe.sourceStatus, 'green')
+  assert.equal(probe.repoPathMatchesExpected, false)
+  assert.equal(probe.actualRepoPath, path.resolve(staleRepoPath))
+  assert.equal(probe.expectedRepoPath, path.resolve(expectedRepoPath))
+  assert.deepEqual(probe.missingLaneIds, [])
+  assert.deepEqual(probe.missingExpectedGroupLaneIds, [])
+  assert.match(probe.summary, /wrong checkout path/)
+})
+
 test('inspectRepoBackedMcpCatalog reports current package catalog and portability', () => {
   const probe = inspectRepoBackedMcpCatalog({
     artifact: {
@@ -2745,6 +2797,51 @@ test('buildMcpCatalogDelta rejects loaded all-group drift even when lanes exist'
   assert.deepEqual(delta.missingExpectedLanesInLoaded, [])
   assert.deepEqual(delta.missingExpectedGroupLaneIdsInLoaded, ['resplit_currency_api_trust_preflight'])
   assert.match(delta.summary, /expected FX group lane/)
+})
+
+test('buildMcpCatalogDelta rejects wrong-checkout loaded MCP catalogs even when lanes match', () => {
+  const expectedLaneIds = [
+    'resplit_currency_api_unit',
+    'resplit_currency_api_integration',
+    'resplit_currency_api_trust_preflight',
+    'resplit_currency_api_ui',
+  ]
+  const delta = buildMcpCatalogDelta({
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds,
+    loadedMcpProbe: {
+      status: 'red',
+      freshnessStatus: 'green',
+      sourceStatus: 'green',
+      checkedAt: '2026-05-25T08:00:00.000Z',
+      laneCount: 16,
+      catalogVersion: 'repo-manifest-v2',
+      actualRepoPath: '/repo/primary',
+      expectedRepoPath: '/repo/pr-worktree',
+      repoPathMatchesExpected: false,
+      repoKeys: ['resplit_currency_api'],
+      groupKeys: ['resplit_currency_api_all'],
+      allLaneIds: expectedLaneIds,
+      missingExpectedGroupLaneIds: [],
+    },
+    repoBackedMcpProbe: {
+      status: 'green',
+      checkedAt: '2026-05-25T08:00:00.000Z',
+      laneCount: 16,
+      catalogVersion: 'repo-manifest-v2',
+      actualRepoPath: '/repo/pr-worktree',
+      expectedRepoPath: '/repo/pr-worktree',
+      repoKeys: ['resplit_currency_api'],
+      groupKeys: ['resplit_currency_api_all'],
+      allLaneIds: expectedLaneIds,
+    },
+  })
+
+  assert.equal(delta.status, 'red')
+  assert.equal(delta.loadedRepoPathMatchesExpected, false)
+  assert.equal(delta.loadedActualRepoPath, '/repo/primary')
+  assert.equal(delta.loadedExpectedRepoPath, '/repo/pr-worktree')
+  assert.match(delta.summary, /repo path untrusted/)
 })
 
 test('buildMcpCatalogDelta rejects diagnostic loaded-probe sources even when catalogs match', () => {
