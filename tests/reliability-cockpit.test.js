@@ -14,6 +14,7 @@ const {
   buildMcpCatalogDelta,
   buildObservabilityProofChain,
   buildOperatorActionQueue,
+  buildOperatingReadoutScopeContract,
   buildOperatorRecoveryFlow,
   buildProofAcceptanceMatrix,
   buildReport,
@@ -1514,6 +1515,85 @@ test('inspectFirstBiteOperatingReadout surfaces fleet readiness without hiding n
   assert.match(readout.summary, /17\/18 lane proof/)
   assert.match(readout.summary, /active_ready=false/)
   assert.match(readout.summary, /M4 peer support-only/)
+})
+
+test('buildOperatingReadoutScopeContract rejects primary-checkout readouts for PR worktree proof', () => {
+  const contract = buildOperatingReadoutScopeContract({
+    expectedRepo: 'resplit_currency_api',
+    expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_ui',
+      'resplit_currency_api_trust_preflight',
+    ],
+    operatingReadout: {
+      status: 'yellow',
+      reportPath: '/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-cockpit/report.json',
+      catalog: {
+        repoPresent: true,
+        laneKeys: [
+          'resplit_currency_api_unit',
+          'resplit_currency_api_integration',
+          'resplit_currency_api_ui',
+        ],
+      },
+      expectedManifestState: {
+        repo_path: '/Users/leokwan/Development/resplit-currency-api',
+        declaration_path: '/Users/leokwan/Development/resplit-currency-api/.firstbite/local-ci.json',
+      },
+      localCi: {
+        proofOnlyNonCurrentLaneCount: 2,
+        proofOnlyNonCurrentFailCount: 1,
+      },
+    },
+  })
+
+  assert.equal(contract.status, 'red')
+  assert.deepEqual(contract.missingExpectedLaneIds, ['resplit_currency_api_trust_preflight'])
+  assert.match(contract.currentInvalidReason, /Repo path/)
+  assert.match(contract.currentInvalidReason, /resplit_currency_api_trust_preflight/)
+  assert.match(contract.summary, /diagnostic/)
+  assert.match(contract.nextAction, /fleet context only/)
+})
+
+test('buildOperatingReadoutScopeContract accepts matching current repo path and full lane set', () => {
+  const contract = buildOperatingReadoutScopeContract({
+    expectedRepo: 'resplit_currency_api',
+    expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_ui',
+      'resplit_currency_api_trust_preflight',
+    ],
+    operatingReadout: {
+      status: 'green',
+      reportPath: '/Users/leokwan/.agent-ledger/firstbite-operating-readout/pr-worktree/report.json',
+      catalog: {
+        repoPresent: true,
+        laneKeys: [
+          'resplit_currency_api_unit',
+          'resplit_currency_api_integration',
+          'resplit_currency_api_ui',
+          'resplit_currency_api_trust_preflight',
+        ],
+      },
+      expectedManifestState: {
+        repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+        declaration_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525/.firstbite/local-ci.json',
+      },
+      localCi: {
+        proofOnlyNonCurrentLaneCount: 0,
+        proofOnlyNonCurrentFailCount: 0,
+      },
+    },
+  })
+
+  assert.equal(contract.status, 'green')
+  assert.deepEqual(contract.missingExpectedLaneIds, [])
+  assert.equal(contract.currentInvalidReason, '')
+  assert.match(contract.summary, /matches the current repo path and lane set/)
 })
 
 test('inspectFirstBiteMcpRefreshPlan surfaces stale loaded-client process audit', () => {

@@ -101,6 +101,27 @@ test('verifyCockpitReport fails when JSON loses a recovery boundary claim', () =
   assert.match(result.report.failures.join('\n'), /missing recovery boundary claim: local-agent-host/)
 })
 
+test('verifyCockpitReport fails when operating readout scope rules disappear', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-missing-readout-scope-'))
+  const report = buildReport()
+  report.localCi.operatingReadoutScopeContract.acceptedProof = [
+    'fresh firstbite-operating-readout report generated for the current repo path',
+  ]
+  report.localCi.operatingReadoutScopeContract.rejectedProof = [
+    'primary-checkout readout when the current proof target is a PR worktree',
+  ]
+  writeReport(repoDir, report)
+
+  const result = verifyCockpitReport(['--repo', repoDir], {
+    now: () => '2026-05-25T14:15:00.000Z',
+    repoState: CURRENT_REPO_STATE,
+  })
+
+  assert.equal(result.report.status, 'red')
+  assert.match(result.report.failures.join('\n'), /operating readout scope contract does not name current repo path/)
+  assert.match(result.report.failures.join('\n'), /operating readout scope contract does not reject primary-checkout/)
+})
+
 test('verifyCockpitReport fails when the generated report head is stale', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-report-stale-head-'))
   const report = buildReport()
@@ -169,6 +190,34 @@ function buildReport() {
           '--reuse-existing',
         ],
         currentInvalidReason: 'Loaded MCP probe source is diagnostic repo-backed evidence.',
+      },
+      operatingReadout: {
+        status: 'red',
+        reportPath: '/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-cockpit/report.json',
+      },
+      operatingReadoutScopeContract: {
+        status: 'red',
+        summary: 'FirstBite operating readout is diagnostic for this checkout.',
+        rows: [
+          { id: 'readout-report', label: 'Readout report', status: 'red', proof: '/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-cockpit/report.json', nextAction: 'Refresh the readout.' },
+          { id: 'repo-key', label: 'Repo key', status: 'green', proof: 'resplit_currency_api present in readout catalog', nextAction: 'Keep repo key present.' },
+          { id: 'repo-path', label: 'Repo path', status: 'red', proof: 'readout=/Users/leokwan/Development/resplit-currency-api current=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525', nextAction: 'Regenerate from the current repo path.' },
+          { id: 'lane-set', label: 'Lane set', status: 'red', proof: 'missing resplit_currency_api_trust_preflight', nextAction: 'Regenerate after current lanes exist.' },
+          { id: 'proof-only-lanes', label: 'Proof-only lanes', status: 'yellow', proof: '4 non-current proof-only lane(s), 2 failed', nextAction: 'Keep proof-only failures separated.' },
+        ],
+        acceptedProof: [
+          'fresh firstbite-operating-readout report generated for the current repo path',
+          'catalog repo key matches the current .firstbite/local-ci.json repo',
+          'catalog lane_keys include every current manifest lane',
+          'proof-only lanes are separated from current repo-path proof',
+        ],
+        rejectedProof: [
+          'primary-checkout readout when the current proof target is a PR worktree',
+          'readout catalog missing current manifest lanes',
+          'proof-only non-current lane failures promoted as current proof',
+          'Moussey/M4 support-only status promoted as execution proof',
+        ],
+        currentInvalidReason: 'Repo path mismatch; Lane set missing resplit_currency_api_trust_preflight.',
       },
     },
     telemetry: {
@@ -333,6 +382,9 @@ function buildHtml(report) {
     report.telemetry.observabilityProofChain.currentInvalidReason,
     ...report.telemetry.observabilityProofChain.acceptedProof,
     ...report.telemetry.observabilityProofChain.rejectedProof,
+    report.localCi.operatingReadoutScopeContract.currentInvalidReason,
+    ...report.localCi.operatingReadoutScopeContract.acceptedProof,
+    ...report.localCi.operatingReadoutScopeContract.rejectedProof,
   ].join('\n')
 }
 

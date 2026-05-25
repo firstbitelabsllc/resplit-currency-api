@@ -1,5 +1,20 @@
 # Resplit Nurse Log
 
+## 2026-05-25 14:48 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit now has a FirstBite Operating Readout Scope Contract, so a fleet/primary-checkout readout cannot masquerade as current PR-worktree proof unless repo path, repo key, lane set, and proof-only separation all match.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` derives `localCi.operatingReadoutScopeContract`, renders it in the GUI, and threads it into risks, trust contracts, operator actions, launch audit, and proof acceptance. `scripts/verify-reliability-cockpit-report.js` now fails if the generated GUI/report drops this scope contract or stops showing accepted/rejected operating-readout proof rules.
+- Fresh proof:
+  - Regenerated cockpit: `operatingReadoutScopeContract.status=red`; latest readout `/Users/leokwan/.agent-ledger/firstbite-operating-readout/verify-plan-snapshot-continuation-20260525-v2-operating/report.json` is diagnostic only because it was generated for `/Users/leokwan/Development/resplit-currency-api`, while the current proof target is `/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525`.
+  - The current readout catalog includes `resplit_currency_api`, but is missing `resplit_currency_api_trust_preflight` from `lane_keys`, and has `4` non-current proof-only lane(s) with `2` failed. The cockpit now keeps those as fleet history, not current repo-path proof.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `87/87` focused cockpit/verifier tests passed.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `97/97` cockpit/verifier/completion tests passed.
+  - `npm run reliability:cockpit:verify` -> green with FirstBite Operating Readout Scope Contract present and report HEAD matching the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). `proof:agent-ledger-fleet` now requires a fresh readout generated for the current repo path, every current manifest lane in `lane_keys`, clean fleet ledger health, explicit M4 boundary, and proof-only separation.
+  - `npm run check` -> generate green, strict release validation green, and `274/274` tests passed.
+- Boundary: this still does not restart/reload Codex/Cursor, prove the live loaded MCP host is current, land the source bundle to `origin/main`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It makes primary-checkout, missing-lane, proof-only, and support-only operating readouts impossible to promote inside the cockpit.
+- Exact next slice: commit/push this FirstBite Operating Readout Scope Contract hardening, regenerate the cockpit on the new commit head, then work the live host reload and PR-scoped operating readout rows without conflating them.
+
 ## 2026-05-25 14:38 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit now has a first-class Observability Proof Chain Contract, so OTEL/Grafana launch proof requires Cloudflare destination read proof plus a non-skipped Grafana smoke where Worker trigger, Grafana read config, Tempo query, Loki query, and freshness are all green.

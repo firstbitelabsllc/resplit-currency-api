@@ -322,6 +322,12 @@ function buildReport({
 
   const localCi = inspectLocalCiManifest(manifest, manifestPath, mcpProof, generatedAt, loadedMcpProbe, trackedSource, repoBackedMcpCatalog, git)
   localCi.operatingReadout = operatingReadout
+  localCi.operatingReadoutScopeContract = buildOperatingReadoutScopeContract({
+    operatingReadout,
+    expectedRepo: manifest?.repo,
+    expectedRepoDir: repoDir,
+    expectedLaneIds: Object.keys(manifest?.localCi?.lanes || {}),
+  })
   localCi.mcpRefreshPlan = mcpRefreshPlan
   localCi.loadedMcpCaptureContract = buildLoadedMcpCaptureContract({
     loadedMcpProbe: localCi.loadedMcpProbe,
@@ -1237,6 +1243,13 @@ function inspectFirstBiteOperatingReadout({
       latestLaneCount: laneCount,
       latestLanePassCount: passCount,
       latestLaneFailCount: failCount,
+      catalogLatestLaneCount: numberOrNull(localCi.catalog_latest_lane_count),
+      catalogLatestLanePassCount: numberOrNull(localCi.catalog_latest_lane_pass_count),
+      catalogLatestLaneFailCount: numberOrNull(localCi.catalog_latest_lane_fail_count),
+      proofOnlyLaneCount: numberOrNull(localCi.proof_only_lane_count),
+      proofOnlyLaneFailCount: numberOrNull(localCi.proof_only_lane_fail_count),
+      proofOnlyNonCurrentLaneCount: numberOrNull(localCi.proof_only_non_current_lane_count),
+      proofOnlyNonCurrentFailCount: numberOrNull(localCi.proof_only_non_current_fail_count),
       runRoot: localCi.run_root || null,
       xcodeLock: localCi.xcode_lock || null,
     },
@@ -1247,6 +1260,8 @@ function inspectFirstBiteOperatingReadout({
       repoCount: numberOrNull(catalog.repo_count),
       serverPid: catalog.server_pid || null,
       loadedAt: catalog.loaded_at || null,
+      laneKeys: Array.isArray(catalog.lane_keys) ? catalog.lane_keys : [],
+      declarationPaths: Array.isArray(catalog.declaration_paths) ? catalog.declaration_paths : [],
       repoPresent,
       restartHint: catalog.restart_hint || null,
     } : null,
@@ -1271,6 +1286,103 @@ function inspectFirstBiteOperatingReadout({
         : peerBoundaryWarning && failCount === 0 && manifestPortability?.ready !== false && !mousseyNotReady
           ? peerExecutionBoundary.nextAction
           : 'Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.',
+  }
+}
+
+function buildOperatingReadoutScopeContract({
+  operatingReadout = {},
+  expectedRepo = 'resplit_currency_api',
+  expectedRepoDir = null,
+  expectedLaneIds = [],
+} = {}) {
+  const readoutStatus = normalizeStatus(operatingReadout.status || 'missing')
+  const catalogLaneKeys = Array.isArray(operatingReadout.catalog?.laneKeys) ? operatingReadout.catalog.laneKeys : []
+  const manifestState = operatingReadout.expectedManifestState || {}
+  const manifestRepoPath = manifestState.repo_path || manifestState.repoPath || null
+  const declarationPath = manifestState.declaration_path || manifestState.declarationPath || null
+  const missingExpectedLaneIds = expectedLaneIds.filter(laneId => !catalogLaneKeys.includes(laneId))
+  const repoPathMatches = Boolean(expectedRepoDir && manifestRepoPath && path.resolve(manifestRepoPath) === path.resolve(expectedRepoDir))
+  const repoPresent = Boolean(operatingReadout.catalog?.repoPresent)
+  const rows = [
+    operatingReadoutScopeRow({
+      id: 'readout-report',
+      label: 'Readout report',
+      status: readoutStatus === 'missing' ? 'yellow' : readoutStatus,
+      proof: operatingReadout.reportPath || 'missing',
+      nextAction: 'Run bash ~/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh.',
+    }),
+    operatingReadoutScopeRow({
+      id: 'repo-key',
+      label: 'Repo key',
+      status: repoPresent ? 'green' : 'red',
+      proof: `${expectedRepo || 'unknown'} ${repoPresent ? 'present' : 'missing'} in readout catalog`,
+      nextAction: 'Regenerate the operating readout from a FirstBite catalog that includes the target repo.',
+    }),
+    operatingReadoutScopeRow({
+      id: 'repo-path',
+      label: 'Repo path',
+      status: repoPathMatches ? 'green' : 'red',
+      proof: `readout=${manifestRepoPath || 'missing'} current=${expectedRepoDir || 'missing'}`,
+      nextAction: 'Do not use a primary-checkout operating readout as PR-worktree proof; regenerate from the current repo path or keep it diagnostic.',
+    }),
+    operatingReadoutScopeRow({
+      id: 'lane-set',
+      label: 'Lane set',
+      status: missingExpectedLaneIds.length === 0 ? 'green' : 'red',
+      proof: missingExpectedLaneIds.length === 0
+        ? `${expectedLaneIds.length} expected lane(s) present in readout catalog`
+        : `missing ${missingExpectedLaneIds.join(', ')}`,
+      nextAction: 'Regenerate the readout after the loaded/repo-backed FirstBite catalog includes every current manifest lane.',
+    }),
+    operatingReadoutScopeRow({
+      id: 'proof-only-lanes',
+      label: 'Proof-only lanes',
+      status: (operatingReadout.localCi?.proofOnlyNonCurrentFailCount || 0) > 0 ? 'yellow' : 'green',
+      proof: `${operatingReadout.localCi?.proofOnlyNonCurrentLaneCount ?? 0} non-current proof-only lane(s), ${operatingReadout.localCi?.proofOnlyNonCurrentFailCount ?? 0} failed`,
+      nextAction: 'Keep proof-only failures visible as fleet history, not current repo-path proof.',
+    }),
+  ]
+  const status = worstStatus(rows.map(row => row.status))
+  const gaps = rows.filter(row => row.status !== 'green').map(row => `${row.label}: ${row.proof}`)
+
+  return {
+    status,
+    summary: status === 'green'
+      ? 'FirstBite operating readout scope matches the current repo path and lane set.'
+      : `FirstBite operating readout is diagnostic for this checkout: ${gaps.join('; ')}.`,
+    rows,
+    acceptedProof: [
+      'fresh firstbite-operating-readout report generated for the current repo path',
+      'catalog repo key matches the current .firstbite/local-ci.json repo',
+      'catalog lane_keys include every current manifest lane',
+      'proof-only lanes are separated from current repo-path proof',
+    ],
+    rejectedProof: [
+      'primary-checkout readout when the current proof target is a PR worktree',
+      'readout catalog missing current manifest lanes',
+      'proof-only non-current lane failures promoted as current proof',
+      'Moussey/M4 support-only status promoted as execution proof',
+    ],
+    currentInvalidReason: status === 'green' ? '' : gaps.join('; '),
+    expectedRepo,
+    expectedRepoDir,
+    expectedLaneIds,
+    readoutRepoPath: manifestRepoPath,
+    declarationPath,
+    missingExpectedLaneIds,
+    nextAction: status === 'green'
+      ? 'Keep the operating readout fresh before using it for fleet coordination.'
+      : 'Treat this readout as fleet context only until its repo path and lane set match the current checkout.',
+  }
+}
+
+function operatingReadoutScopeRow({ id, label, status, proof, nextAction }) {
+  return {
+    id,
+    label,
+    status: normalizeStatus(status),
+    proof: String(proof || ''),
+    nextAction: String(nextAction || ''),
   }
 }
 
@@ -4548,6 +4660,13 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger, review
       detail: localCi.operatingReadout.summary,
     })
   }
+  if (localCi.operatingReadoutScopeContract?.status && localCi.operatingReadoutScopeContract.status !== 'green') {
+    risks.push({
+      status: localCi.operatingReadoutScopeContract.status,
+      label: 'FirstBite operating readout scope gap',
+      detail: localCi.operatingReadoutScopeContract.summary,
+    })
+  }
 
   if (localCi.runnerControlPlane?.status && localCi.runnerControlPlane.status !== 'green') {
     risks.push({
@@ -4686,6 +4805,7 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
   const cleanProofReadiness = localCi?.cleanProofReadiness
   const sourcePromotionBundle = localCi?.sourcePromotionBundle
   const operatingReadout = localCi?.operatingReadout
+  const operatingReadoutScopeContract = localCi?.operatingReadoutScopeContract
   const runnerControlPlane = localCi?.runnerControlPlane
   const reviewScoutProducerControlPlane = localCi?.reviewScoutProducerControlPlane
   const peerBoundary = operatingReadout?.peerExecutionBoundary
@@ -4725,10 +4845,18 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger, review
     },
     {
       gate: 'FirstBite operating readout',
-      status: operatingReadout?.status === 'missing' ? 'yellow' : operatingReadout?.status || 'yellow',
-      current: operatingReadout?.summary || 'FirstBite operating readout was not inspected.',
+      status: worstStatus([
+        operatingReadout?.status === 'missing' ? 'yellow' : operatingReadout?.status || 'yellow',
+        operatingReadoutScopeContract?.status,
+      ]),
+      current: [
+        operatingReadout?.summary || 'FirstBite operating readout was not inspected.',
+        operatingReadoutScopeContract?.summary || '',
+      ].filter(Boolean).join(' '),
       proof: operatingReadout?.reportPath || 'firstbite-operating-readout/report.json',
-      nextAction: operatingReadout?.nextAction || 'Run the FirstBite operating readout before cross-agent local-CI claims.',
+      nextAction: operatingReadoutScopeContract?.status && operatingReadoutScopeContract.status !== 'green'
+        ? operatingReadoutScopeContract.nextAction
+        : operatingReadout?.nextAction || 'Run the FirstBite operating readout before cross-agent local-CI claims.',
     },
     {
       gate: 'FirstBite runner durability',
@@ -4850,6 +4978,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const loadedMcp = localCi.loadedMcpProbe || {}
   const mcpRefreshPlan = localCi.mcpRefreshPlan || {}
   const operatingReadout = localCi.operatingReadout || {}
+  const operatingReadoutScopeContract = localCi.operatingReadoutScopeContract || {}
   const runnerControlPlane = localCi.runnerControlPlane || {}
   const reviewScoutProducerControlPlane = localCi.reviewScoutProducerControlPlane || {}
   const loadedMcpBlockedBy = loadedMcpHostReloadBlocker({ loadedMcp, mcpRefreshPlan })
@@ -5043,12 +5172,12 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       priority: 6,
       owner: 'Local agent fleet',
       gate: 'FirstBite operating readout',
-      status: byGate.get('FirstBite operating readout')?.status || operatingReadout.status || 'yellow',
+      status: byGate.get('FirstBite operating readout')?.status || operatingReadoutScopeContract.status || operatingReadout.status || 'yellow',
       proof: operatingReadout.reportPath || '~/.agent-ledger/firstbite-operating-readout/<run-id>/report.json',
       command: 'bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh',
-      blocker: operatingReadout.summary || byGate.get('FirstBite operating readout')?.current || 'FirstBite operating readout is not green.',
-      nextAction: byGate.get('FirstBite operating readout')?.nextAction || 'Refresh the operating readout and inspect failed lanes.',
-      evidenceRequired: 'Fresh readout separating FX repo proof from broader fleet warnings.',
+      blocker: operatingReadoutScopeContract.summary || operatingReadout.summary || byGate.get('FirstBite operating readout')?.current || 'FirstBite operating readout is not green.',
+      nextAction: operatingReadoutScopeContract.nextAction || byGate.get('FirstBite operating readout')?.nextAction || 'Refresh the operating readout and inspect failed lanes.',
+      evidenceRequired: 'Fresh readout generated for the current repo path, with repo-manifest-v2 lane catalog, every current manifest lane in lane_keys, clean fleet ledger health, explicit M4 boundary, and proof-only lanes separated from current repo-path proof.',
       unblocks: 'Fleet-wide local agent confidence',
       canRunNow: true,
       boundary: 'local-agent-fleet',
@@ -6266,6 +6395,7 @@ function renderLocalCiProof(localCi) {
       ${renderSourcePromotionBundle(localCi.sourcePromotionBundle)}
       ${renderSourcePromotionPacket(localCi.sourcePromotionPacket)}
       ${renderFirstBiteOperatingReadout(localCi.operatingReadout)}
+      ${renderOperatingReadoutScopeContract(localCi.operatingReadoutScopeContract)}
       ${renderFirstBiteRunnerControlPlane(localCi.runnerControlPlane)}
       ${renderReviewScoutProducerControlPlane(localCi.reviewScoutProducerControlPlane)}
       ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
@@ -6301,6 +6431,7 @@ function renderLocalCiProof(localCi) {
     ${renderSourcePromotionBundle(localCi.sourcePromotionBundle)}
     ${renderSourcePromotionPacket(localCi.sourcePromotionPacket)}
     ${renderFirstBiteOperatingReadout(localCi.operatingReadout)}
+    ${renderOperatingReadoutScopeContract(localCi.operatingReadoutScopeContract)}
     ${renderFirstBiteRunnerControlPlane(localCi.runnerControlPlane)}
     ${renderReviewScoutProducerControlPlane(localCi.reviewScoutProducerControlPlane)}
     ${renderCurrentManifestProof(localCi.currentManifestProof)}
@@ -6498,6 +6629,34 @@ function renderFirstBiteOperatingReadout(readout) {
       <thead><tr><th>Failed lane</th><th>Repo</th><th>Kind</th><th>Status</th><th>Run</th><th>Log</th></tr></thead>
       <tbody>
         ${failedLanes.length === 0 ? '<tr><td colspan="6">No failed lanes in the latest operating readout.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td>${escapeHtml(lane.repo || '')}</td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
+      </tbody>
+    </table>`
+}
+
+function renderOperatingReadoutScopeContract(contract) {
+  if (!contract) {
+    return ''
+  }
+
+  const statusClass = contract.status === 'green' ? 'green' : contract.status === 'red' ? 'red' : 'yellow'
+  const rows = Array.isArray(contract.rows) ? contract.rows : []
+  return `<h2>FirstBite Operating Readout Scope Contract</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${statusClass}">${escapeHtml(contract.status || 'unknown')}</span> ${escapeHtml(contract.summary || '')}</div>
+      <div>Expected repo</div><div><code>${escapeHtml(contract.expectedRepo || 'unknown')}</code></div>
+      <div>Expected path</div><div><code>${escapeHtml(contract.expectedRepoDir || 'missing')}</code></div>
+      <div>Readout path</div><div><code>${escapeHtml(contract.readoutRepoPath || 'missing')}</code></div>
+      <div>Declaration</div><div><code>${escapeHtml(contract.declarationPath || 'missing')}</code></div>
+      <div>Missing lanes</div><div>${contract.missingExpectedLaneIds?.length ? contract.missingExpectedLaneIds.map(lane => `<code>${escapeHtml(lane)}</code>`).join(' ') : 'none'}</div>
+      <div>Accepted proof</div><div>${(contract.acceptedProof || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ')}</div>
+      <div>Rejected proof</div><div>${(contract.rejectedProof || []).map(item => `<code>${escapeHtml(item)}</code>`).join(' ')}</div>
+      <div>Invalid reason</div><div>${escapeHtml(contract.currentInvalidReason || 'none')}</div>
+      <div>Next action</div><div>${escapeHtml(contract.nextAction || '')}</div>
+    </div>
+    <table>
+      <thead><tr><th>Scope proof</th><th>Status</th><th>Current</th><th>Next</th></tr></thead>
+      <tbody>
+        ${rows.length === 0 ? '<tr><td colspan="4">No operating-readout scope rows.</td></tr>' : rows.map(row => `<tr><td>${escapeHtml(row.label || row.id)}</td><td><span class="${escapeHtml(row.status || 'yellow')}">${escapeHtml(row.status || 'yellow')}</span></td><td>${escapeHtml(row.proof || '')}</td><td>${escapeHtml(row.nextAction || '')}</td></tr>`).join('\n')}
       </tbody>
     </table>`
 }
@@ -7101,6 +7260,7 @@ module.exports = {
   buildLoadedMcpCaptureContract,
   buildMcpCatalogDelta,
   buildObservabilityProofChain,
+  buildOperatingReadoutScopeContract,
   buildProofAcceptanceMatrix,
   buildReport,
   buildSourcePromotionBundle,

@@ -40,6 +40,7 @@ const REQUIRED_HTML_LABELS = [
   'Proof Acceptance Matrix',
   'Evidence Freshness Ledger',
   'FirstBite Local CI',
+  'FirstBite Operating Readout Scope Contract',
   'Loaded MCP Host Probe',
   'Loaded MCP Live Capture Contract',
   'Loaded MCP Proof Source',
@@ -178,6 +179,28 @@ function verifyJsonContract(cockpit) {
   }
   if (cockpit.localCi?.loadedMcpProbe?.status && !cockpit.localCi?.loadedMcpCaptureContract?.status) {
     failures.push('loaded MCP probe exists but live capture contract is missing')
+  }
+  if (cockpit.localCi?.operatingReadout?.status && !cockpit.localCi?.operatingReadoutScopeContract?.status) {
+    failures.push('FirstBite operating readout exists but scope contract is missing')
+  }
+  const operatingReadoutScopeContract = cockpit.localCi?.operatingReadoutScopeContract
+  if (operatingReadoutScopeContract) {
+    const rowIds = new Set((operatingReadoutScopeContract.rows || []).map(row => row.id))
+    for (const id of ['readout-report', 'repo-key', 'repo-path', 'lane-set', 'proof-only-lanes']) {
+      if (!rowIds.has(id)) {
+        failures.push(`operating readout scope contract missing row: ${id}`)
+      }
+    }
+    const accepted = (operatingReadoutScopeContract.acceptedProof || []).join(' ')
+    const rejected = (operatingReadoutScopeContract.rejectedProof || []).join(' ')
+    const acceptedPatterns = [/current repo path/i, /lane_keys/i, /current manifest lane/i, /proof-only/i]
+    const rejectedPatterns = [/primary-checkout/i, /PR worktree/i, /missing current manifest lanes/i, /proof-only/i, /support-only/i]
+    if (!acceptedPatterns.every(pattern => pattern.test(accepted))) {
+      failures.push('operating readout scope contract does not name current repo path, lane set, and proof-only separation')
+    }
+    if (!rejectedPatterns.every(pattern => pattern.test(rejected))) {
+      failures.push('operating readout scope contract does not reject primary-checkout, missing-lane, proof-only, and support-only evidence')
+    }
   }
 
   if (cockpit.telemetry?.grafana && !cockpit.telemetry?.cloudflare?.destinations) {
@@ -370,6 +393,23 @@ function verifyHtmlContract({ cockpit, html }) {
     for (const proof of observabilityProofChain.rejectedProof || []) {
       if (!html.includes(escapeForHtmlText(proof))) {
         failures.push(`HTML missing observability rejected proof: ${proof}`)
+      }
+    }
+  }
+
+  const operatingReadoutScopeContract = cockpit.localCi?.operatingReadoutScopeContract
+  if (operatingReadoutScopeContract) {
+    if (operatingReadoutScopeContract.currentInvalidReason && !html.includes(escapeForHtmlText(operatingReadoutScopeContract.currentInvalidReason))) {
+      failures.push('HTML missing operating readout scope invalid reason')
+    }
+    for (const proof of operatingReadoutScopeContract.acceptedProof || []) {
+      if (!html.includes(escapeForHtmlText(proof))) {
+        failures.push(`HTML missing operating readout accepted proof: ${proof}`)
+      }
+    }
+    for (const proof of operatingReadoutScopeContract.rejectedProof || []) {
+      if (!html.includes(escapeForHtmlText(proof))) {
+        failures.push(`HTML missing operating readout rejected proof: ${proof}`)
       }
     }
   }
