@@ -154,6 +154,46 @@ test('buildTrustPreflightReport promotes red command output into actionable diag
   assert.match(markdown, /proof:otel-grafana-proof/)
 })
 
+test('buildTrustPreflightReport summarizes blocker-only red command tails', () => {
+  const completionAudit = classifyCommandResult({
+    id: 'completion-audit',
+    label: 'Launch completion audit',
+    command: 'npm run reliability:completion-audit',
+    rc: 2,
+    expectedExitCodes: [0, 2],
+    redExitCodes: [2],
+    durationMs: 10,
+    stdout: [
+      `${'x'.repeat(4100)}ry(s), 8 non-green/missing proof boundary(s), 12 non-green trust contract(s).`,
+      'completion-audit: cockpit /tmp/resplit-fx-reliability-cockpit.json',
+      '- overall-launch-trust [red] Work the Operator Action Queue top-down until every launch-critical row turns green.',
+      '- source-contract [red] Source bundle is tracked on this PR head; keep it held until remaining trust gates clear.',
+      '- clean-firstbite-local-ci [red] Land or sync the current manifest, package scripts, and cockpit scripts to tracked source.',
+      '- loaded-agent-mcp [red] Restart or reload the Codex/Cursor MCP host and capture mcp__firstbite_local_ci.list_lanes again.',
+    ].join('\n'),
+  })
+  const report = buildTrustPreflightReport({
+    repoDir: '/tmp/resplit-currency-api',
+    generatedAt: '2026-05-25T06:00:00.000Z',
+    mode: 'fast',
+    outputPath: '/tmp/report.json',
+    markdownPath: '/tmp/report.md',
+    commands: [completionAudit],
+    cockpit: {
+      verdict: { status: 'red', label: 'RED - missing required trust contract' },
+      contracts: [],
+    },
+  })
+  const diagnostic = report.summary.commandDiagnostics[0]
+  const printed = formatPreflightDiagnosticLines(report).join('\n')
+
+  assert.match(diagnostic.summary, /blocked by overall-launch-trust \[red\], source-contract \[red\], clean-firstbite-local-ci \[red\], loaded-agent-mcp \[red\]/)
+  assert.deepEqual(diagnostic.signals, [])
+  assert.match(printed, /trust-preflight: red command completion-audit exited 2: blocked by overall-launch-trust \[red\], source-contract \[red\], clean-firstbite-local-ci \[red\], loaded-agent-mcp \[red\]/)
+  assert.match(printed, /trust-preflight: blocker clean-firstbite-local-ci \[red\]/)
+  assert.match(printed, /trust-preflight: blocker loaded-agent-mcp \[red\]/)
+})
+
 test('runTrustPreflight writes JSON and Markdown, then refreshes cockpit', async () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trust-preflight-'))
   fs.mkdirSync(path.join(repoDir, 'reports'), { recursive: true })

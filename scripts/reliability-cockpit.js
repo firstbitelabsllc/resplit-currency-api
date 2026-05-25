@@ -4943,11 +4943,13 @@ function extractGenericLaneFailure(text) {
   const trustPreflight = lines.find(line => /^trust-preflight:\s+status=/i.test(line))
   if (trustPreflight) {
     const commandDetail = lines.find(line => /^trust-preflight:\s+(red|yellow)\s+command\s+/i.test(line))
-    const blocker = lines.find(line => /^trust-preflight:\s+blocker\s+.+\[(red|yellow)\]/i.test(line))
-    return [trustPreflight, commandDetail, blocker]
+    const blockers = lines
+      .filter(line => /^trust-preflight:\s+blocker\s+.+\[(red|yellow)\]/i.test(line))
+      .slice(0, 4)
+    return [trustPreflight, commandDetail, summarizeTrustPreflightBlockers(blockers)]
       .filter(Boolean)
       .join(' | ')
-      .slice(0, 420)
+      .slice(0, 700)
   }
 
   const signal = lines.find(line => (
@@ -4957,6 +4959,22 @@ function extractGenericLaneFailure(text) {
     || /Missing script|ENOENT|not found|command not found/i.test(line)
   ))
   return signal ? signal.slice(0, 220) : null
+}
+
+function summarizeTrustPreflightBlockers(blockers) {
+  if (!blockers || blockers.length === 0) {
+    return null
+  }
+  const compact = blockers.map(line => {
+    const match = line.match(/^trust-preflight:\s+blocker\s+(.+?)\s+\[(red|yellow)\]\s+(.+)$/i)
+    if (!match) {
+      return line.replace(/^trust-preflight:\s+blocker\s+/i, '').slice(0, 80)
+    }
+    const id = match[1].trim()
+    const status = match[2].toLowerCase()
+    return `${id} [${status}]`
+  })
+  return `trust-preflight: blockers ${compact.join('; ')}`
 }
 
 function normalizeSourceState(lane, field = 'source_state') {

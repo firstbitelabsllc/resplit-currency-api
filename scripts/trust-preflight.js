@@ -13,6 +13,7 @@ const DEFAULT_OUTPUT_DIR = 'reports'
 const DEFAULT_MARKDOWN_BASENAME = 'resplit-fx-trust-preflight.md'
 const OUTPUT_TAIL_LIMIT = 4000
 const DIAGNOSTIC_SIGNAL_LIMIT = 8
+const DIAGNOSTIC_BLOCKER_SUMMARY_LIMIT = 4
 const DIAGNOSTIC_LINE_LIMIT = 240
 
 if (require.main === module) {
@@ -389,7 +390,7 @@ function summarizeCommandDiagnostics(commands) {
       const blockers = extractBlockingRows(output)
       const signals = extractDiagnosticSignals(output)
       const summary = signals[0]
-        || blockers[0]?.detail
+        || summarizeBlockingRows(blockers)
         || `${command.label || command.id || 'Command'} exited ${command.rc ?? 'unknown'}.`
       return {
         id: command.id || 'unknown',
@@ -402,6 +403,14 @@ function summarizeCommandDiagnostics(commands) {
         blockers,
       }
     })
+}
+
+function summarizeBlockingRows(blockers) {
+  const rows = (blockers || []).slice(0, DIAGNOSTIC_BLOCKER_SUMMARY_LIMIT)
+  if (rows.length === 0) {
+    return null
+  }
+  return `blocked by ${rows.map(row => `${row.id} [${row.status}]`).join(', ')}`
 }
 
 function extractBlockingRows(output) {
@@ -432,10 +441,20 @@ function extractDiagnosticSignals(output) {
     if (!line || seen.has(line)) {
       continue
     }
+    if (isBlockingRowLine(line)) {
+      continue
+    }
+    if (/^completion-audit:\s+cockpit\b/i.test(line)) {
+      continue
+    }
     if (/^>/.test(line) || /^npm\s+(ERR!|WARN)/i.test(line)) {
       continue
     }
-    if (/completion-audit:|trust-preflight:|smoke-check-deploy:|FAILED|Error:|Missing|blocked|red|yellow/i.test(line)) {
+    if (/^(completion-audit|trust-preflight|smoke-check-deploy):/i.test(line)
+      || /^FAILED\b/i.test(line)
+      || /^Error:/i.test(line)
+      || /^Missing\b/i.test(line)
+      || /\bblocked\b/i.test(line)) {
       seen.add(line)
       signals.push(line)
     }
@@ -444,6 +463,10 @@ function extractDiagnosticSignals(output) {
     }
   }
   return signals
+}
+
+function isBlockingRowLine(line) {
+  return /^-\s+.+?\s+\[(red|yellow|green)\]\s+.+$/i.test(String(line || '').trim())
 }
 
 function formatPreflightDiagnosticLines(report) {
@@ -455,7 +478,7 @@ function formatPreflightDiagnosticLines(report) {
       const lines = [
         `trust-preflight: ${command.status} command ${command.id} exited ${command.rc ?? 'unknown'}: ${command.summary}`,
       ]
-      for (const blocker of (command.blockers || []).slice(0, 4)) {
+      for (const blocker of (command.blockers || []).slice(0, DIAGNOSTIC_BLOCKER_SUMMARY_LIMIT)) {
         lines.push(`trust-preflight: blocker ${blocker.id} [${blocker.status}] ${blocker.detail}`)
       }
       return lines
@@ -488,7 +511,9 @@ function tail(value) {
   if (text.length <= OUTPUT_TAIL_LIMIT) {
     return text
   }
-  return text.slice(-OUTPUT_TAIL_LIMIT)
+  const truncated = text.slice(-OUTPUT_TAIL_LIMIT)
+  const firstNewline = truncated.indexOf('\n')
+  return firstNewline === -1 ? truncated : truncated.slice(firstNewline + 1)
 }
 
 function truncateDiagnosticLine(value) {

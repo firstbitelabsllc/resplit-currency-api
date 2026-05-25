@@ -1,5 +1,19 @@
 # Resplit Nurse Log
 
+## 2026-05-25 17:07 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. Local CI already exposed the trust-preflight red lane, and this slice makes the cockpit preserve the full top blocker set in the failed-lane taxonomy instead of truncating the operator queue before `loaded-agent-mcp`.
+- Shipped delta pending source promotion: `scripts/trust-preflight.js` now ignores structured blocker rows as generic diagnostic signals, drops partial leading tail lines, skips non-actionable `completion-audit: cockpit ...` artifact paths, and summarizes blocker-only command tails as `blocked by overall-launch-trust [red], source-contract [red], clean-firstbite-local-ci [red], loaded-agent-mcp [red]`. `scripts/reliability-cockpit.js` now carries up to four compact trust-preflight blocker IDs into failed-lane reasons, so FirstBite operating readout proof gaps keep the same queue labels the preflight log printed. Tests cover blocker-only red tails and multi-blocker lane taxonomy.
+- Fresh proof:
+  - `node --test tests/trust-preflight.test.js tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js` -> `109/109` tests passed.
+  - `npm run trust:preflight` -> expected red exit `2`; stdout now summarizes the red command as `blocked by overall-launch-trust [red], source-contract [red], clean-firstbite-local-ci [red], loaded-agent-mcp [red]` and includes the matching blocker rows.
+  - `npm run reliability:cockpit && npm run reliability:cockpit:verify` -> green; generated report HEAD matches the current checkout and `localCi.operatingReadout.expectedRepoFailures[0].reason` includes `trust-preflight: blockers overall-launch-trust [red]; source-contract [red]; clean-firstbite-local-ci [red]; loaded-agent-mcp [red]`.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s).
+  - `npm run check` -> generate green, strict release validation green, and `290/290` tests passed.
+  - `npm run smoke:deploy` -> `OK (date=2026-05-25, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Boundary: this still does not clear `resplit_currency_api_trust_preflight`, source promotion, clean landed-source FirstBite, loaded Codex/Cursor MCP host reload/capture, M4 peer execution, Cloudflare destination proof, or Grafana Tempo/Loki proof. It makes the local-CI GUI better aligned with the repo-owned trust queue: a red lane now says which proof boundary to fix next.
+- Exact next slice: commit/push this blocker-summary hardening, regenerate the cockpit at the new commit HEAD, rerun current-source FirstBite proof so the lane log itself is produced by this summarizer, and then keep decomposing `agent-ledger-fleet`/`source-contract`.
+
 ## 2026-05-25 16:58 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The current-source local-CI lane failure is now more actionable: `resplit_currency_api_trust_preflight` no longer collapses the red command into only `cockpit=RED`; the preflight artifact, markdown, cockpit GUI, and FirstBite log output now name the failing `completion-audit` command and its first blocker rows.

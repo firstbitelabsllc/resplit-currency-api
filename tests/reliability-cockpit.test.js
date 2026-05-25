@@ -1581,6 +1581,8 @@ test('inspectFirstBiteOperatingReadout preserves failed lane log diagnostics for
     'trust-preflight: status=red; commands 8 green, 3 yellow, 0 red; cockpit=RED - missing required trust contract',
     'trust-preflight: red command completion-audit exited 2: completion-audit: red Launch completion blocked.',
     'trust-preflight: blocker source-contract [red] Source bundle is not on origin/main.',
+    'trust-preflight: blocker clean-firstbite-local-ci [red] Clean FirstBite proof must run from tracked landed source.',
+    'trust-preflight: blocker loaded-agent-mcp [red] Loaded MCP host catalog must expose resplit_currency_api lanes.',
     '===== FINAL SUMMARY =====',
     'rc=2',
   ].join('\n'))
@@ -1630,7 +1632,11 @@ test('inspectFirstBiteOperatingReadout preserves failed lane log diagnostics for
   assert.match(readout.failedLanes[0].reason, /missing required trust contract/)
   assert.match(readout.failedLanes[0].reason, /completion-audit/)
   assert.match(readout.failedLanes[0].reason, /source-contract/)
+  assert.match(readout.failedLanes[0].reason, /clean-firstbite-local-ci/)
+  assert.match(readout.failedLanes[0].reason, /loaded-agent-mcp/)
   assert.match(proofGap.laneFindings[0].reason, /trust-preflight: status=red/)
+  assert.match(proofGap.laneFindings[0].reason, /trust-preflight: blockers/)
+  assert.match(proofGap.laneFindings[0].reason, /loaded-agent-mcp/)
   assert.doesNotMatch(proofGap.laneFindings[0].reason, /rc unknown/)
 })
 
