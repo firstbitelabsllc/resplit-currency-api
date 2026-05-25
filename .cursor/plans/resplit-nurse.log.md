@@ -1,5 +1,17 @@
 # Resplit Nurse Log
 
+## 2026-05-25 10:07 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds, but the loaded-host MCP boundary is now captured as fresh evidence instead of inferred from memory.
+- Fresh live loaded MCP capture:
+  - `mcp__firstbite_local_ci.list_lanes` in the active Codex host still exposes only `resplit_web`, `resplit_ios`, `strongyes_web`, and `moussey`; no `resplit_currency_api`.
+  - `npm run mcp:loaded-probe -- --repo /Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525` with that live tool output -> `reports/firstbite-loaded-mcp-lanes.json`; source `codex-mcp-tool:mcp__firstbite_local_ci.list_lanes`, `12` loaded lane(s), `repoPresent=false`, missing `4/4` expected FX lanes.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit remains `RED - missing required trust contract`; loaded-host freshness is green (`1m old`) while loaded-host catalog status is red, with delta `12` loaded lanes vs repo-backed `16` lanes and missing repo `resplit_currency_api`.
+  - `npm run trust:preflight` -> expected red exit `2`; commands `8 green, 3 yellow, 0 red`; cockpit remains red.
+  - `npm run source:promotion-packet` -> expected red/yellow source gate; `0` stage candidates, generated `reports/` held by default, and the only command drift is that `origin/main` does not yet contain `resplit_currency_api_trust_preflight`.
+- Boundary: this does not reload the MCP host and does not prove loaded-agent execution. It proves the opposite: the current loaded in-app host is fresh enough to inspect and still stale enough to fail the launch trust contract.
+- Exact next slice: restart/reload Codex/Cursor FirstBite MCP host, rerun `mcp__firstbite_local_ci.list_lanes`, recapture `reports/firstbite-loaded-mcp-lanes.json`, and require the loaded-host delta to clear before running clean `resplit_currency_api_all` proof from landed source.
+
 ## 2026-05-25 09:58 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds because loaded MCP host freshness, clean landed-source local-CI execution, source-promotion, Cloudflare destination proof, Grafana Tempo/Loki proof, and the red `resplit_currency_api_trust_preflight` lane remain separate required trust contracts.
