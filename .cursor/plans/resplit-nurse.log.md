@@ -1,5 +1,21 @@
 # Resplit Nurse Log
 
+## 2026-05-25 14:59 EDT
+
+- `NO-GO` overall launch; `RED/current` still holds. The cockpit is now aligned to the local-CI operating loop: when the FirstBite operating readout needs PR-worktree proof, the GUI/operator action prints the exact scoped command instead of a generic primary-checkout readout command.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now derives a scoped FirstBite operating-readout command (`RESPLIT_CURRENCY_API_REPO='<current worktree>' bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh`), renders it in the Operating Readout Scope Contract, and uses it in the Operator Action Queue. The scope contract now answers only whether the readout matches repo path/lane set/proof-only separation; lane pass/fail remains in the main operating-readout row.
+- Fresh proof:
+  - Unscoped readout `/Users/leokwan/.agent-ledger/firstbite-operating-readout/20260525T185237Z-66782/report.json` stayed primary-checkout-oriented: `declared_lanes=15/15`, `local_ci_catalog=14/15`, and did not provide PR-worktree proof.
+  - Scoped readout command `RESPLIT_CURRENCY_API_REPO=/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525 bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh --run-id fx-pr-worktree-20260525-1454` produced `/Users/leokwan/.agent-ledger/firstbite-operating-readout/fx-pr-worktree-20260525-1454/report.json`.
+  - Regenerated cockpit: `operatingReadoutScopeContract.status=green`; readout repo path equals the PR worktree, `resplit_currency_api_trust_preflight` is present in `lane_keys`, and proof-only failures are separated as fleet history.
+  - The local-CI gate is still red for the right reason: PR-scoped readout status is red because `resplit_currency_api_trust_preflight` failed (`run_id=verify-firstbite-mcp-warn-exits-red-clean-head-20260525`), with `resplit_ios_ui_full` still a separate non-FX fleet failure.
+  - `node --test tests/reliability-cockpit.test.js tests/verify-reliability-cockpit-report.test.js tests/reliability-completion-audit.test.js` -> `98/98` cockpit/verifier/completion tests passed.
+  - `npm run reliability:cockpit:verify` -> green with the scoped command rendered and report HEAD matching the current checkout.
+  - `npm run reliability:completion-audit` -> expected red exit `2`: `0` stale/missing cockpit report(s), `8` non-green/missing launch boundary(s), `8` non-green/missing proof boundary(s), and `12` non-green trust contract(s). `agent-ledger-fleet` now says to fix the failing `resplit_currency_api` lane instead of treating the readout as wrong-checkout evidence.
+  - `npm run check` -> generate green, strict release validation green, and `275/275` tests passed.
+- Boundary: this still does not restart/reload Codex/Cursor, prove the live loaded MCP host is current, pass `resplit_currency_api_trust_preflight`, prove clean landed-source FirstBite execution, prove M4 peer execution, or prove Cloudflare/Grafana delivery. It closes the local-CI alignment bug where the GUI asked for current-path proof but did not show the current-path readout command.
+- Exact next slice: commit/push this local-CI scoped-readout command hardening, regenerate the cockpit on the new commit head, then work the actual red local-CI lane (`resplit_currency_api_trust_preflight`) or loaded-host recapture without mixing those gates.
+
 ## 2026-05-25 14:48 EDT
 
 - `NO-GO` overall launch; `RED/current` still holds. The cockpit now has a FirstBite Operating Readout Scope Contract, so a fleet/primary-checkout readout cannot masquerade as current PR-worktree proof unless repo path, repo key, lane set, and proof-only separation all match.

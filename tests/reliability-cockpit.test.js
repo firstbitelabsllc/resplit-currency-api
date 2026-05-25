@@ -1596,6 +1596,46 @@ test('buildOperatingReadoutScopeContract accepts matching current repo path and 
   assert.match(contract.summary, /matches the current repo path and lane set/)
 })
 
+test('buildOperatingReadoutScopeContract keeps lane failures separate from scope proof', () => {
+  const contract = buildOperatingReadoutScopeContract({
+    expectedRepo: 'resplit_currency_api',
+    expectedRepoDir: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+    expectedLaneIds: [
+      'resplit_currency_api_unit',
+      'resplit_currency_api_integration',
+      'resplit_currency_api_ui',
+      'resplit_currency_api_trust_preflight',
+    ],
+    operatingReadout: {
+      status: 'red',
+      reportPath: '/Users/leokwan/.agent-ledger/firstbite-operating-readout/pr-worktree/report.json',
+      catalog: {
+        repoPresent: true,
+        laneKeys: [
+          'resplit_currency_api_unit',
+          'resplit_currency_api_integration',
+          'resplit_currency_api_ui',
+          'resplit_currency_api_trust_preflight',
+        ],
+      },
+      expectedManifestState: {
+        repo_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525',
+        declaration_path: '/Users/leokwan/Development/resplit-currency-api-worktrees/post-pr9-main-20260525/.firstbite/local-ci.json',
+      },
+      localCi: {
+        proofOnlyNonCurrentLaneCount: 3,
+        proofOnlyNonCurrentFailCount: 1,
+      },
+    },
+  })
+
+  assert.equal(contract.status, 'green')
+  assert.equal(contract.rows.find(row => row.id === 'readout-report').status, 'green')
+  assert.equal(contract.rows.find(row => row.id === 'proof-only-lanes').status, 'green')
+  assert.match(contract.scopedCommand, /^RESPLIT_CURRENCY_API_REPO=/)
+  assert.match(contract.scopedCommand, /post-pr9-main-20260525/)
+})
+
 test('inspectFirstBiteMcpRefreshPlan surfaces stale loaded-client process audit', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-firstbite-refresh-'))
   const runDir = path.join(root, '20260525T112208Z-16715')
