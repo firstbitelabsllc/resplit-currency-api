@@ -15,7 +15,11 @@ const SOURCE_PROMOTION_PACKET_BASENAME = 'resplit-fx-source-promotion-packet.jso
 const SOURCE_PROMOTION_PACKET_MARKDOWN = 'resplit-fx-source-promotion-packet.md'
 const CLOUDFLARE_OTEL_DESTINATIONS_BASENAME = 'cloudflare-otel-destinations.json'
 const PROOF_FRESHNESS_LIMIT_MINUTES = 60
+const DEFAULT_AI_LEO_REPO_DIR = path.join(os.homedir(), 'Development', 'ai-leo')
 const DEFAULT_FIRSTBITE_LOCAL_CI_DIR = path.join(os.homedir(), 'Development', 'ai-leo', 'skills', 'resplit-watch', 'mcp', 'firstbite-local-ci')
+const FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH = 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs'
+const FIRSTBITE_RUNNER_README_RELATIVE_PATH = 'skills/resplit-watch/mcp/firstbite-local-ci/README.md'
+const FIRSTBITE_WARN_EXIT_BRANCH_REF = 'origin/codex/firstbite-mcp-warn-exits-20260525'
 const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
 const DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-operating-readout')
 const RESPLIT_CURRENCY_API_REPO_ENV = 'RESPLIT_CURRENCY_API_REPO'
@@ -167,6 +171,8 @@ function buildReport({
   loadedMcpProbePath,
   repoBackedMcpProbe,
   repoBackedMcpPackageDir,
+  firstBiteRunnerControlPlane,
+  aiLeoRepoDir,
   operatingReadoutRoot,
   sharedLedgerPath,
 } = {}) {
@@ -220,10 +226,15 @@ function buildReport({
     expectedRepo: manifest?.repo,
     generatedAt,
   })
+  const runnerControlPlane = firstBiteRunnerControlPlane || inspectFirstBiteRunnerControlPlane({
+    aiLeoRepoDir: aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR,
+    packageDir: repoBackedMcpPackageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
+  })
   const git = gitState || getGitState(repoDir)
 
   const localCi = inspectLocalCiManifest(manifest, manifestPath, mcpProof, generatedAt, loadedMcpProbe, trackedSource, repoBackedMcpCatalog, git)
   localCi.operatingReadout = operatingReadout
+  localCi.runnerControlPlane = runnerControlPlane
   localCi.sourcePromotionBundle = buildSourcePromotionBundle({
     repoDir,
     trackedSource: localCi.trackedSource,
@@ -1299,6 +1310,168 @@ function readJsonAtRef(repoDir, ref, relPath) {
   }
 }
 
+function inspectFirstBiteRunnerControlPlane({
+  aiLeoRepoDir = DEFAULT_AI_LEO_REPO_DIR,
+  packageDir = DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
+  serverRelativePath = FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH,
+  readmeRelativePath = FIRSTBITE_RUNNER_README_RELATIVE_PATH,
+  prBranchRef = FIRSTBITE_WARN_EXIT_BRANCH_REF,
+} = {}) {
+  const packageRelativePath = path.relative(aiLeoRepoDir, packageDir).split(path.sep).join('/')
+  const serverPath = path.join(aiLeoRepoDir, serverRelativePath)
+  const supportTokens = [
+    'expectedExitCodes',
+    'yellowExitCodes',
+    'exit_classification',
+    'trust_status',
+    'source_ref',
+  ]
+  const tokenLabels = {
+    expectedExitCodes: 'expected exits',
+    yellowExitCodes: 'yellow exits',
+    exit_classification: 'exit classification',
+    trust_status: 'trust status',
+    source_ref: 'source ref',
+  }
+  const rows = [
+    inspectFirstBiteRunnerSource({
+      id: 'workingTree',
+      label: 'Working tree package',
+      ref: 'working tree',
+      text: readTextIfExists(serverPath),
+      source: serverPath,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `server.mjs not found at ${serverPath}`,
+    }),
+    inspectFirstBiteRunnerSource({
+      id: 'head',
+      label: 'ai-leo HEAD',
+      ref: 'HEAD',
+      text: gitTextAtRef(aiLeoRepoDir, 'HEAD', serverRelativePath),
+      source: `${aiLeoRepoDir}:HEAD:${serverRelativePath}`,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `HEAD does not contain ${serverRelativePath}`,
+    }),
+    inspectFirstBiteRunnerSource({
+      id: 'originMain',
+      label: 'ai-leo origin/main',
+      ref: 'origin/main',
+      text: gitTextAtRef(aiLeoRepoDir, 'origin/main', serverRelativePath),
+      source: `${aiLeoRepoDir}:origin/main:${serverRelativePath}`,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `origin/main does not contain ${serverRelativePath}`,
+    }),
+    inspectFirstBiteRunnerSource({
+      id: 'prBranch',
+      label: 'warn-exit PR branch',
+      ref: prBranchRef,
+      text: gitTextAtRef(aiLeoRepoDir, prBranchRef, serverRelativePath),
+      source: `${aiLeoRepoDir}:${prBranchRef}:${serverRelativePath}`,
+      supportTokens,
+      tokenLabels,
+      missingWhenAbsent: `${prBranchRef} does not contain ${serverRelativePath}`,
+    }),
+  ]
+
+  const workingTree = rows.find(row => row.id === 'workingTree')
+  const head = rows.find(row => row.id === 'head')
+  const originMain = rows.find(row => row.id === 'originMain')
+  const prBranch = rows.find(row => row.id === 'prBranch')
+  const dirty = [
+    gitPathStatus(aiLeoRepoDir, serverRelativePath),
+    gitPathStatus(aiLeoRepoDir, readmeRelativePath),
+  ].filter(Boolean)
+  const branch = gitRefShort(aiLeoRepoDir, 'HEAD')
+  const originMainHead = gitRefShort(aiLeoRepoDir, 'origin/main')
+  const prBranchHead = gitRefShort(aiLeoRepoDir, prBranchRef)
+  const activeSupports = Boolean(workingTree?.supports)
+  const headSupports = Boolean(head?.supports)
+  const durableSupports = Boolean(originMain?.supports)
+  const prSupports = Boolean(prBranch?.supports)
+  let status = 'red'
+  if (activeSupports && durableSupports && headSupports) {
+    status = 'green'
+  } else if (activeSupports) {
+    status = 'yellow'
+  }
+  const summary = status === 'green'
+    ? 'FirstBite runner expected/yellow exit support is landed on ai-leo origin/main and present in the active package.'
+    : status === 'yellow'
+      ? 'FirstBite runner expected/yellow exit support exists locally or on the PR branch, but is not landed on ai-leo origin/main.'
+      : 'Active FirstBite runner package does not preserve expected/yellow trust exits.'
+  const nextAction = status === 'green'
+    ? 'Restart or reload the loaded MCP host, then capture a fresh list_lanes artifact from the in-app MCP boundary.'
+    : activeSupports || prSupports
+      ? 'Merge ai-leo PR #11, update ai-leo origin/main, restart the Codex/Cursor MCP host, and recapture reports/firstbite-loaded-mcp-lanes.json.'
+      : 'Port expected/yellow exit support into the active FirstBite runner package before trusting local-agent lane colors.'
+
+  return {
+    status,
+    summary,
+    nextAction,
+    aiLeoRepoDir,
+    packageDir,
+    packageRelativePath,
+    serverRelativePath,
+    readmeRelativePath,
+    prBranchRef,
+    branch,
+    originMainHead,
+    prBranchHead,
+    dirty,
+    activeSupports,
+    headSupports,
+    durableSupports,
+    prSupports,
+    supportTokens,
+    rows,
+  }
+}
+
+function inspectFirstBiteRunnerSource({
+  id,
+  label,
+  ref,
+  text,
+  source,
+  supportTokens = [],
+  tokenLabels = {},
+  missingWhenAbsent,
+}) {
+  if (!text) {
+    return {
+      id,
+      label,
+      ref,
+      source,
+      status: 'red',
+      supports: false,
+      present: false,
+      missingTokens: supportTokens,
+      summary: missingWhenAbsent || `${label} is missing.`,
+    }
+  }
+
+  const missingTokens = supportTokens.filter(token => !text.includes(token))
+  const supports = missingTokens.length === 0
+  return {
+    id,
+    label,
+    ref,
+    source,
+    status: supports ? 'green' : 'red',
+    supports,
+    present: true,
+    missingTokens,
+    summary: supports
+      ? `${label} preserves expected/yellow exit semantics.`
+      : `${label} is missing ${missingTokens.map(token => tokenLabels[token] || token).join(', ')}.`,
+  }
+}
+
 function inspectManifestLaneCommands(currentManifest, headManifest, originManifest) {
   const currentCommands = manifestLaneCommandMap(currentManifest)
   const headCommands = manifestLaneCommandMap(headManifest)
@@ -1398,6 +1571,22 @@ function gitPathExists(repoDir, ref, relPath) {
     return true
   } catch {
     return false
+  }
+}
+
+function gitTextAtRef(repoDir, ref, relPath) {
+  try {
+    return execGit(repoDir, ['show', `${ref}:${relPath}`])
+  } catch {
+    return null
+  }
+}
+
+function gitRefShort(repoDir, ref) {
+  try {
+    return execGit(repoDir, ['rev-parse', '--short=12', ref]).trim()
+  } catch {
+    return null
   }
 }
 
@@ -3151,6 +3340,14 @@ function computeRisks({ git, localCi, telemetry, nurseLog, inbox, ledger }) {
     })
   }
 
+  if (localCi.runnerControlPlane?.status && localCi.runnerControlPlane.status !== 'green') {
+    risks.push({
+      status: localCi.runnerControlPlane.status,
+      label: 'FirstBite runner durability gap',
+      detail: localCi.runnerControlPlane.summary,
+    })
+  }
+
   const peerBoundary = localCi.operatingReadout?.peerExecutionBoundary
   if (peerBoundary?.status && peerBoundary.status !== 'green' && peerBoundary.status !== 'missing') {
     risks.push({
@@ -3247,6 +3444,7 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
   const cleanProofReadiness = localCi?.cleanProofReadiness
   const sourcePromotionBundle = localCi?.sourcePromotionBundle
   const operatingReadout = localCi?.operatingReadout
+  const runnerControlPlane = localCi?.runnerControlPlane
   const peerBoundary = operatingReadout?.peerExecutionBoundary
 
   const contracts = [
@@ -3288,6 +3486,13 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
       current: operatingReadout?.summary || 'FirstBite operating readout was not inspected.',
       proof: operatingReadout?.reportPath || 'firstbite-operating-readout/report.json',
       nextAction: operatingReadout?.nextAction || 'Run the FirstBite operating readout before cross-agent local-CI claims.',
+    },
+    {
+      gate: 'FirstBite runner durability',
+      status: runnerControlPlane?.status || 'yellow',
+      current: runnerControlPlane?.summary || 'FirstBite runner package durability was not inspected.',
+      proof: runnerControlPlane?.serverRelativePath || FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH,
+      nextAction: runnerControlPlane?.nextAction || 'Prove expected/yellow exit support is landed in ai-leo and loaded by the MCP host.',
     },
   ]
 
@@ -3376,6 +3581,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const cleanProof = localCi.cleanProofReadiness || {}
   const loadedMcp = localCi.loadedMcpProbe || {}
   const operatingReadout = localCi.operatingReadout || {}
+  const runnerControlPlane = localCi.runnerControlPlane || {}
   const cloudflareDestinations = telemetry.cloudflare?.destinations || {}
   const grafanaEvidence = telemetry.grafana?.evidence || {}
   const actions = []
@@ -3414,6 +3620,25 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       canRunNow: sourcePromotion.status === 'green',
       blockedBy: sourcePromotion.status === 'green' ? '' : 'Source promotion bundle must land first.',
       boundary: 'local-ci',
+    }))
+  }
+
+  if (contractNeedsAction(byGate.get('FirstBite runner durability'))) {
+    actions.push(operatorAction({
+      id: 'firstbite-runner-durability',
+      priority: 3,
+      owner: 'ai-leo MCP runner',
+      gate: 'FirstBite runner durability',
+      status: byGate.get('FirstBite runner durability')?.status || runnerControlPlane.status || 'yellow',
+      proof: runnerControlPlane.serverRelativePath || FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH,
+      command: 'cd /Users/leokwan/Development/ai-leo-worktrees/firstbite-mcp-warn-exits-20260525 && gh pr view 11 --json state,isDraft,mergeStateStatus,headRefName',
+      blocker: runnerControlPlane.summary || byGate.get('FirstBite runner durability')?.current || 'FirstBite runner durability was not inspected.',
+      nextAction: runnerControlPlane.nextAction || byGate.get('FirstBite runner durability')?.nextAction || 'Land expected/yellow exit support in ai-leo, restart the loaded MCP host, and recapture list_lanes.',
+      evidenceRequired: 'ai-leo origin/main contains expected/yellow exit support and a fresh loaded-host MCP catalog sees the repo-manifest-v2 FX lanes.',
+      unblocks: 'Loaded MCP host catalog',
+      canRunNow: Boolean(runnerControlPlane.activeSupports || runnerControlPlane.prSupports),
+      blockedBy: runnerControlPlane.activeSupports || runnerControlPlane.prSupports ? '' : 'Runner support is not present locally or on the PR branch.',
+      boundary: 'local-agent-control-plane',
     }))
   }
 
@@ -3693,6 +3918,19 @@ function buildEvidenceFreshnessLedger({
       missingSummary: 'Repo-backed MCP catalog proof is missing.',
     }),
     buildEvidenceFreshnessRow({
+      id: 'firstbite-runner-control-plane',
+      surface: 'FirstBite runner control plane',
+      artifact: localCi?.runnerControlPlane?.serverRelativePath || FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH,
+      secondaryArtifact: localCi?.runnerControlPlane?.packageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
+      checkedAt: generatedAt,
+      ageMinutes: 0,
+      trustStatus: localCi?.runnerControlPlane?.status || 'missing',
+      summary: localCi?.runnerControlPlane?.summary || 'FirstBite runner control plane was not inspected.',
+      nextAction: localCi?.runnerControlPlane?.nextAction || 'Land runner semantics in ai-leo and refresh loaded MCP host.',
+      missingStatus: 'red',
+      missingSummary: 'FirstBite runner control plane proof is missing.',
+    }),
+    buildEvidenceFreshnessRow({
       id: 'cloudflare-otel-destinations',
       surface: 'Cloudflare OTEL destinations',
       artifact: cloudflareDestinations?.latestPath || path.join(repoDir || '', DEFAULT_OUTPUT_DIR, CLOUDFLARE_OTEL_DESTINATIONS_BASENAME),
@@ -3831,6 +4069,18 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
       evidence: byGate.get('Repo-backed MCP package')?.proof || localCi?.repoBackedMcpProbe?.packageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
       gap: byGate.get('Repo-backed MCP package')?.current || localCi?.repoBackedMcpProbe?.summary || 'Repo-backed MCP package proof missing.',
       nextAction: byGate.get('Repo-backed MCP package')?.nextAction || 'Run the repo-backed FirstBite list_lanes call.',
+    }),
+    trustAuditRow({
+      id: 'firstbite-runner-durability',
+      surface: 'FirstBite runner durability',
+      boundary: 'local-agent-control-plane',
+      owner: 'ai-leo MCP runner',
+      status: byGate.get('FirstBite runner durability')?.status || localCi?.runnerControlPlane?.status || 'yellow',
+      allowedWhenGreen: 'Expected/yellow exit handling is landed on ai-leo origin/main and present in the active FirstBite runner package.',
+      forbiddenUntilGreen: 'Do not claim local-agent lane colors are durable while runner semantics exist only locally or on an unmerged PR branch.',
+      evidence: byGate.get('FirstBite runner durability')?.proof || localCi?.runnerControlPlane?.serverRelativePath || FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH,
+      gap: byGate.get('FirstBite runner durability')?.current || localCi?.runnerControlPlane?.summary || 'FirstBite runner durability proof missing.',
+      nextAction: byGate.get('FirstBite runner durability')?.nextAction || localCi?.runnerControlPlane?.nextAction || 'Land ai-leo runner support and restart loaded MCP host.',
     }),
     trustAuditRow({
       id: 'peer-execution',
@@ -4451,6 +4701,7 @@ function renderLocalCiProof(localCi) {
       ${renderSourcePromotionBundle(localCi.sourcePromotionBundle)}
       ${renderSourcePromotionPacket(localCi.sourcePromotionPacket)}
       ${renderFirstBiteOperatingReadout(localCi.operatingReadout)}
+      ${renderFirstBiteRunnerControlPlane(localCi.runnerControlPlane)}
       ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
       ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
       ${renderLoadedMcpProbe(localCi.loadedMcpProbe)}
@@ -4482,6 +4733,7 @@ function renderLocalCiProof(localCi) {
     ${renderSourcePromotionBundle(localCi.sourcePromotionBundle)}
     ${renderSourcePromotionPacket(localCi.sourcePromotionPacket)}
     ${renderFirstBiteOperatingReadout(localCi.operatingReadout)}
+    ${renderFirstBiteRunnerControlPlane(localCi.runnerControlPlane)}
     ${renderCurrentManifestProof(localCi.currentManifestProof)}
     ${renderRepoBackedMcpProbe(localCi.repoBackedMcpProbe)}
     ${renderMcpCatalogDelta(localCi.mcpCatalogDelta)}
@@ -4675,6 +4927,33 @@ function renderFirstBiteOperatingReadout(readout) {
       <thead><tr><th>Failed lane</th><th>Repo</th><th>Kind</th><th>Status</th><th>Run</th><th>Log</th></tr></thead>
       <tbody>
         ${failedLanes.length === 0 ? '<tr><td colspan="6">No failed lanes in the latest operating readout.</td></tr>' : failedLanes.map(lane => `<tr><td><code>${escapeHtml(lane.lane || 'unknown')}</code></td><td>${escapeHtml(lane.repo || '')}</td><td>${escapeHtml(lane.kind || '')}</td><td><span class="${lane.status === 'fail' ? 'red' : 'yellow'}">${escapeHtml(lane.status || 'unknown')}</span></td><td><code>${escapeHtml(lane.runId || '')}</code></td><td><code>${escapeHtml(lane.logPath || '')}</code></td></tr>`).join('\n')}
+      </tbody>
+    </table>`
+}
+
+function renderFirstBiteRunnerControlPlane(controlPlane) {
+  if (!controlPlane) {
+    return ''
+  }
+
+  const statusClass = controlPlane.status === 'green' ? 'green' : controlPlane.status === 'red' ? 'red' : 'yellow'
+  const dirty = (controlPlane.dirty || []).length > 0 ? controlPlane.dirty.join('; ') : 'clean for runner files'
+  const rows = controlPlane.rows || []
+
+  return `<h2>FirstBite Runner Control Plane</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="${statusClass}">${escapeHtml(controlPlane.status || 'unknown')}</span> ${escapeHtml(controlPlane.summary || '')}</div>
+      <div>ai-leo repo</div><div><code>${escapeHtml(controlPlane.aiLeoRepoDir || DEFAULT_AI_LEO_REPO_DIR)}</code></div>
+      <div>Package dir</div><div><code>${escapeHtml(controlPlane.packageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR)}</code></div>
+      <div>Server path</div><div><code>${escapeHtml(controlPlane.serverRelativePath || FIRSTBITE_RUNNER_SERVER_RELATIVE_PATH)}</code></div>
+      <div>Refs</div><div>HEAD <code>${escapeHtml(controlPlane.branch || 'unknown')}</code> · origin/main <code>${escapeHtml(controlPlane.originMainHead || 'unknown')}</code> · PR branch <code>${escapeHtml(controlPlane.prBranchHead || 'missing')}</code></div>
+      <div>Runner file status</div><div><code>${escapeHtml(dirty)}</code></div>
+      <div>Next action</div><div>${escapeHtml(controlPlane.nextAction || '')}</div>
+    </div>
+    <table>
+      <thead><tr><th>Boundary</th><th>Status</th><th>Supports warn exits</th><th>Ref</th><th>Missing tokens</th><th>Source</th><th>Summary</th></tr></thead>
+      <tbody>
+        ${rows.length === 0 ? '<tr><td colspan="7">No FirstBite runner control-plane rows were generated.</td></tr>' : rows.map(row => `<tr><td>${escapeHtml(row.label || row.id || '')}</td><td><span class="${escapeHtml(row.status || 'yellow')}">${escapeHtml(row.status || 'unknown')}</span></td><td>${row.supports ? '<span class="green">yes</span>' : '<span class="red">no</span>'}</td><td><code>${escapeHtml(row.ref || '')}</code></td><td><code>${escapeHtml((row.missingTokens || []).join(', ') || 'none')}</code></td><td><code>${escapeHtml(row.source || '')}</code></td><td>${escapeHtml(row.summary || '')}</td></tr>`).join('\n')}
       </tbody>
     </table>`
 }
@@ -5088,6 +5367,7 @@ module.exports = {
   evaluateMcpProofFreshness,
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
+  inspectFirstBiteRunnerControlPlane,
   inspectFirstBiteOperatingReadout,
   inspectGrafanaEvidence,
   inspectLaneLog,

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 
 const {
   assessCleanProofReadiness,
@@ -21,6 +22,7 @@ const {
   evaluateMcpProofFreshness,
   findLatestMcpProofForRepo,
   inspectCloudflareOtelDestinations,
+  inspectFirstBiteRunnerControlPlane,
   inspectFirstBiteOperatingReadout,
   inspectGrafanaEvidence,
   inspectLaneLog,
@@ -1143,6 +1145,59 @@ test('inspectRepoBackedMcpCatalog flags package catalog command failures', () =>
   assert.match(probe.summary, /failed/)
 })
 
+test('inspectFirstBiteRunnerControlPlane separates local support from durable ai-leo origin/main', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-leo-runner-'))
+  const serverRel = 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs'
+  const packageDir = path.join(repoDir, 'skills', 'resplit-watch', 'mcp', 'firstbite-local-ci')
+  const serverPath = path.join(repoDir, serverRel)
+  const git = args => execFileSync('git', args, {
+    cwd: repoDir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const writeServer = text => {
+    fs.mkdirSync(path.dirname(serverPath), { recursive: true })
+    fs.writeFileSync(serverPath, text)
+  }
+
+  git(['init', '-b', 'main'])
+  git(['config', 'user.email', 'test@example.com'])
+  git(['config', 'user.name', 'Test Runner'])
+  writeServer('const status = rc === 0 ? "pass" : "fail"\n')
+  git(['add', serverRel])
+  git(['commit', '-m', 'unsupported runner'])
+  git(['update-ref', 'refs/remotes/origin/main', 'HEAD'])
+
+  writeServer([
+    'const expectedExitCodes = lane.expectedExitCodes',
+    'const yellowExitCodes = lane.yellowExitCodes',
+    'const exit_classification = "expected_yellow"',
+    'const trust_status = "yellow"',
+    'const source_ref = resolvedSourceRef',
+  ].join('\n'))
+  git(['add', serverRel])
+  git(['commit', '-m', 'support yellow exits'])
+  git(['update-ref', 'refs/remotes/origin/codex/firstbite-mcp-warn-exits-20260525', 'HEAD'])
+
+  const controlPlane = inspectFirstBiteRunnerControlPlane({
+    aiLeoRepoDir: repoDir,
+    packageDir,
+  })
+
+  assert.equal(controlPlane.status, 'yellow')
+  assert.equal(controlPlane.activeSupports, true)
+  assert.equal(controlPlane.headSupports, true)
+  assert.equal(controlPlane.durableSupports, false)
+  assert.equal(controlPlane.prSupports, true)
+  assert.equal(controlPlane.dirty.length, 0)
+  assert.match(controlPlane.summary, /not landed on ai-leo origin\/main/)
+  assert.match(controlPlane.nextAction, /Merge ai-leo PR #11/)
+  assert.equal(controlPlane.rows.find(row => row.id === 'workingTree').status, 'green')
+  assert.equal(controlPlane.rows.find(row => row.id === 'head').status, 'green')
+  assert.equal(controlPlane.rows.find(row => row.id === 'originMain').status, 'red')
+  assert.deepEqual(controlPlane.rows.find(row => row.id === 'prBranch').missingTokens, [])
+})
+
 test('buildMcpCatalogDelta explains loaded host drift against repo-backed catalog', () => {
   const delta = buildMcpCatalogDelta({
     expectedRepo: 'resplit_currency_api',
@@ -1948,6 +2003,12 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
           nextAction: 'run generated fresh-clone commands on M4',
         },
       },
+      runnerControlPlane: {
+        status: 'yellow',
+        summary: 'FirstBite runner support exists on PR branch, not origin/main.',
+        serverRelativePath: 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs',
+        nextAction: 'merge ai-leo PR #11 and restart host',
+      },
       loadedMcpProbe: {
         status: 'red',
         summary: 'Loaded MCP catalog is missing resplit_currency_api lanes',
@@ -1982,13 +2043,14 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
     ledger: { health: { status: 'green', summary: 'healthy' } },
   })
 
-  assert.equal(contracts.length, 13)
+  assert.equal(contracts.length, 14)
   assert.deepEqual(contracts.map(contract => contract.gate), [
     'Primary checkout',
     'Tracked local-CI contract',
     'Clean proof targetability',
     'Source promotion bundle',
     'FirstBite operating readout',
+    'FirstBite runner durability',
     'M4 peer execution boundary',
     'Selected local-CI proof',
     'Loaded MCP host catalog',
@@ -2002,10 +2064,12 @@ test('buildTrustContracts turns cockpit state into explicit proof actions', () =
   assert.equal(contracts.find(contract => contract.gate === 'Clean proof targetability').status, 'red')
   assert.equal(contracts.find(contract => contract.gate === 'Source promotion bundle').status, 'red')
   assert.equal(contracts.find(contract => contract.gate === 'FirstBite operating readout').status, 'yellow')
+  assert.equal(contracts.find(contract => contract.gate === 'FirstBite runner durability').status, 'yellow')
   assert.equal(contracts.find(contract => contract.gate === 'M4 peer execution boundary').status, 'yellow')
   assert.match(contracts.find(contract => contract.gate === 'Clean proof targetability').nextAction, /sync tracked source/)
   assert.match(contracts.find(contract => contract.gate === 'Source promotion bundle').nextAction, /land bundle/)
   assert.match(contracts.find(contract => contract.gate === 'FirstBite operating readout').nextAction, /failed lane/)
+  assert.match(contracts.find(contract => contract.gate === 'FirstBite runner durability').nextAction, /PR #11/)
   assert.match(contracts.find(contract => contract.gate === 'M4 peer execution boundary').current, /support-only/)
   assert.equal(contracts.find(contract => contract.gate === 'M4 peer execution boundary').proof, '/tmp/m4/fresh-clone-commands.sh')
   assert.match(contracts.find(contract => contract.gate === 'Loaded MCP host catalog').nextAction, /Restart or reload/)
@@ -2171,6 +2235,14 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
         summary: 'Loaded MCP catalog is missing resplit_currency_api lanes',
         path: '/tmp/loaded.json',
       },
+      runnerControlPlane: {
+        status: 'yellow',
+        summary: 'FirstBite runner support exists on PR branch, not origin/main.',
+        serverRelativePath: 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs',
+        activeSupports: true,
+        prSupports: true,
+        nextAction: 'merge ai-leo PR #11 and restart host',
+      },
       repoBackedMcpProbe: { status: 'green', summary: 'repo-backed ok' },
       mcpProof: { latest: { reportPath: '/tmp/report.json' } },
     },
@@ -2209,6 +2281,14 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
         status: 'red',
         summary: 'Loaded MCP catalog is missing resplit_currency_api lanes',
         path: '/tmp/loaded.json',
+      },
+      runnerControlPlane: {
+        status: 'yellow',
+        summary: 'FirstBite runner support exists on PR branch, not origin/main.',
+        serverRelativePath: 'skills/resplit-watch/mcp/firstbite-local-ci/src/server.mjs',
+        activeSupports: true,
+        prSupports: true,
+        nextAction: 'merge ai-leo PR #11 and restart host',
       },
       operatingReadout: {
         status: 'yellow',
@@ -2249,6 +2329,7 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
   assert.deepEqual(actions.map(action => action.id), [
     'source-promotion-review',
     'clean-firstbite-proof',
+    'firstbite-runner-durability',
     'loaded-mcp-refresh',
     'cloudflare-otel-destinations',
     'grafana-otel-proof',
@@ -2260,6 +2341,8 @@ test('buildOperatorActionQueue prioritizes proof-producing recovery actions', ()
   assert.equal(actions.find(action => action.id === 'clean-firstbite-proof').canRunNow, false)
   assert.match(actions.find(action => action.id === 'clean-firstbite-proof').blockedBy, /Source promotion/)
   assert.match(actions.find(action => action.id === 'clean-firstbite-proof').command, /firstbite clean command/)
+  assert.equal(actions.find(action => action.id === 'firstbite-runner-durability').canRunNow, true)
+  assert.match(actions.find(action => action.id === 'firstbite-runner-durability').nextAction, /PR #11/)
   assert.equal(actions.find(action => action.id === 'loaded-mcp-refresh').canRunNow, true)
   assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').command, /--reuse-existing/)
   assert.match(actions.find(action => action.id === 'loaded-mcp-refresh').nextAction, /host restart/)
@@ -2475,6 +2558,29 @@ test('renderHtml escapes dynamic values', () => {
         },
         failedLanes: [],
         nextAction: '<readout-next>',
+      },
+      runnerControlPlane: {
+        status: 'yellow',
+        summary: '<runner-summary>',
+        nextAction: '<runner-next>',
+        aiLeoRepoDir: '/tmp/<ai-leo>',
+        packageDir: '/tmp/<firstbite-package>',
+        serverRelativePath: '<runner-server>',
+        readmeRelativePath: '<runner-readme>',
+        branch: '<runner-head>',
+        originMainHead: '<runner-origin>',
+        prBranchHead: '<runner-pr>',
+        dirty: ['<runner-dirty>'],
+        rows: [{
+          id: '<runner-row>',
+          label: '<runner-label>',
+          ref: '<runner-ref>',
+          source: '/tmp/<runner-source>',
+          status: 'red',
+          supports: false,
+          missingTokens: ['<runner-token>'],
+          summary: '<runner-row-summary>',
+        }],
       },
       mcpCatalogDelta: {
         status: 'red',
@@ -2743,6 +2849,9 @@ test('renderHtml escapes dynamic values', () => {
   assert.match(html, /accepted:accept-current/)
   assert.match(html, /\+2/)
   assert.match(html, /MCP Catalog Delta/)
+  assert.match(html, /FirstBite Runner Control Plane/)
+  assert.match(html, /&lt;runner-summary&gt;/)
+  assert.match(html, /&lt;runner-token&gt;/)
   assert.match(html, /M4 peer boundary/)
   assert.match(html, /&lt;m4-boundary&gt;/)
   assert.match(html, /&lt;m4-commands&gt;/)

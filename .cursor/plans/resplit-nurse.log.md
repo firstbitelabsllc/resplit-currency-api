@@ -1,5 +1,18 @@
 # Resplit Nurse Log
 
+## 2026-05-25 07:02 EDT
+
+- `NO-GO` overall launch; `RED/current` for the local-CI/agent/OTEL control plane because the cockpit now separates repo-backed FirstBite catalog truth, runner-package durability, loaded MCP host freshness, and external Grafana proof instead of compressing them into one local-CI color.
+- Shipped delta pending source promotion: `scripts/reliability-cockpit.js` now inspects the FirstBite runner control plane from `ai-leo` (`working tree`, `HEAD`, `origin/main`, and `origin/codex/firstbite-mcp-warn-exits-20260525`) and adds a first-class `FirstBite runner durability` trust contract, risk, operator action, launch-audit row, freshness row, and HTML section. Tests cover the case where warn/yellow exit support exists locally or on PR branch but is not landed on `ai-leo` `origin/main`.
+- Fresh proof:
+  - `node --check scripts/reliability-cockpit.js` -> green.
+  - `node --test tests/reliability-cockpit.test.js` -> `48/48` focused cockpit tests green.
+  - `npm run reliability:cockpit` -> regenerated `reports/resplit-fx-reliability-cockpit.html`; cockpit verdict remains `RED - missing required trust contract`.
+  - Regenerated cockpit evidence: repo-backed FirstBite catalog is green (`repo-manifest-v2`, `16` lanes, `resplit_currency_api` `4/4` expected lanes); runner durability is yellow (`activeSupports=true`, `headSupports=false`, `durableSupports=false`, `prSupports=true`); loaded MCP host probe is missing until host restart/reload and capture.
+  - `npm run check` -> strict release validation green and `224/224` tests passed.
+- Boundary: active `ai-leo` runner files are still dirty and not durable on `HEAD`/`origin/main`; ai-leo PR #11 branch has the support, but the loaded in-app MCP host still needs restart/reload plus `reports/firstbite-loaded-mcp-lanes.json`. Cloudflare destination proof and Grafana Tempo/Loki smoke remain external read-token/deploy proofs, not solved by this local cockpit work.
+- Exact next slice: land/merge the ai-leo FirstBite runner change, restart/reload the Codex/Cursor MCP host, capture fresh loaded-host `list_lanes`, rerun clean worktree `resplit_currency_api_all` from landed source, then keep Cloudflare/Grafana proof as a separate gate.
+
 ## 2026-05-25 06:40 EDT
 
 - `NO-GO` overall launch; `RED/current` for the local-CI/agent/OTEL control plane because the trust preflight now preserves red cockpit verdicts at the top-level FirstBite lane instead of collapsing every non-green preflight into one ambiguous exit code.
