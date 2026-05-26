@@ -15,6 +15,14 @@
         "command": "npm ci && npm run check:publish",
         "timeoutMs": 1500000
       },
+      "resplit_currency_api_trust_preflight": {
+        "kind": "integration",
+        "command": "npm ci && npm run trust:preflight",
+        "timeoutMs": 1500000,
+        "expectedExitCodes": [0, 1],
+        "yellowExitCodes": [1],
+        "note": "Launch-trust lane: generates local cockpit, Cloudflare destination, Grafana, source-promotion, and local-agent trust artifacts. Exit 1 is expected yellow while proof is incomplete; exit 2 remains red/fail. Do not treat endpoint smoke as launch-green without this lane."
+      },
       "resplit_currency_api_ui": {
         "kind": "ui",
         "command": "npm ci && npm run smoke:deploy",
