@@ -20,8 +20,17 @@
   },
   "vars": {
     "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
-    "SENTRY_ENVIRONMENT": "production"
+    "SENTRY_ENVIRONMENT": "production",
+    // OCR proxy: Azure DI endpoint (NOT secret). The key is a wrangler secret:
+    //   npx wrangler secret put AZURE_OCR_KEY          (and --env production)
+    "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com"
   },
+  "kv_namespaces": [
+    {
+      "binding": "ATTEST_KV",
+      "id": "1bfd321b53ab48f2ad45e9b4f18efe03"
+    }
+  ],
   "r2_buckets": [
     {
       "binding": "SIDELOAD_R2",
@@ -46,8 +55,15 @@
       },
       "vars": {
         "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
-        "SENTRY_ENVIRONMENT": "production"
+        "SENTRY_ENVIRONMENT": "production",
+        "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com"
       },
+      "kv_namespaces": [
+        {
+          "binding": "ATTEST_KV",
+          "id": "1bfd321b53ab48f2ad45e9b4f18efe03"
+        }
+      ],
       "r2_buckets": [
         {
           "binding": "SIDELOAD_R2",

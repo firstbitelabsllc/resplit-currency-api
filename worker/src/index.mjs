@@ -27,6 +27,7 @@ import {
 } from './monitoring.mjs'
 import { resolveRequestId } from './request-id.mjs'
 import { handleSideload } from './sideload/router.mjs'
+import { handleOcr } from './ocr/router.mjs'
 
 const ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
 const QUOTE_HISTORY_CACHE_CONTROL = 'public, s-maxage=3600, stale-while-revalidate=86400'
@@ -54,6 +55,10 @@ export async function handleRequest(request, env) {
 
   if (url.pathname.startsWith('/sideload/')) {
     return handleSideload(request, env)
+  }
+
+  if (url.pathname.startsWith('/ocr/')) {
+    return handleOcr(request, env)
   }
 
   switch (url.pathname) {

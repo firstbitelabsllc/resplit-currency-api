@@ -20,9 +20,11 @@
     "check": "npm run generate && npm run validate:release && npm run test"
   },
   "dependencies": {
+    "@peculiar/x509": "^2.0.0",
     "@sentry/cloudflare": "^10.44.0",
     "@sentry/node": "^10.44.0",
-    "fs-extra": "^11.2.0"
+    "fs-extra": "^11.2.0",
+    "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
     "wrangler": "^4.75.0"
