@@ -9,6 +9,11 @@ const allowedRecoveryCoverageSignals = new Set([
 ])
 const defaultPublishGraceMinutes = 45
 const defaultPublishUtcHours = [0, 3]
+// GitHub Pages CDN propagation lags Cloudflare after each publish, so the
+// github.io fallback can still serve yesterday's snapshot for a while after the
+// primary (Cloudflare) is already fresh. Accept a one-day-stale fallback only
+// within this wider grace window after each publish hour; strict otherwise.
+const defaultGithubFallbackGraceMinutes = 120
 
 if (require.main === module) {
   runMonitoredScript('smoke_check_deploy', main, {
@@ -29,6 +34,10 @@ async function main() {
   const publishGraceMinutes = parsePositiveInteger(
     process.env.PUBLISH_GRACE_MINUTES,
     defaultPublishGraceMinutes
+  )
+  const githubFallbackGraceMinutes = parsePositiveInteger(
+    process.env.GH_FALLBACK_GRACE_MINUTES,
+    defaultGithubFallbackGraceMinutes
   )
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
   const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
@@ -106,8 +115,21 @@ async function main() {
   if (datedSnapshot.date !== dateToday) {
     throw new Error(`dated deployment date mismatch: expected ${dateToday}, got ${datedSnapshot.date}`)
   }
-  if (ghFallbackLatest.date !== dateToday) {
+  const ghFallbackAcceptance = resolveGithubFallbackAcceptance({
+    ghFallbackDate: ghFallbackLatest.date,
+    expectedDate: dateToday,
+    graceMinutes: githubFallbackGraceMinutes,
+  })
+  if (!ghFallbackAcceptance.accepted) {
     throw new Error(`github fallback latest date expected ${dateToday}, got ${ghFallbackLatest.date}`)
+  }
+  if (ghFallbackAcceptance.stale) {
+    console.warn(
+      `smoke-check-deploy: WARNING github fallback latest date is one day stale ` +
+      `(${ghFallbackLatest.date}, expected ${dateToday}) within GitHub Pages propagation grace ` +
+      `(until ${ghFallbackAcceptance.graceEndsAt}) — github.io CDN lag behind Cloudflare; ` +
+      `self-heals on next publish.`
+    )
   }
 
   if (workerBase) {
@@ -224,6 +246,33 @@ function resolvePublishGraceWindow(now, publishUtcHours, publishGraceMinutes) {
   return active
     ? { active: true, startsAt: active.start.toISOString(), endsAt: active.end.toISOString() }
     : { active: false, startsAt: windows[0]?.start.toISOString() || null, endsAt: windows[0]?.end.toISOString() || null }
+}
+
+// The github.io fallback CDN propagates more slowly than Cloudflare, so right
+// after a publish it can still serve the previous day's snapshot while the
+// primary is already fresh. Tolerate a one-day-stale fallback ONLY within a
+// propagation grace window after each publish hour; everything else is strict
+// (a fallback that is >1 day stale, or stale outside the window, is a real
+// failure). This stops the ~03:36Z scheduled run from red-flapping on a CDN
+// propagation race that self-heals on the next publish.
+function resolveGithubFallbackAcceptance({
+  ghFallbackDate,
+  expectedDate,
+  now = new Date(),
+  graceMinutes = defaultGithubFallbackGraceMinutes,
+  publishUtcHours = defaultPublishUtcHours,
+} = {}) {
+  if (ghFallbackDate === expectedDate) {
+    return { accepted: true, stale: false, reason: 'fresh', graceEndsAt: null }
+  }
+  if (ghFallbackDate !== dateDaysBeforeUTC(expectedDate, 1)) {
+    return { accepted: false, stale: true, reason: 'not_one_day_stale', graceEndsAt: null }
+  }
+  const graceWindow = resolvePublishGraceWindow(now, publishUtcHours, graceMinutes)
+  if (graceWindow.active) {
+    return { accepted: true, stale: true, reason: 'propagation_grace', graceEndsAt: graceWindow.endsAt }
+  }
+  return { accepted: false, stale: true, reason: 'propagation_grace_expired', graceEndsAt: null }
 }
 
 async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithRetry } = {}) {
@@ -373,13 +422,14 @@ function parsePositiveInteger(value, fallback) {
 module.exports = {
   defaultWorkerBase,
   defaultPublishGraceMinutes,
+  defaultGithubFallbackGraceMinutes,
   fetchJSONWithRetry,
   isRecoveryCoverageGap,
   main,
   resolveExpectedDate,
   resolveFreshnessContract,
+  resolveGithubFallbackAcceptance,
   resolvePublishGraceWindow,
   resolveWorkerBase,
-  isRecoveryCoverageGap,
   smokeCheckWorker,
 }
