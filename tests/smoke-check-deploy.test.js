@@ -6,6 +6,7 @@ const {
   isRecoveryCoverageGap,
   resolveFreshnessContract,
   resolveExpectedDate,
+  resolveGithubFallbackAcceptance,
   resolveWorkerBase,
   smokeCheckWorker,
 } = require('../scripts/smoke-check-deploy.js')
@@ -105,6 +106,55 @@ test('resolveFreshnessContract keeps explicit requested date strict', () => {
 
   assert.equal(contract.mode, 'requested')
   assert.equal(contract.expectedDate, '2026-05-25')
+})
+
+test('resolveGithubFallbackAcceptance accepts a fresh fallback', () => {
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-29',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T03:36:00Z'),
+  })
+
+  assert.equal(result.accepted, true)
+  assert.equal(result.stale, false)
+  assert.equal(result.reason, 'fresh')
+})
+
+test('resolveGithubFallbackAcceptance tolerates one-day lag inside the propagation grace window', () => {
+  // The ~03:36Z scheduled run: Cloudflare already serves today, github.io still
+  // serves yesterday. This is the exact red-flap we are de-flaking.
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-28',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T03:36:00Z'),
+  })
+
+  assert.equal(result.accepted, true)
+  assert.equal(result.stale, true)
+  assert.equal(result.reason, 'propagation_grace')
+  assert.equal(result.graceEndsAt, '2026-05-29T05:00:00.000Z')
+})
+
+test('resolveGithubFallbackAcceptance stays strict outside the propagation grace window', () => {
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-28',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T14:00:00Z'),
+  })
+
+  assert.equal(result.accepted, false)
+  assert.equal(result.reason, 'propagation_grace_expired')
+})
+
+test('resolveGithubFallbackAcceptance rejects a >1 day stale fallback even inside the window', () => {
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-27',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T03:36:00Z'),
+  })
+
+  assert.equal(result.accepted, false)
+  assert.equal(result.reason, 'not_one_day_stale')
 })
 
 test('smokeCheckWorker rejects degraded coverage payloads', async () => {
