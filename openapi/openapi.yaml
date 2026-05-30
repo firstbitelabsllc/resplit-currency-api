@@ -1,0 +1,754 @@
+openapi: 3.1.0
+info:
+  title: Resplit Currency API
+  version: 2.0.0
+  summary: FX rates, App Attest-gated OCR, and photo sideload for Resplit.
+  description: |
+    GCP/Go rewrite contract. This document is the **source of truth** for the
+    static-first FX read path plus the two blast-radius-isolated Cloud Run
+    services (OCR, sideload). Handlers and the iOS client are reconciled against
+    this file.
+
+    Topology:
+      - `/quote` `/history` `/coverage` — thin reads over precomputed static JSON
+        (GCS + Cloud CDN). No secrets, no device state. Client divides for
+        cross-rates.
+      - `/ocr/*` — dedicated Cloud Run service; only secret-holder (Azure DI key
+        in Secret Manager). App Attest gate, Firestore state, budget kill-switch.
+      - `/sideload/*` — dedicated Cloud Run service; V4 signed URLs, App Attest
+        gate, own GCS bucket.
+      - `/healthz` — liveness for the FX shim.
+  license:
+    name: Proprietary
+  contact:
+    name: First Bite Labs LLC
+    url: https://fx.resplit.app
+
+servers:
+  - url: https://fx.resplit.app
+    description: Production (post-migration GCP origin)
+
+tags:
+  - name: health
+    description: Liveness.
+  - name: fx
+    description: Static-first FX reads. Zero compute on this path.
+  - name: ocr
+    description: App Attest-gated receipt OCR. Only secret-holder.
+  - name: sideload
+    description: App Attest-gated photo sideload via V4 signed URLs.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealthz
+      summary: Liveness probe.
+      description: Returns service identity and a timestamp. No auth, no state.
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              example:
+                ok: true
+                service: resplit-currency-api
+                environment: production
+                release: resplit-fx
+                timestamp: "2026-05-30T12:00:00Z"
+
+  /quote:
+    get:
+      tags: [fx]
+      operationId: getQuote
+      summary: Single FX rate for a date.
+      description: |
+        Resolves `from`->`to` for `date` against the static archive, with prior-day
+        and today fallbacks. `from == to` returns rate 1. Served from precomputed
+        JSON; no compute on the hot path.
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: date
+          in: query
+          required: true
+          description: Requested date (YYYY-MM-DD).
+          schema:
+            $ref: "#/components/schemas/IsoDate"
+      responses:
+        "200":
+          description: Resolved quote.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              schema: { type: string }
+              example: "public, max-age=3600"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
+              example:
+                from: AED
+                to: USD
+                requestedDate: "2026-02-27"
+                resolvedDate: "2026-02-27"
+                rate: 0.2722
+                resolutionKind: exact
+                warning: null
+        "400":
+          $ref: "#/components/responses/InvalidQuery"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/Upstream"
+
+  /history:
+    get:
+      tags: [fx]
+      operationId: getHistory
+      summary: FX rate series over a date range.
+      description: |
+        Returns one point per available date in `[start, end]` plus a coverage
+        block describing requested vs. available days and archive gaps.
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: start
+          in: query
+          required: true
+          description: Inclusive range start (YYYY-MM-DD).
+          schema:
+            $ref: "#/components/schemas/IsoDate"
+        - name: end
+          in: query
+          required: true
+          description: Inclusive range end (YYYY-MM-DD). Must be >= start.
+          schema:
+            $ref: "#/components/schemas/IsoDate"
+      responses:
+        "200":
+          description: Rate series with coverage.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/History"
+        "400":
+          $ref: "#/components/responses/InvalidQuery"
+        "502":
+          $ref: "#/components/responses/Upstream"
+
+  /coverage:
+    get:
+      tags: [fx]
+      operationId: getCoverage
+      summary: Archive coverage and freshness.
+      description: |
+        Reports the archive's earliest/latest dates, gap count, and supported
+        currencies — used by clients to reason about staleness before quoting.
+      responses:
+        "200":
+          description: Archive coverage manifest.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Coverage"
+        "502":
+          $ref: "#/components/responses/Upstream"
+
+  /ocr/challenge:
+    get:
+      tags: [ocr]
+      operationId: getOcrChallenge
+      summary: Issue a single-use App Attest challenge.
+      description: |
+        Returns an opaque, short-lived (≈5 min), single-use challenge to be passed
+        to App Attest `attestKey` on device. The server stores it in Firestore and
+        consumes it on `/ocr/attest`.
+      responses:
+        "200":
+          description: Fresh challenge.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Challenge"
+              example:
+                challenge: "f1d2e3a4-0000-4000-8000-000000000001b5c6..."
+        "503":
+          $ref: "#/components/responses/OcrMisconfigured"
+
+  /ocr/attest:
+    post:
+      tags: [ocr]
+      operationId: postOcrAttest
+      summary: Register a device key (once per install).
+      description: |
+        Verifies an Apple App Attest attestation object: CBOR-decodes
+        `attestationObject` (fmt `apple-appattest`), chains `x5c[0]` to the Apple
+        App Attest Root CA, checks the nonce extension
+        (`SHA256(authData || SHA256(challenge))` against OID 1.2.840.113635.100.8.2),
+        verifies `rpIdHash == SHA256(appId)` and `signCount == 0`, then stores the
+        extracted P-256 public key (SPKI) in Firestore `attest_keys` with signCount 0.
+        appId is `GXS8378HLM.com.superfit.Resplit`. The challenge is single-use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttestRequest"
+            example:
+              keyId: "AAAAB3NzaC1yc2EAAAAD..."
+              attestationObject: "o2NmbXRvYXBwbGUtYXBwYXR0ZXN0..."
+              challenge: "f1d2e3a4-0000-4000-8000-000000000001b5c6..."
+      responses:
+        "200":
+          description: Device key registered.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+              example: { ok: true }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AttestRejected"
+        "503":
+          $ref: "#/components/responses/OcrMisconfigured"
+
+  /ocr/scan:
+    post:
+      tags: [ocr]
+      operationId: postOcrScan
+      summary: OCR a receipt image (App Attest assertion per request).
+      description: |
+        The hot path. The raw image bytes are the request body **and** the App
+        Attest clientData. The server verifies the assertion in the
+        `X-Resplit-Attest-Assertion` header against the device's stored P-256 key:
+        the signed message is `authenticatorData || SHA256(clientData)`, verified
+        with ECDSA-SHA256 (the verifier hashes that message once). It also checks
+        `rpIdHash == SHA256(appId)` and a strictly-increasing `signCount` (replay
+        guard), then bumps the stored count.
+
+        Idempotency: keyed `deviceId:SHA256(image)` in Firestore — identical images
+        return the cached envelope without re-billing Azure. Per-device daily rate
+        caps apply; a budget kill-switch can hard-stop scanning. The Azure
+        Document Intelligence key never leaves the service (Secret Manager).
+
+        Soft-fail dev path (`X-Resplit-Attest-Soft-Fail: true`) is IP-capped and
+        does not hard-block, for development clients without a registered key.
+      parameters:
+        - name: X-Resplit-Attest-Key-Id
+          in: header
+          required: false
+          description: App Attest keyId (the registered device key). Required unless soft-fail.
+          schema: { type: string }
+        - name: X-Resplit-Attest-Assertion
+          in: header
+          required: false
+          description: Base64 CBOR App Attest assertion over the image body. Required unless soft-fail.
+          schema: { type: string }
+        - name: X-Resplit-Attest-Soft-Fail
+          in: header
+          required: false
+          description: When "true", use the IP-capped dev path instead of hard attest.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: X-Resplit-Client-Version
+          in: header
+          required: false
+          description: Client build identifier for monitoring.
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: Raw receipt image bytes. These bytes ARE the App Attest clientData.
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/heic:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: OCR succeeded (or cached). Versioned envelope.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              schema: { type: string }
+              example: "no-store"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanEnvelope"
+              example:
+                v: 1
+                mode: raw
+                provider: azure-di-v4
+                scanId: "9f8e7d6c-0000-4000-8000-000000000abc"
+                status: ok
+                raw: { analyzeResult: {} }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AttestRejected"
+        "429":
+          description: Rate-limited or budget kill-switch engaged. Envelope with status `rate_limited`.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanEnvelope"
+              example:
+                v: 1
+                mode: raw
+                provider: azure-di-v4
+                scanId: "9f8e7d6c-0000-4000-8000-000000000abc"
+                status: rate_limited
+                raw: null
+        "502":
+          description: Upstream OCR provider error. Envelope with status `provider_error`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanEnvelope"
+        "503":
+          $ref: "#/components/responses/OcrMisconfigured"
+
+  /sideload:
+    post:
+      tags: [sideload]
+      operationId: postSideloadInit
+      summary: Initialize a sideload upload (mint a V4 signed URL).
+      description: |
+        App Attest-gated. Validates declared content-type, size, and SHA-256, then
+        returns a photoId and a V4 signed URL the client uses to PUT the bytes
+        directly to GCS (bytes never transit the service). The signed URL is
+        short-lived and scoped to the single object key.
+      parameters:
+        - name: X-Resplit-Attest-Key-Id
+          in: header
+          required: true
+          description: Registered App Attest device key.
+          schema: { type: string }
+        - name: X-Resplit-Attest-Assertion
+          in: header
+          required: true
+          description: Base64 CBOR App Attest assertion over the canonical request body.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SideloadInitRequest"
+            example:
+              contentType: image/jpeg
+              size: 482133
+              sha256: "9b74c9897bac770ffc029102a200c5de8c7f6f9e0a6a8c1d2e3f40516273849a"
+              capturedAt: "2026-05-30T11:59:00Z"
+              originalFilename: "receipt.jpg"
+      responses:
+        "200":
+          description: Upload initialized; signed URL minted.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SideloadInitResponse"
+              example:
+                photoId: "2c1a0b9d-0000-4000-8000-0000000fedcb"
+                uploadUrl: "https://storage.googleapis.com/resplit-sideload/...&X-Goog-Signature=..."
+                expiresAt: "2026-05-30T12:14:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AttestRejected"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+
+components:
+  parameters:
+    From:
+      name: from
+      in: query
+      required: true
+      description: Source ISO-4217 currency code (3 letters).
+      schema:
+        $ref: "#/components/schemas/CurrencyCode"
+    To:
+      name: to
+      in: query
+      required: true
+      description: Target ISO-4217 currency code (3 letters).
+      schema:
+        $ref: "#/components/schemas/CurrencyCode"
+
+  headers:
+    XRequestId:
+      description: Correlation id echoed on every response.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Malformed request body or missing fields.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: BAD_REQUEST
+            message: "keyId, attestationObject, challenge required"
+            requestId: "req_abc123"
+    InvalidQuery:
+      description: Missing or malformed query parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: INVALID_QUERY
+            message: "Expected from, to, and date query params"
+            requestId: "req_abc123"
+    NotFound:
+      description: No data for the requested resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: NOT_FOUND
+            message: "Route not found"
+            requestId: "req_abc123"
+    AttestRejected:
+      description: App Attest verification failed. `message` carries the attest reason code.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: ATTEST_REJECTED
+            message: "REPLAY"
+            requestId: "req_abc123"
+    PayloadTooLarge:
+      description: Declared or actual payload exceeds limits.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: INVALID_SIZE
+            message: "Size must be between 1 and 26214400 bytes"
+            requestId: "req_abc123"
+    Upstream:
+      description: Static archive or upstream dependency failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: UPSTREAM_FAILED
+            message: "Fetch failed: 503"
+            requestId: "req_abc123"
+    OcrMisconfigured:
+      description: OCR service is missing a required binding (e.g. Firestore).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: OCR_MISCONFIGURED
+            message: "attest store not bound"
+            requestId: "req_abc123"
+
+  schemas:
+    CurrencyCode:
+      type: string
+      pattern: "^[A-Za-z]{3}$"
+      description: ISO-4217 three-letter currency code (case-insensitive).
+      examples: ["USD", "AED", "EUR"]
+
+    IsoDate:
+      type: string
+      format: date
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+      description: Calendar date in YYYY-MM-DD.
+      examples: ["2026-02-27"]
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [ok, service, environment, release, timestamp]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        service:
+          type: string
+          const: resplit-currency-api
+        environment:
+          type: string
+          examples: ["production"]
+        release:
+          type: string
+          examples: ["resplit-fx"]
+        timestamp:
+          type: string
+          format: date-time
+
+    Quote:
+      type: object
+      additionalProperties: false
+      required: [from, to, requestedDate, resolvedDate, rate, resolutionKind, warning]
+      properties:
+        from:
+          $ref: "#/components/schemas/CurrencyCode"
+        to:
+          $ref: "#/components/schemas/CurrencyCode"
+        requestedDate:
+          $ref: "#/components/schemas/IsoDate"
+        resolvedDate:
+          $ref: "#/components/schemas/IsoDate"
+        rate:
+          type: number
+          exclusiveMinimum: 0
+          description: Multiply a `from` amount by this to get `to`.
+        resolutionKind:
+          type: string
+          enum: [exact, prior_day_fallback, today_fallback]
+        warning:
+          type: [string, "null"]
+          description: Human-readable note when a fallback was used.
+
+    HistoryPoint:
+      type: object
+      additionalProperties: false
+      required: [date, rate]
+      properties:
+        date:
+          $ref: "#/components/schemas/IsoDate"
+        rate:
+          type: number
+          exclusiveMinimum: 0
+
+    CoverageBlock:
+      type: object
+      additionalProperties: false
+      required:
+        [requestedDays, availableDays, missingDayCount, returnedRange, archiveLatestDate, archiveGapCount]
+      properties:
+        requestedDays:
+          type: integer
+          minimum: 0
+        availableDays:
+          type: integer
+          minimum: 0
+        missingDayCount:
+          type: integer
+          minimum: 0
+        returnedRange:
+          type: object
+          additionalProperties: false
+          required: [start, end]
+          properties:
+            start:
+              type: [string, "null"]
+              format: date
+            end:
+              type: [string, "null"]
+              format: date
+        archiveLatestDate:
+          type: [string, "null"]
+          format: date
+        archiveGapCount:
+          type: integer
+          minimum: 0
+
+    History:
+      type: object
+      additionalProperties: false
+      required: [from, to, start, end, points, coverage]
+      properties:
+        from:
+          $ref: "#/components/schemas/CurrencyCode"
+        to:
+          $ref: "#/components/schemas/CurrencyCode"
+        start:
+          $ref: "#/components/schemas/IsoDate"
+        end:
+          $ref: "#/components/schemas/IsoDate"
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoryPoint"
+        coverage:
+          $ref: "#/components/schemas/CoverageBlock"
+
+    Coverage:
+      type: object
+      additionalProperties: false
+      required:
+        [generatedAt, base, earliestDate, latestDate, availableDates, gapCount, supportedCurrencies]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        base:
+          $ref: "#/components/schemas/CurrencyCode"
+        earliestDate:
+          type: [string, "null"]
+          format: date
+        latestDate:
+          type: [string, "null"]
+          format: date
+        availableDates:
+          type: array
+          items:
+            $ref: "#/components/schemas/IsoDate"
+        gapCount:
+          type: integer
+          minimum: 0
+        supportedCurrencies:
+          type: array
+          items:
+            $ref: "#/components/schemas/CurrencyCode"
+
+    Challenge:
+      type: object
+      additionalProperties: false
+      required: [challenge]
+      properties:
+        challenge:
+          type: string
+          description: Opaque single-use App Attest challenge.
+
+    AttestRequest:
+      type: object
+      additionalProperties: false
+      required: [keyId, attestationObject, challenge]
+      properties:
+        keyId:
+          type: string
+          description: App Attest keyId returned by `generateKey` on device.
+        attestationObject:
+          type: string
+          description: Base64 CBOR attestation object (fmt apple-appattest).
+        challenge:
+          type: string
+          description: The single-use challenge from /ocr/challenge.
+
+    Ok:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    ScanEnvelope:
+      type: object
+      additionalProperties: false
+      description: Versioned OCR envelope. `mode` discriminates the `raw` payload shape.
+      required: [v, mode, provider, scanId, status, raw]
+      properties:
+        v:
+          type: integer
+          const: 1
+        mode:
+          type: string
+          enum: [raw, scanned]
+          description: "`raw` = passthrough Azure AnalyzeResult; `scanned` reserved for server-side ScannedReceipt."
+        provider:
+          type: string
+          examples: ["azure-di-v4"]
+        scanId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ok, rate_limited, provider_error]
+        raw:
+          type: [object, "null"]
+          description: Azure Document Intelligence AnalyzeResult (v4) when status is ok; null otherwise.
+          additionalProperties: true
+
+    SideloadInitRequest:
+      type: object
+      additionalProperties: false
+      required: [contentType, size, sha256]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/heic, image/webp]
+        size:
+          type: integer
+          minimum: 1
+          maximum: 26214400
+          description: Declared byte size (max 25 MiB).
+        sha256:
+          type: string
+          pattern: "^[0-9a-fA-F]{64}$"
+          description: Lowercase hex SHA-256 of the bytes, enforced on upload.
+        capturedAt:
+          type: [string, "null"]
+          format: date-time
+        originalFilename:
+          type: [string, "null"]
+
+    SideloadInitResponse:
+      type: object
+      additionalProperties: false
+      required: [photoId, uploadUrl, expiresAt]
+      properties:
+        photoId:
+          type: string
+          format: uuid
+        uploadUrl:
+          type: string
+          format: uri
+          description: V4 signed URL for a direct PUT to GCS.
+        expiresAt:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable error code.
+        message:
+          type: string
+          description: Human-readable detail (for attest failures, the reason code).
+        requestId:
+          type: string
+          description: Correlation id, also returned in X-Request-Id.
