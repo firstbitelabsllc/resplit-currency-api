@@ -100,6 +100,91 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
+// errProvider is a test OCRProvider that fails with a fixed error, used to
+// exercise the provider_error / rate_limited scan-counter paths.
+type errProvider struct{ err error }
+
+func (p errProvider) Scan(_ context.Context, _ []byte) ([]byte, error) { return nil, p.err }
+
+// findScanCount sums the ocr_scans_total data points whose attributes match the
+// requested status + attest labels, after collecting from the manual reader.
+func findScanCount(t *testing.T, reader *metric.ManualReader, status, attest string) int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect metrics: %v", err)
+	}
+	var total int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "ocr_scans_total" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("ocr_scans_total has unexpected data type %T", m.Data)
+			}
+			for _, dp := range sum.DataPoints {
+				gotStatus, _ := dp.Attributes.Value("status")
+				gotAttest, _ := dp.Attributes.Value("attest")
+				if gotStatus.AsString() == status && gotAttest.AsString() == attest {
+					total += dp.Value
+				}
+			}
+		}
+	}
+	return total
+}
+
+// TestScanCounterRecordsTerminalOutcomes is the regression test for the new
+// ocr_scans_total metric: a soft-fail success increments {status=ok,
+// attest=soft_fail} and a provider error increments {status=provider_error,...}.
+// It proves the counter is wired through handleScan with the documented labels.
+func TestScanCounterRecordsTerminalOutcomes(t *testing.T) {
+	reader := metric.NewManualReader()
+	mp := metric.NewMeterProvider(metric.WithReader(reader))
+	counter, err := mp.Meter("test").Int64Counter("ocr_scans_total")
+	if err != nil {
+		t.Fatalf("build counter: %v", err)
+	}
+
+	// Success path (soft-fail so no assertion gate): status=ok, attest=soft_fail.
+	okSrv := newServer(attest.NewMemStore(), attest.NewStubOCRProvider(), slog.Default(), counter)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+	req.Header.Set(headerSoftFail, "true")
+	okSrv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scan status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := findScanCount(t, reader, "ok", "soft_fail"); got != 1 {
+		t.Fatalf("ocr_scans_total{status=ok,attest=soft_fail} = %d, want 1", got)
+	}
+
+	// Provider-error path: status=provider_error, attest=soft_fail.
+	errSrv := newServer(attest.NewMemStore(), errProvider{err: errors.New("azure: analyze failed")}, slog.Default(), counter)
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+	req2.Header.Set(headerSoftFail, "true")
+	errSrv.routes().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusBadGateway {
+		t.Fatalf("scan status = %d, want 502", rec2.Code)
+	}
+	if got := findScanCount(t, reader, "provider_error", "soft_fail"); got != 1 {
+		t.Fatalf("ocr_scans_total{status=provider_error,attest=soft_fail} = %d, want 1", got)
+	}
+
+	// Rate-limited classification: a 429 provider error maps to status=rate_limited.
+	rlSrv := newServer(attest.NewMemStore(), errProvider{err: errors.New("azure: analyze returned 429: quota")}, slog.Default(), counter)
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+	req3.Header.Set(headerSoftFail, "true")
+	rlSrv.routes().ServeHTTP(rec3, req3)
+	if got := findScanCount(t, reader, "rate_limited", "soft_fail"); got != 1 {
+		t.Fatalf("ocr_scans_total{status=rate_limited,attest=soft_fail} = %d, want 1", got)
+	}
+}
+
 func TestChallengeUnique(t *testing.T) {
 	handler := newTestServer(t)
 	seen := make(map[string]struct{})
