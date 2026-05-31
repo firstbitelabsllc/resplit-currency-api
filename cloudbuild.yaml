@@ -1,0 +1,16 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    env: ['DOCKER_BUILDKIT=1']
+    args: ['build','-f','Dockerfile.ocr','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/ocr:latest','.']
+  - name: 'gcr.io/cloud-builders/docker'
+    env: ['DOCKER_BUILDKIT=1']
+    args: ['build','-f','Dockerfile.sideload','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/sideload:latest','.']
+  - name: 'gcr.io/cloud-builders/docker'
+    env: ['DOCKER_BUILDKIT=1']
+    args: ['build','-f','Dockerfile.fx-publish','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/fx-publish:latest','.']
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/ocr:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/sideload:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/fx-publish:latest'
+options:
+  logging: CLOUD_LOGGING_ONLY
