@@ -82,6 +82,23 @@ variable "secret_env" {
   default = {}
 }
 
+variable "cpu_idle" {
+  description = <<-EOT
+    Throttle CPU to ~0 between requests ("CPU is only allocated during request
+    processing"). null = auto: true when min_instances==0, false otherwise.
+
+    MUST be false for any service running background goroutines — OTel's periodic
+    metric reader and batch span exporter, cache sweepers, etc. With cpu_idle=true
+    those goroutines freeze the instant a request returns, so telemetry only
+    flushes on instance shutdown and metrics/traces silently never reach Grafana.
+    A scan returns 200 while ocr_scans_total never increments. Set false (the
+    gcloud equivalent is --no-cpu-throttling) on telemetry-exporting services even
+    when they scale to zero; idle instances still bill nothing once torn down.
+  EOT
+  type        = bool
+  default     = null
+}
+
 variable "allow_unauthenticated" {
   description = "When true, grant roles/run.invoker to allUsers (public ingress). Keep false for attested/internal services."
   type        = bool
@@ -127,9 +144,12 @@ resource "google_cloud_run_v2_service" "this" {
           cpu    = var.cpu
           memory = var.memory
         }
-        # min_instances=0 services should release CPU between requests;
-        # min_instances>=1 services keep CPU always-allocated for warm starts.
-        cpu_idle = var.min_instances == 0
+        # CPU throttling. Default (var.cpu_idle=null): release CPU between
+        # requests only when scaling to zero. But background workers — OTLP
+        # metric/trace exporters above all — freeze under throttling, so
+        # telemetry services pass cpu_idle=false explicitly even at min=0.
+        # See variable "cpu_idle" for the full Grafana-goes-silent failure mode.
+        cpu_idle = var.cpu_idle != null ? var.cpu_idle : (var.min_instances == 0)
       }
 
       dynamic "env" {
