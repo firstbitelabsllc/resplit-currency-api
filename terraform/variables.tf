@@ -32,3 +32,38 @@ variable "github_repo" {
   type        = string
   default     = "firstbitelabsllc/resplit-currency-api"
 }
+
+variable "billing_account" {
+  description = "Billing account ID (XXXXXX-XXXXXX-XXXXXX) the OCR abuse-guard budget attaches to. Required for the budget module — google_billing_budget is billing-account-scoped, not project-scoped."
+  type        = string
+}
+
+variable "fx_read_host" {
+  description = "Hostname of the FX read path (CDN/LB front door) the uptime check probes."
+  type        = string
+  default     = "fx.resplit.app"
+}
+
+variable "fx_snapshot_max_age_hours" {
+  description = "Dead-man-switch threshold (hours). Pages when the newest published FX snapshot is older than this. 6h publish cadence -> 26h tolerates ~4 missed runs."
+  type        = number
+  default     = 26
+}
+
+variable "ocr_spend_threshold_usd" {
+  description = "Rolling-window OCR (Azure DI) spend that trips the early-warning page, distinct from the hard billing budget thresholds."
+  type        = number
+  default     = 50
+}
+
+variable "alert_notification_channels" {
+  description = "Notification channel resource names alert policies fan out to. Empty = policies created but silent until channels are wired post-bootstrap."
+  type        = list(string)
+  default     = []
+}
+
+variable "publish_image" {
+  description = "Container image for the fx-publish Cloud Run Job. CI overwrites with the built digest; default keeps terraform apply clean before the first image push."
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}

@@ -1,0 +1,142 @@
+name: Deploy (GCP / Cloud Run)
+
+# Keyless deploy of the ocr + sideload Cloud Run services. Authentication is via
+# Workload Identity Federation (no JSON service-account key) — the GitHub OIDC
+# token is exchanged for short-lived credentials on the deployer SA. WIF pool +
+# provider + deployer SA were bootstrapped out-of-band (bootstrap/setup-gcp.sh);
+# this workflow only consumes them through the repo secrets/vars.
+#
+# Required repo configuration (already set per slice-2 brief):
+#   secrets.GCP_WORKLOAD_IDENTITY_PROVIDER  full provider resource name
+#   secrets.GCP_DEPLOYER_SERVICE_ACCOUNT    deployer SA email (impersonated via WIF)
+#   vars.GCP_PROJECT_ID                     resplit-fx-prod
+#   vars.GCP_REGION                         us-central1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile.ocr'
+      - 'Dockerfile.sideload'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+# OIDC token is required for WIF; contents:read for checkout.
+permissions:
+  contents: read
+  id-token: write
+
+# One in-flight deploy per branch; cancel superseded pushes.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: '1.26'
+
+jobs:
+  test:
+    name: go test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.3.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  deploy:
+    name: build + deploy
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      # Artifact Registry docker repo from terraform/modules/artifact-registry
+      # (name_prefix "resplit-fx" + repository_id "containers").
+      REPO: resplit-fx-containers
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Keyless auth: exchange the GitHub OIDC token for credentials on the
+      # deployer SA. NO json_key / credentials_json is supplied.
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Compute image refs
+        id: img
+        run: |
+          REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
+          {
+            echo "registry=${REGISTRY}"
+            echo "ocr=${REGISTRY}/ocr:${GITHUB_SHA}"
+            echo "sideload=${REGISTRY}/sideload:${GITHUB_SHA}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Build + push ocr image
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.ocr
+          push: true
+          tags: |
+            ${{ steps.img.outputs.ocr }}
+            ${{ steps.img.outputs.registry }}/ocr:latest
+          cache-from: type=gha,scope=ocr
+          cache-to: type=gha,scope=ocr,mode=max
+
+      - name: Build + push sideload image
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile.sideload
+          push: true
+          tags: |
+            ${{ steps.img.outputs.sideload }}
+            ${{ steps.img.outputs.registry }}/sideload:latest
+          cache-from: type=gha,scope=sideload
+          cache-to: type=gha,scope=sideload,mode=max
+
+      # Deploy the freshly-pushed, immutable per-SHA images. Cloud Run service
+      # shape (scaling, runtime SA, secrets) is owned by Terraform; this step
+      # only advances the live revision's image, which the cloudrun module's
+      # lifecycle.ignore_changes[image] tolerates without drift.
+      - name: Deploy ocr to Cloud Run
+        run: |
+          gcloud run deploy resplit-fx-ocr \
+            --image="${{ steps.img.outputs.ocr }}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --quiet
+
+      - name: Deploy sideload to Cloud Run
+        run: |
+          gcloud run deploy resplit-fx-sideload \
+            --image="${{ steps.img.outputs.sideload }}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --quiet

@@ -11,6 +11,8 @@ locals {
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
     "monitoring.googleapis.com",
+    "logging.googleapis.com",
+    "billingbudgets.googleapis.com",
     "cloudscheduler.googleapis.com",
     "pubsub.googleapis.com",
     "storage.googleapis.com",
