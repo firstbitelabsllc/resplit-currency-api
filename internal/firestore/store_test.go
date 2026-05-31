@@ -290,10 +290,3 @@ func TestWindowStartUnix(t *testing.T) {
 		t.Errorf("zero window: got %d want 960", got)
 	}
 }
-
-func TestNewFirestoreStore_NotWired(t *testing.T) {
-	_, err := NewFirestoreStore(context.Background(), "resplit-fx-prod")
-	if !errors.Is(err, ErrClientNotWired) {
-		t.Fatalf("NewFirestoreStore: want ErrClientNotWired, got %v", err)
-	}
-}
