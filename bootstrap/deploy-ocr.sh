@@ -31,6 +31,15 @@ command -v "$GCLOUD" >/dev/null 2>&1 || GCLOUD=gcloud
 # would be TrimSpace'd off and the gateway returns 401 "no credentials".
 OTLP_ENDPOINT="${OTLP_ENDPOINT:-https://otlp-gateway-prod-us-east-2.grafana.net/otlp}"
 
+# Azure Document Intelligence resource endpoint. Plain env (not a credential —
+# the KEY is the secret, sourced from Secret Manager below). If this is unset,
+# azure.New() errors "empty endpoint" and cmd/ocr SILENTLY falls back to the
+# stub OCR provider: scans return 200 in ~0.3s with a {provider,status,bytes}
+# raw envelope instead of real receipt data in ~3-4s. Easy to miss because the
+# stub envelope still has a non-empty `raw`. Always verify a real merchant/total
+# extraction after deploy, not just HTTP 200.
+AZURE_OCR_ENDPOINT="${AZURE_OCR_ENDPOINT:-https://superfit.cognitiveservices.azure.com}"
+
 echo ">> deploying ${SERVICE} (${IMAGE}) to ${PROJECT}/${REGION}"
 
 "$GCLOUD" run deploy "$SERVICE" \
@@ -59,7 +68,7 @@ echo ">> deploying ${SERVICE} (${IMAGE}) to ${PROJECT}/${REGION}"
   `# NoopExporters = silent no telemetry. A --set-env-vars (REPLACE semantics)` \
   `# once wiped this and took Grafana dark with zero errors. Use ^@@^ multi-var` \
   `# delimiter so the comma-free values pass through cleanly.` \
-  --set-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}" \
+  --set-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}" \
   `# ── LOAD-BEARING #3: secrets, never plaintext. ──` \
   `# Azure DI key + Grafana OTLP auth header both come from Secret Manager.` \
   `# The runtime SA needs roles/secretmanager.secretAccessor on each (granted` \
