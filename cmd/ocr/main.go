@@ -36,6 +36,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/azure"
@@ -197,22 +198,37 @@ func run(logger *slog.Logger) error {
 }
 
 type server struct {
-	store    attest.Store
-	provider OCRProvider
-	logger   *slog.Logger
+	store       attest.Store
+	provider    OCRProvider
+	logger      *slog.Logger
+	scanCounter metric.Int64Counter
 }
 
-func newServer(store attest.Store, provider OCRProvider, logger *slog.Logger) *server {
-	return &server{store: store, provider: provider, logger: logger}
+func newServer(store attest.Store, provider OCRProvider, logger *slog.Logger, scanCounter metric.Int64Counter) *server {
+	if scanCounter == nil {
+		// A nil counter would panic on Add; fall back to a no-op meter so tests
+		// and telemetry-disabled runs stay safe.
+		scanCounter, _ = noop.NewMeterProvider().Meter(meterScope).Int64Counter("ocr_scans_total")
+	}
+	return &server{store: store, provider: provider, logger: logger, scanCounter: scanCounter}
 }
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /ocr/challenge", s.handleChallenge)
-	mux.HandleFunc("POST /ocr/attest", s.handleAttest)
-	mux.HandleFunc("POST /ocr/scan", s.handleScan)
-	return httpx.Middleware(s.logger)(mux)
+	// WithRouteTag stamps the low-cardinality matched pattern as the http.route
+	// attribute on the otelhttp span + http.server.* metrics, so the templated
+	// route ("/ocr/scan") is recorded instead of the raw path.
+	mux.Handle("GET /healthz", otelhttp.WithRouteTag("/healthz", http.HandlerFunc(s.handleHealthz)))
+	mux.Handle("GET /ocr/challenge", otelhttp.WithRouteTag("/ocr/challenge", http.HandlerFunc(s.handleChallenge)))
+	mux.Handle("POST /ocr/attest", otelhttp.WithRouteTag("/ocr/attest", http.HandlerFunc(s.handleAttest)))
+	mux.Handle("POST /ocr/scan", otelhttp.WithRouteTag("/ocr/scan", http.HandlerFunc(s.handleScan)))
+
+	// Wrap the mux with otelhttp so every request emits a server span and the
+	// standard http.server.* metrics (request count + duration). With the global
+	// providers from obs.Setup this ships over OTLP; with the default no-op
+	// providers (telemetry off) it records nothing.
+	handler := otelhttp.NewHandler(mux, "ocr.http")
+	return httpx.Middleware(s.logger)(handler)
 }
 
 func (s *server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -309,12 +325,16 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.provider.Scan(r.Context(), image)
 	if err != nil {
-		log.Error("ocr provider failed", slog.Any("error", err), slog.String("scan_id", scanID))
+		status := scanErrorStatus(err)
+		s.recordScan(r.Context(), status, attestResult)
+		log.Error("ocr provider failed", slog.Any("error", err), slog.String("scan_id", scanID), slog.String("status", status))
 		writeEnvelope(w, http.StatusBadGateway, scanEnvelope{
-			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "provider_error",
+			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: status,
 		})
 		return
 	}
+
+	s.recordScan(r.Context(), "ok", attestResult)
 
 	// [OCR_MONITORING] structured log -> Cloud Logging -> Grafana Loki.
 	log.Info("[OCR_MONITORING] scan",
@@ -338,6 +358,35 @@ func newScanID() string {
 	buf := make([]byte, 16)
 	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
+}
+
+// otelServiceName resolves the resource service.name for telemetry, honoring the
+// standard OTEL_SERVICE_NAME env and defaulting to "ocr".
+func otelServiceName() string {
+	if name := os.Getenv("OTEL_SERVICE_NAME"); name != "" {
+		return name
+	}
+	return defaultServiceName
+}
+
+// recordScan increments ocr_scans_total{status,attest} for one terminal scan
+// outcome. nil-safe via the no-op counter fallback in newServer.
+func (s *server) recordScan(ctx context.Context, status, attestResult string) {
+	s.scanCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("status", status),
+		attribute.String("attest", attestResult),
+	))
+}
+
+// scanErrorStatus maps a provider error to the ocr_scans_total status label.
+// The Azure DI provider surfaces a 429 as "azure: analyze returned 429: …", so
+// a rate-limit shows up as status="rate_limited"; everything else is a generic
+// provider_error.
+func scanErrorStatus(err error) string {
+	if err != nil && strings.Contains(err.Error(), "429") {
+		return "rate_limited"
+	}
+	return "provider_error"
 }
 
 func readBody(r *http.Request, limit int64) ([]byte, error) {

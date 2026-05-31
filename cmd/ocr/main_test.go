@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
 )
@@ -14,7 +20,9 @@ func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
 	store := attest.NewMemStore()
 	provider := attest.NewStubOCRProvider()
-	return newServer(store, provider, slog.Default()).routes()
+	// nil scanCounter -> newServer installs a no-op counter; keeps tests
+	// network- and telemetry-free.
+	return newServer(store, provider, slog.Default(), nil).routes()
 }
 
 func TestRoutes(t *testing.T) {
