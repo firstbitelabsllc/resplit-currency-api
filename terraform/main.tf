@@ -23,14 +23,13 @@ module "secrets" {
   depends_on = [module.project_apis]
 }
 
-module "wif" {
-  source      = "./modules/wif"
-  project_id  = var.project_id
-  name_prefix = local.name_prefix
-  github_repo = var.github_repo
-
-  depends_on = [module.project_apis]
-}
+# Workload Identity Federation (pool + GitHub OIDC provider + deployer SA) is
+# created ONCE by bootstrap/setup-gcp.sh — it's the chicken-and-egg auth layer
+# Terraform itself authenticates through, so Terraform does not manage it (that
+# would conflict on apply with the already-created pool). The module under
+# modules/wif/ is kept for reference; `terraform import` it later if you want
+# Terraform to own WIF. Division: bootstrap owns auth/state foundation,
+# Terraform owns the application infra below.
 
 module "gcs_fx" {
   source      = "./modules/gcs-fx"
