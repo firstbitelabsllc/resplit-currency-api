@@ -2,7 +2,10 @@ package obs
 
 import (
 	"context"
+	"fmt"
 
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -75,4 +78,30 @@ func GCPExporters(_ context.Context, projectID string) (Exporters, error) {
 	_ = projectID // consumed by the real exporters; see TODO(gcp) above.
 	// TODO(gcp): replace with texporter.New / mexporter.New wiring above.
 	return NoopExporters(), nil
+}
+
+// OTLPHTTPExporters builds OTLP/HTTP trace + metric exporters for any
+// OTLP-compatible backend (Grafana Cloud, the OpenTelemetry Collector, etc.).
+//
+// Both exporters read the standard OTEL_EXPORTER_OTLP_* environment variables —
+// OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS in particular — so
+// the endpoint and auth (e.g. a Grafana Cloud Basic-auth token) are injected at
+// deploy time and never hardcoded. No options are passed here on purpose: the
+// SDK's env config is the single source of truth.
+//
+// Callers should only invoke this when OTEL_EXPORTER_OTLP_ENDPOINT is set; with
+// it unset the exporters would still construct but ship to localhost:4318, which
+// is not what local dev/tests want. Pair this with a caller-side env check and
+// fall back to NoopExporters() otherwise, preserving the graceful-degradation
+// contract: missing config means nothing is exported, never a failed Setup.
+func OTLPHTTPExporters(ctx context.Context) (Exporters, error) {
+	traceExp, err := otlptracehttp.New(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("obs: build otlp trace exporter: %w", err)
+	}
+	metricExp, err := otlpmetrichttp.New(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("obs: build otlp metric exporter: %w", err)
+	}
+	return NewExporters(traceExp, metricExp), nil
 }

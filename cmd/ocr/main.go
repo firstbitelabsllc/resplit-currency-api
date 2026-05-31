@@ -28,13 +28,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/azure"
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/firestore"
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/httpx"
+	"github.com/firstbitelabsllc/resplit-currency-api/internal/obs"
 )
 
 const (
@@ -52,6 +59,15 @@ const (
 	providerName    = "azure-di"
 
 	shutdownGracePeri = 10 * time.Second
+
+	// meterScope names the OTel meter this binary emits its own instruments
+	// under (the ocr_scans_total counter). otelhttp emits its http.server.*
+	// metrics under its own scope.
+	meterScope = "github.com/firstbitelabsllc/resplit-currency-api/cmd/ocr"
+
+	// defaultServiceName is the resource service.name when OTEL_SERVICE_NAME is
+	// unset.
+	defaultServiceName = "ocr"
 )
 
 // OCRProvider abstracts the receipt OCR backend (Azure Document Intelligence).
@@ -74,6 +90,47 @@ func main() {
 func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// OpenTelemetry: when OTEL_EXPORTER_OTLP_ENDPOINT is set (Cloud Run / Grafana
+	// Cloud), stand up OTLP/HTTP trace + metric providers reading the standard
+	// OTEL_EXPORTER_OTLP_* env (endpoint + auth headers are injected at deploy
+	// time, never hardcoded). When unset, this no-ops so local dev / tests stay
+	// network- and credential-free. Same graceful-fallback shape as the Firestore
+	// and Azure wiring below.
+	var tel *obs.Telemetry
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != "" {
+		exp, err := obs.OTLPHTTPExporters(ctx)
+		if err != nil {
+			logger.Warn("otlp exporters unavailable, telemetry disabled", slog.Any("error", err))
+		} else {
+			t, err := obs.Setup(ctx, obs.Config{ServiceName: otelServiceName()}, exp)
+			if err != nil {
+				logger.Warn("otel setup failed, telemetry disabled", slog.Any("error", err))
+			} else {
+				tel = t
+				logger.Info("otel telemetry enabled", slog.String("service_name", otelServiceName()))
+			}
+		}
+	}
+	// Flush trace + metric providers on shutdown (SIGINT/SIGTERM). nil-safe.
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeri)
+		defer cancel()
+		if err := tel.Shutdown(flushCtx); err != nil {
+			logger.Warn("otel shutdown error", slog.Any("error", err))
+		}
+	}()
+
+	// ocr_scans_total counter, emitted from handleScan on every terminal outcome.
+	// Uses the global meter set by obs.Setup; a no-op meter when telemetry is off.
+	scanCounter, err := otel.Meter(meterScope).Int64Counter(
+		"ocr_scans_total",
+		metric.WithDescription("Total OCR scans, partitioned by terminal status and attestation outcome."),
+		metric.WithUnit("{scan}"),
+	)
+	if err != nil {
+		return err
+	}
 
 	// Live device-key store (Firestore) with a graceful fallback to an in-memory
 	// store when no project / credentials are present (local dev, tests).
@@ -104,7 +161,7 @@ func run(logger *slog.Logger) error {
 		provider = azClient
 	}
 
-	srv := newServer(store, provider, logger)
+	srv := newServer(store, provider, logger, scanCounter)
 
 	port := os.Getenv("PORT")
 	if port == "" {
