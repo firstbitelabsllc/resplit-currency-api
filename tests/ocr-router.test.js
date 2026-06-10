@@ -25,7 +25,7 @@ function makeEnv(extra = {}) {
 // Stub Azure: POST :analyze -> 202 + Operation-Location; GET analyzeResults -> succeeded.
 let azureCalls
 const realFetch = globalThis.fetch
-beforeEach(() => { azureCalls = { submit: 0, poll: 0 } })
+beforeEach(() => { azureCalls = { submit: 0, poll: 0, receiptSubmit: 0, layoutSubmit: 0, receiptPoll: 0, layoutPoll: 0, layoutUrls: [] } })
 afterEach(() => { globalThis.fetch = realFetch })
 
 function stubAzure() {
@@ -33,10 +33,33 @@ function stubAzure() {
     const u = String(url)
     if (init.method === 'POST' && u.includes(':analyze')) {
       azureCalls.submit++
-      return new Response('', { status: 202, headers: { 'operation-location': 'https://test.cognitiveservices.azure.com/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-123?api-version=2024-11-30' } })
+      const isLayout = u.includes('/documentModels/prebuilt-layout:analyze')
+      if (isLayout) {
+        azureCalls.layoutSubmit++
+        azureCalls.layoutUrls.push(u)
+        return new Response('', { status: 202, headers: { 'operation-location': 'https://test.cognitiveservices.azure.com/documentintelligence/documentModels/prebuilt-layout/analyzeResults/op-layout?api-version=2024-11-30' } })
+      }
+      azureCalls.receiptSubmit++
+      return new Response('', { status: 202, headers: { 'operation-location': 'https://test.cognitiveservices.azure.com/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-receipt?api-version=2024-11-30' } })
     }
     if (u.includes('/analyzeResults/')) {
       azureCalls.poll++
+      if (u.includes('/documentModels/prebuilt-layout/analyzeResults/')) {
+        azureCalls.layoutPoll++
+        return Response.json({
+          status: 'succeeded',
+          analyzeResult: {
+            keyValuePairs: [
+              {
+                key: { content: 'Loyalty credit' },
+                value: { content: '-$10.00' },
+                confidence: 0.91,
+              },
+            ],
+          },
+        }, { status: 200 })
+      }
+      azureCalls.receiptPoll++
       return Response.json({ status: 'succeeded', analyzeResult: { documents: [{ docType: 'receipt' }] } }, { status: 200 })
     }
     throw new Error(`unexpected fetch ${init.method} ${u}`)
@@ -67,6 +90,29 @@ test('POST /ocr/scan (soft-fail) returns the versioned envelope wrapping the Azu
   assert.equal(body.raw.status, 'succeeded')
   assert.equal(body.raw.analyzeResult.documents[0].docType, 'receipt')
   assert.equal(azureCalls.submit, 1)
+  assert.equal(azureCalls.layoutSubmit, 0, 'key-value add-on is opt-in because it doubles Azure analyzes')
+})
+
+test('POST /ocr/scan merges opt-in Azure layout keyValuePairs into the raw receipt envelope', async () => {
+  stubAzure()
+  const env = makeEnv({ AZURE_OCR_KV_EXTRAS: 'enabled' })
+  const res = await handleOcr(scanRequest(new Uint8Array([1, 2, 3])), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.status, 'ok')
+  assert.equal(body.raw.analyzeResult.documents[0].docType, 'receipt')
+  assert.deepEqual(body.raw.analyzeResult.keyValuePairs, [
+    {
+      key: { content: 'Loyalty credit' },
+      value: { content: '-$10.00' },
+      confidence: 0.91,
+    },
+  ])
+  assert.equal(azureCalls.receiptSubmit, 1)
+  assert.equal(azureCalls.layoutSubmit, 1)
+  assert.equal(azureCalls.receiptPoll, 1)
+  assert.equal(azureCalls.layoutPoll, 1)
+  assert.equal(new URL(azureCalls.layoutUrls[0]).searchParams.get('features'), 'keyValuePairs')
 })
 
 test('idempotency: the same image twice bills Azure once (second is a cache hit)', async () => {

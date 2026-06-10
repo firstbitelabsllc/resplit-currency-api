@@ -15,6 +15,8 @@ import { logOcrMonitoringEvent } from './monitoring.mjs'
 import {
   submitReceiptAnalyze,
   getReceiptAnalyzeResult,
+  submitLayoutKeyValueAnalyze,
+  getLayoutKeyValueAnalyzeResult,
   OCR_PROVIDER,
 } from './azure.mjs'
 import { verifyAssertion, AttestError } from './attest.mjs'
@@ -29,6 +31,7 @@ const SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
+const KV_EXTRAS_ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 
 const sha256Hex = async (bytes) => {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
@@ -158,6 +161,12 @@ async function handleScan(request, env, requestId) {
     await sleep(POLL_INTERVAL_MS)
   }
 
+  if (result && keyValueExtrasEnabled(env)) {
+    result = await mergeLayoutKeyValuePairs({
+      imageBytes, contentType, env, baseResult: result,
+    })
+  }
+
   const status = result ? 'ok' : 'provider_error'
   return finishScan(env, {
     scanId, attest, status, raw: result, requestId, clientVersion, start, azureStart,
@@ -167,6 +176,40 @@ async function handleScan(request, env, requestId) {
 
 function envelope({ status, raw, scanId }) {
   return { v: ENVELOPE_VERSION, mode: 'raw', provider: OCR_PROVIDER, scanId, status, raw: raw ?? null }
+}
+
+function keyValueExtrasEnabled(env) {
+  return KV_EXTRAS_ENABLED_VALUES.has(String(env.AZURE_OCR_KV_EXTRAS || '').trim().toLowerCase())
+}
+
+async function mergeLayoutKeyValuePairs({ imageBytes, contentType, env, baseResult }) {
+  const submit = await submitLayoutKeyValueAnalyze(imageBytes, contentType, env)
+  if (!submit.ok || !submit.operationId) return baseResult
+
+  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    const poll = await getLayoutKeyValueAnalyzeResult(submit.operationId, env)
+    if (!poll.ok) break
+    if (poll.status === 'succeeded') {
+      return mergeKeyValuePairs(baseResult, poll.body)
+    }
+    if (poll.status === 'failed') break
+    await sleep(POLL_INTERVAL_MS)
+  }
+
+  return baseResult
+}
+
+function mergeKeyValuePairs(baseResult, layoutResult) {
+  const keyValuePairs = layoutResult?.analyzeResult?.keyValuePairs
+  if (!Array.isArray(keyValuePairs) || keyValuePairs.length === 0) return baseResult
+
+  return {
+    ...baseResult,
+    analyzeResult: {
+      ...(baseResult?.analyzeResult || {}),
+      keyValuePairs,
+    },
+  }
 }
 
 async function finishScan(env, ctx) {
