@@ -91,6 +91,7 @@ test('POST /ocr/scan (soft-fail) returns the versioned envelope wrapping the Azu
   assert.equal(body.raw.analyzeResult.documents[0].docType, 'receipt')
   assert.equal(azureCalls.submit, 1)
   assert.equal(azureCalls.layoutSubmit, 0, 'key-value add-on is opt-in because it doubles Azure analyzes')
+  assert.equal(body.kv_extras, 'off', 'flag-off scans declare kv_extras off in the envelope')
 })
 
 test('POST /ocr/scan merges opt-in Azure layout keyValuePairs into the raw receipt envelope', async () => {
@@ -113,6 +114,48 @@ test('POST /ocr/scan merges opt-in Azure layout keyValuePairs into the raw recei
   assert.equal(azureCalls.receiptPoll, 1)
   assert.equal(azureCalls.layoutPoll, 1)
   assert.equal(new URL(azureCalls.layoutUrls[0]).searchParams.get('features'), 'keyValuePairs')
+  assert.equal(body.kv_extras, 'merged', 'successful merge is declared in the envelope')
+})
+
+test('kv-extras: layout analyze failure degrades to the base receipt result and declares kv_extras failed', async () => {
+  stubAzure()
+  const baseFetch = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url)
+    if (u.includes('/documentModels/prebuilt-layout/analyzeResults/')) {
+      azureCalls.poll++
+      azureCalls.layoutPoll++
+      return Response.json({ status: 'failed' }, { status: 200 })
+    }
+    return baseFetch(url, init)
+  }
+  const env = makeEnv({ AZURE_OCR_KV_EXTRAS: 'enabled' })
+  const res = await handleOcr(scanRequest(new Uint8Array([4, 4, 4])), env)
+  assert.equal(res.status, 200, 'a broken add-on must not fail the scan')
+  const body = await res.json()
+  assert.equal(body.status, 'ok')
+  assert.equal(body.kv_extras, 'failed')
+  assert.equal(body.raw.analyzeResult.keyValuePairs, undefined, 'base result is returned unmerged')
+})
+
+test('kv-extras: daily cap is denominated in Azure analyzes, so the doubled call cannot overshoot it', async () => {
+  stubAzure()
+  const env = makeEnv({ AZURE_OCR_KV_EXTRAS: 'enabled' })
+  const day = new Date().toISOString().slice(0, 10)
+  // 19/20 used: a flag-on scan needs 2 units and must be rejected, not partially admitted.
+  await env.ATTEST_KV.put(`count:ip:unknown:${day}`, '19')
+  const res = await handleOcr(scanRequest(new Uint8Array([6, 6, 6])), env)
+  assert.equal(res.status, 429)
+  assert.equal(azureCalls.submit, 0, 'capped request must not reach Azure at all')
+})
+
+test('kv-extras: a flag-on scan charges the daily counter 2 units (both Azure analyzes)', async () => {
+  stubAzure()
+  const env = makeEnv({ AZURE_OCR_KV_EXTRAS: 'enabled' })
+  const day = new Date().toISOString().slice(0, 10)
+  const res = await handleOcr(scanRequest(new Uint8Array([7, 7, 7])), env)
+  assert.equal(res.status, 200)
+  assert.equal(await env.ATTEST_KV.get(`count:ip:unknown:${day}`), '2')
 })
 
 test('idempotency: the same image twice bills Azure once (second is a cache hit)', async () => {
