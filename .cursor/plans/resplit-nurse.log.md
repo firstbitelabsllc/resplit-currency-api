@@ -1,5 +1,26 @@
 # Resplit Nurse Log
 
+## 2026-06-10 03:28 EDT
+
+- `NO-GO` overall launch until AKig has merged/deployed FX key-value OCR proof, the opt-in Worker env is enabled, and a real TestFlight scan observes discount/credit extras. `PR-proven` for the FX Worker code path on branch `codex/ocr-kv-layout-20260610`.
+- Shipped delta: added model-specific Azure submit/poll helpers for `prebuilt-receipt` and `prebuilt-layout`; added opt-in `AZURE_OCR_KV_EXTRAS` routing that runs the layout key-value analyze only when enabled and merges `analyzeResult.keyValuePairs` into the raw receipt envelope; added OCR router coverage proving the default path still bills one receipt analyze and the opt-in path performs one receipt analyze plus one layout key-value analyze.
+- Fresh proof:
+  - `node --test tests/ocr-router.test.js` -> `7/7` OCR router tests green after dependency install.
+  - `npm run test` -> `230/230` tests green after `npm run generate` created the clean-worktree package artifacts needed by package validation tests.
+  - `npm run check` -> generated `2026-06-10`, `validate:release` OK, `230/230` tests green.
+  - `git diff --check` -> clean.
+  - `npm run smoke:deploy` -> `OK (date=2026-06-10, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - Live production health remains on deployed release `a6a5161997ca04d7d7b2558d7b606be9b76e6e3f`; `/ocr/challenge` returns a challenge. The key-value extras branch is not live yet.
+- Known / unknown / forgotten work surfaced:
+  - known: the change is guarded behind `AZURE_OCR_KV_EXTRAS`; leaving it unset preserves the deployed single-analyze OCR path and avoids accidental double Azure billing.
+  - unknown: whether production Azure config plus real receipt images return useful layout key-value pairs for restaurant discounts/credits; local tests prove merge behavior with stubbed Azure only.
+  - forgotten: AKig spans two repos now. iOS PR `#820` maps key-value extras into `ScannedReceipt.extras`; this Worker PR is the missing server-side source of those key-value pairs.
+- Exact next slice: push and open the ready PR, merge/deploy it to `main`, set `AZURE_OCR_KV_EXTRAS=enabled` only after merge/deploy is ready to observe, then run a live `/ocr/scan`/TestFlight receipt scan that proves merged `keyValuePairs` reach iOS.
+- Current build boundary: branch `codex/ocr-kv-layout-20260610` from `origin/main` `a6a5161997ca04d7d7b2558d7b606be9b76e6e3f`; FX publish date `2026-06-10`; Worker production release still `a6a5161997ca04d7d7b2558d7b606be9b76e6e3f`.
+- Latency: `hygiene` `5m`, `discovery` `6m`, `implementation` `20m`, `proof/wait` `10m`.
+
+<promise>KEEP-GOING: PR merge/deploy/env/live scan</promise>
+
 ## 2026-06-09 20:18 EDT
 
 - `NO-GO` overall launch until a real iOS scan on TestFlight `2.2.0 (2705)` is observed post-fix; `GO/deployed` for the FX OCR Worker route.
