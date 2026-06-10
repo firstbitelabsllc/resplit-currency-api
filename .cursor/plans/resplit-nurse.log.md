@@ -1,5 +1,24 @@
 # Resplit Nurse Log
 
+## 2026-06-09 20:18 EDT
+
+- `NO-GO` overall launch until iOS build `2705` no longer sees OCR route-level `404`; `GO/source` for the FX OCR Worker route in clean clone `/tmp/resplit-currency-api-ocr-deploy-65840`.
+- Shipped delta pending deploy: mounted `/ocr/*` in `worker/src/index.mjs`; added the OCR router/App Attest/Azure DI proxy modules; added route/auth/monitoring coverage; added `ATTEST_KV` binding and server-side `AZURE_OCR_ENDPOINT` Worker var. The Azure key remains a Worker secret and is not in source.
+- Fresh proof:
+  - `node --test tests/ocr-router.test.js tests/ocr-attest.test.js tests/ocr-monitoring.test.js` -> `12/12` OCR tests green.
+  - `npm run check` -> generated `2026-06-10`, `validate:release` OK, `228/228` tests green.
+  - `npx wrangler deploy --config wrangler.jsonc --env="" --dry-run` -> bundle OK; bindings include `ATTEST_KV`, `SIDELOAD_R2`, `ASSET_BASE_URL`, `SENTRY_ENVIRONMENT`, `AZURE_OCR_ENDPOINT`.
+  - Live production before deploy: `POST https://fx.resplit.app/ocr/scan` returned route-level `404` (`{"error":"NOT_FOUND","message":"Route not found"}`), matching iOS Sentry issue `RESPLIT-IOS-A0` on TestFlight `2.2.0 (2705)`.
+- Known / unknown / forgotten work surfaced:
+  - known: iOS build `2705` is uploaded/distributed and now depends on this Worker route; no new iOS build is required for the route-level fix if production deploy mounts `/ocr/scan`.
+  - unknown: whether Cloudflare production already has `AZURE_OCR_KEY` secret; empty-image proof can verify routing without billing Azure, but a real scan needs secret/provider proof.
+  - forgotten: this repo had stale nurse/ledger entries; all source/deploy proof for this launch-critical slice should now be recorded here before handing back to the iOS plan.
+- Exact next slice: commit/push the OCR Worker source fix on `main`, deploy `resplit-fx`, prove `/ocr/challenge` is live and `/ocr/scan` returns `400 BAD_REQUEST empty image body` instead of route-level `404`, then run `npm run smoke:deploy`.
+- Current build boundary: trunk `origin/main` `1136f87`; FX publish date regenerated for `2026-06-10`; Worker deploy target is `resplit-fx`.
+- Latency: `hygiene` `10m`, `discovery` `8m`, `implementation` `15m`, `proof/wait` `12m`.
+
+<promise>KEEP-GOING: deploy route</promise>
+
 ## 2026-04-10 23:25 EDT
 
 - `NO-GO` overall launch (resplit-ios trunk dirty with active claude thread mid-fix on `PendingScanRecord` SwiftData @Model bricked-app failure); `GO/current` for `resplit-currency-api`.
