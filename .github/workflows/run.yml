@@ -117,6 +117,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          AZURE_OCR_KEY: ${{ secrets.AZURE_OCR_KEY }}
         run: |
           if [ -n "$SENTRY_DSN" ]; then
             printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc
@@ -132,6 +133,12 @@ jobs:
             printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc
           else
             echo "::warning::Missing CRON_SECRET for FX Worker canary route."
+          fi
+
+          if [ -n "$AZURE_OCR_KEY" ]; then
+            printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc
+          else
+            echo "::warning::Missing AZURE_OCR_KEY for FX Worker OCR proxy."
           fi
 
       - name: Deploy to Cloudflare Pages
