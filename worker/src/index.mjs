@@ -245,7 +245,12 @@ async function handleCoverage(request, env) {
   const rawFrom = url.searchParams.get('from') ?? 'AED'
   const rawTo = url.searchParams.get('to') ?? 'USD'
   const rawAnchorDate = url.searchParams.get('anchorDate') ?? undefined
-  const rawDays = Number(url.searchParams.get('days') ?? 30)
+  const daysParam = url.searchParams.get('days')
+  // Treat a missing OR empty `days` param as the default window. Without this,
+  // `?days=` (empty string) coerces to 0 and clampDays silently floors it to a
+  // 1-day window instead of the documented 30-day default. Non-empty invalid
+  // values (e.g. `abc`, `5.5`) still flow through to clampDays, which 400s them.
+  const rawDays = daysParam ? Number(daysParam) : 30
 
   logFxMonitoringEvent('info', {
     signal: 'coverage_entry',
