@@ -1,6 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
+import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
 
 function makeKV() {
   const store = new Map()
@@ -193,6 +194,58 @@ test('empty image body is a 400', async () => {
   stubAzure()
   const res = await handleOcr(scanRequest(new Uint8Array([])), makeEnv())
   assert.equal(res.status, 400)
+})
+
+test('a provider_error 502 reports to Sentry (scan-path failure is not log-only)', async () => {
+  // Azure submit returns 500 -> no operationId -> finishScan yields provider_error 502.
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url)
+    if (init.method === 'POST' && u.includes(':analyze')) {
+      return new Response('azure exploded', { status: 500 })
+    }
+    throw new Error(`unexpected fetch ${init.method} ${u}`)
+  }
+  const calls = { captureMessage: [], flush: [], scopes: [] }
+  setOcrSentrySdkForTests({
+    captureMessage(m) { calls.captureMessage.push(m) },
+    flush(t) { calls.flush.push(t); return Promise.resolve(true) },
+    withScope(cb) {
+      const scope = { tags: {}, contexts: {}, setLevel() {}, setTag(k, v) { this.tags[k] = v }, setContext(k, v) { this.contexts[k] = v } }
+      calls.scopes.push(scope)
+      cb(scope)
+    },
+  })
+  try {
+    const env = makeEnv({ SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
+    const res = await handleOcr(scanRequest(new Uint8Array([3, 3, 3])), env)
+    assert.equal(res.status, 502)
+    const body = await res.json()
+    assert.equal(body.status, 'provider_error')
+    assert.equal(calls.captureMessage.length, 1, 'provider_error must surface as a Sentry issue')
+    assert.match(calls.captureMessage[0], /provider_error/)
+    assert.equal(calls.scopes[0].tags['monitoring.signal'], 'ocr_provider_error')
+    assert.equal(calls.scopes[0].tags['ocr.azure_status'], '500')
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
+})
+
+test('an ok scan does NOT report to Sentry (no vanity events on success)', async () => {
+  stubAzure()
+  const calls = { captureMessage: [] }
+  setOcrSentrySdkForTests({
+    captureMessage(m) { calls.captureMessage.push(m) },
+    flush() { return Promise.resolve(true) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  try {
+    const env = makeEnv({ SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
+    const res = await handleOcr(scanRequest(new Uint8Array([2, 2, 2])), env)
+    assert.equal(res.status, 200)
+    assert.equal(calls.captureMessage.length, 0, 'a successful scan must not emit a Sentry event')
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
 })
 
 test('GET /ocr/challenge issues a single-use challenge', async () => {

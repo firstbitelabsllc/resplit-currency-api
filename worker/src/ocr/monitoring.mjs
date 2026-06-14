@@ -5,9 +5,37 @@
 // queryable in Loki by field (outcome / latency_ms / azure_status / device_id),
 // which is what renders the "online charts" (scan volume, p95, error rate,
 // per-device abuse) without any new monitoring stack.
+//
+// Sentry leg: a scan that returns the `provider_error` 502 (Azure submit failed,
+// polling exhausted, or Azure reported `failed`) is the user-facing "receipt scan
+// failed" error-state — the money/scan path. The Loki log alone is not trendable,
+// alertable, or release-correlated in Sentry the way the FX path's 502 already is
+// (see `captureFxRouteFailure`). `captureOcrProviderFailure` closes that gap so a
+// prod scan failure surfaces as a Sentry issue, never just a buried log line.
+
+import * as Sentry from '@sentry/cloudflare'
 
 const SURFACE = 'resplit-currency-api'
 const DOMAIN = 'ocr'
+
+let sentrySdk = Sentry
+
+/** Test seam — mirrors monitoring.mjs's `setSentryWorkerSdkForTests`. */
+export function setOcrSentrySdkForTests(mock) {
+  sentrySdk = mock
+}
+
+export function resetOcrSentrySdkForTests() {
+  sentrySdk = Sentry
+}
+
+/**
+ * @param {{ SENTRY_DSN?: string }} env
+ * @returns {boolean}
+ */
+function isOcrSentryEnabled(env) {
+  return Boolean(env && env.SENTRY_DSN)
+}
 
 /**
  * @param {{ SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
@@ -53,4 +81,59 @@ export function logOcrMonitoringEvent(level, event, env) {
     console.error(line)
     break
   }
+}
+
+/**
+ * Report a scan that ended in the `provider_error` 502 to Sentry (in addition to
+ * the structured Loki line `finishScan` already emits). Uses `captureMessage`
+ * (not `captureException`): a `provider_error` is a controlled degraded outcome,
+ * not a thrown JS error — the same precedent the FX canary uses. PII-safe: never
+ * carries image bytes, the Azure key, or device identifiers.
+ *
+ * @param {{
+ *   scanId: string
+ *   requestId?: string
+ *   azureStatus?: number | null
+ *   attest?: string
+ *   clientVersion?: string
+ *   kvExtras?: string
+ *   totalMs?: number
+ * }} context
+ * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
+ * @returns {Promise<boolean>} true when the failure was reported to Sentry
+ */
+export async function captureOcrProviderFailure(context, env) {
+  if (!isOcrSentryEnabled(env)) {
+    return false
+  }
+
+  sentrySdk.withScope(scope => {
+    scope.setLevel('error')
+    scope.setTag('surface', SURFACE)
+    scope.setTag('runtime', 'worker')
+    scope.setTag('monitoring.domain', DOMAIN)
+    scope.setTag('monitoring.signal', 'ocr_provider_error')
+    if (context.requestId) {
+      scope.setTag('request.id', context.requestId)
+    }
+    if (context.azureStatus != null) {
+      scope.setTag('ocr.azure_status', String(context.azureStatus))
+    }
+    if (context.clientVersion) {
+      scope.setTag('ocr.client_version', context.clientVersion)
+    }
+    scope.setContext('ocrScan', {
+      scanId: context.scanId,
+      requestId: context.requestId,
+      azureStatus: context.azureStatus ?? null,
+      attest: context.attest,
+      kvExtras: context.kvExtras,
+      totalMs: context.totalMs,
+    })
+    sentrySdk.captureMessage(
+      `OCR scan provider_error (azure_status=${context.azureStatus ?? 'unknown'})`
+    )
+  })
+
+  return sentrySdk.flush(2_000)
 }

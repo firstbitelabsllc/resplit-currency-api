@@ -14,7 +14,7 @@ import { errorResponse, jsonResponse } from '../http.mjs'
 import { resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
 import { CORS_HEADERS, handlePreflight } from '../sideload/cors.mjs'
-import { logOcrMonitoringEvent } from './monitoring.mjs'
+import { logOcrMonitoringEvent, captureOcrProviderFailure } from './monitoring.mjs'
 import {
   submitReceiptAnalyze,
   getReceiptAnalyzeResult,
@@ -241,13 +241,23 @@ async function finishScan(env, ctx) {
   if (ctx.status === 'ok' && ctx.cacheKey) {
     await env_.ATTEST_KV.put(ctx.cacheKey, body, { expirationTtl: CACHE_TTL_SECONDS })
   }
+  const totalMs = Date.now() - ctx.start
   logOcrMonitoringEvent(ctx.status === 'ok' ? 'info' : 'warn', {
     signal: 'scan', phase: 'scan', mode: 'raw', provider: OCR_PROVIDER, status: ctx.status,
     kv_extras: ctx.kvExtras ?? 'off',
     attest: ctx.attest, cache: ctx.cache, azure_status: ctx.azureStatus,
-    azure_ms: Date.now() - ctx.azureStart, total_ms: Date.now() - ctx.start,
+    azure_ms: Date.now() - ctx.azureStart, total_ms: totalMs,
     scanId: ctx.scanId, requestId: ctx.requestId, client_version: ctx.clientVersion,
   }, env_)
+  // A provider_error 502 is the user-facing "scan failed" outcome on the money/scan
+  // path. The Loki line above is not a Sentry issue — without this leg a prod scan
+  // failure is un-trendable/un-alertable the way the FX path's 502 already is.
+  if (ctx.status === 'provider_error') {
+    await captureOcrProviderFailure({
+      scanId: ctx.scanId, requestId: ctx.requestId, azureStatus: ctx.azureStatus,
+      attest: ctx.attest, clientVersion: ctx.clientVersion, kvExtras: ctx.kvExtras, totalMs,
+    }, env_)
+  }
   const httpStatus = ctx.status === 'ok' ? 200 : 502
   return new Response(body, { status: httpStatus, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', 'x-request-id': ctx.requestId } })
 }
