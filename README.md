@@ -178,8 +178,26 @@ This is not identical to `resplit-web` in implementation because this repo is a 
 
 ```bash
 npm ci
+npm run check:publish
+# Generates package/, validates publish-shape integrity, and runs unit tests
+
 npm run check
-# Generates package/, validates unversioned artifact integrity, and runs unit tests
+# Strict release gate: also requires full 30-calendar-day history coverage
+
+npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23
+# Read-only: verifies whether any complete single historical source can safely backfill archive gaps
+
+npm run reliability:cockpit
+# Read-only: writes reports/resplit-fx-reliability-cockpit.{html,json} with local CI,
+# nurse-log, git, gate, and OTEL/Grafana readiness in one internal launch surface
+
+npm run mcp:loaded-probe
+# Read-only: pipe live mcp__firstbite_local_ci.list_lanes JSON into this to refresh
+# reports/firstbite-loaded-mcp-lanes.json before regenerating the cockpit
+
+npm run observability:otel-smoke -- --skip-trigger
+# Read-only: writes reports/grafana-otel-smoke.json as a yellow contract artifact
+# until Grafana base URL, API token, Tempo UID, and Loki UID are supplied
 ```
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.
@@ -191,4 +209,4 @@ By default, deploy smoke expects the current UTC publish date. Set `EXPECTED_DAT
 workflow-pinned checks, or `ALLOW_STALE_DEPLOY_SMOKE=1` only when diagnosing an intentionally stale
 deployment.
 
-The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over.
+The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over. The generated `history/30d` files represent the actual latest 30-calendar-day window; `npm run validate` warns on missing days so recovery publishes can proceed, while `npm run validate:release` and `npm run check` fail until the 30-day window is complete. Before backfilling an archive gap, run `npm run audit:backfill-sources` and require at least one complete single-source candidate for every missing date; do not merge partial providers just to clear canary pairs.

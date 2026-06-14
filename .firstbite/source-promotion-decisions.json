@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "decisions": [
+    {
+      "path": ".firstbite/local-ci.json",
+      "decision": "accept-current",
+      "currentHash": "d7176a634981",
+      "originHash": "73b23a4ce29e",
+      "reason": "Current manifest adds the trust-preflight lane with exit 1 classified as expected yellow, preserving the launch-trust gate instead of collapsing endpoint smoke into launch green.",
+      "evidence": [
+        "git diff origin/main -- .firstbite/local-ci.json reviewed",
+        "npm run trust:preflight generated expected-yellow trust packet"
+      ]
+    },
+    {
+      "path": "scripts/trust-preflight.js",
+      "decision": "accept-current",
+      "currentHash": "5ebfd6c46195",
+      "originHash": "dc4bc63a57af",
+      "reason": "Current preflight writes the Grafana missing-config proof to the cockpit-consumed grafana-otel-smoke-missing-config-preflight.json path.",
+      "evidence": [
+        "git diff origin/main -- scripts/trust-preflight.js reviewed",
+        "node --check scripts/trust-preflight.js",
+        "node --test tests/source-promotion-packet.test.js"
+      ]
+    },
+    {
+      "path": "tests/trust-preflight.test.js",
+      "decision": "accept-current",
+      "currentHash": "2c4a9d21e1ce",
+      "originHash": "bd6500043935",
+      "reason": "Current test locks the renamed Grafana missing-config preflight artifact path.",
+      "evidence": [
+        "git diff origin/main -- tests/trust-preflight.test.js reviewed",
+        "node --test tests/source-promotion-packet.test.js"
+      ]
+    },
+    {
+      "path": "scripts/verify-grafana-otel-smoke.js",
+      "decision": "accept-current",
+      "currentHash": "9a2cd523eb61",
+      "originHash": "dad7b3b6f716",
+      "reason": "Current Grafana proof records source identity so telemetry evidence carries checkout head, branch, dirty path, and generated-artifact context.",
+      "evidence": [
+        "git diff origin/main -- scripts/verify-grafana-otel-smoke.js reviewed",
+        "node --check scripts/verify-grafana-otel-smoke.js",
+        "node --test tests/source-promotion-packet.test.js"
+      ]
+    },
+    {
+      "path": "tests/verify-grafana-otel-smoke.test.js",
+      "decision": "accept-current",
+      "currentHash": "5f1a6594c30f",
+      "originHash": "2fa56a14cc75",
+      "reason": "Current tests cover the source-identity provenance added to Grafana telemetry proof.",
+      "evidence": [
+        "git diff origin/main -- tests/verify-grafana-otel-smoke.test.js reviewed",
+        "node --test tests/source-promotion-packet.test.js"
+      ]
+    },
+    {
+      "path": "scripts/reliability-cockpit.js",
+      "decision": "accept-current",
+      "currentHash": "6f5e9b171353",
+      "originHash": "a8fb476b07b4",
+      "reason": "Current cockpit preserves explicit origin-main source_ref clean proof semantics while adding Grafana source-identity trust and keeping source-promotion truth separate from clean-proof readiness.",
+      "evidence": [
+        "git diff origin/main -- scripts/reliability-cockpit.js reviewed",
+        "node --check scripts/reliability-cockpit.js",
+        "node --test tests/reliability-cockpit.test.js"
+      ]
+    },
+    {
+      "path": "tests/reliability-cockpit.test.js",
+      "decision": "accept-current",
+      "currentHash": "241093c717c7",
+      "originHash": "80542a682a39",
+      "reason": "Current tests lock source_ref=refs/remotes/origin/main proof, Grafana source-identity trust, and source-promotion/clean-proof gate separation.",
+      "evidence": [
+        "git diff origin/main -- tests/reliability-cockpit.test.js reviewed",
+        "node --test tests/reliability-cockpit.test.js"
+      ]
+    },
+    {
+      "path": "scripts/source-promotion-packet.js",
+      "decision": "accept-current",
+      "currentHash": "68648860a0e2",
+      "originHash": "015418faae18",
+      "reason": "Current packet keeps landed zero-candidate bundles green, keeps review-decision metadata non-self-blocking, compares the staged package contract when package.json also has unrelated unstaged OCR dependency drift, and excludes that index-sourced package row from generated git-add commands.",
+      "evidence": [
+        "git diff origin/main -- scripts/source-promotion-packet.js reviewed",
+        "node --check scripts/source-promotion-packet.js",
+        "node --test tests/source-promotion-packet.test.js"
+      ]
+    },
+    {
+      "path": "tests/source-promotion-packet.test.js",
+      "decision": "accept-current",
+      "currentHash": "c013bf41d115",
+      "originHash": "d8fb20d3c470",
+      "reason": "Current tests preserve zero-candidate green attestation, cover the decision-manifest non-self-blocking metadata row, and lock the staged-package/unstaged-drift split including safe git-add command generation.",
+      "evidence": [
+        "git diff origin/main -- tests/source-promotion-packet.test.js reviewed",
+        "node --test tests/source-promotion-packet.test.js"
+      ]
+    },
+    {
+      "path": "tests/smoke-check-deploy.test.js",
+      "decision": "accept-current",
+      "currentHash": "01d4d89c8a52",
+      "originHash": "b61212349834",
+      "reason": "Current tests keep the GitHub Pages propagation-grace coverage while avoiding the duplicated recovery-gap test block present on origin/main.",
+      "evidence": [
+        "git diff origin/main -- tests/smoke-check-deploy.test.js reviewed",
+        "node --check scripts/smoke-check-deploy.js",
+        "node --test tests/smoke-check-deploy.test.js"
+      ]
+    }
+  ]
+}

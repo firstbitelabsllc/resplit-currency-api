@@ -27,6 +27,7 @@ import {
 } from './monitoring.mjs'
 import { resolveRequestId } from './request-id.mjs'
 import { handleSideload } from './sideload/router.mjs'
+import { handleOcr } from './ocr/router.mjs'
 
 const ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
 const QUOTE_HISTORY_CACHE_CONTROL = 'public, s-maxage=3600, stale-while-revalidate=86400'
@@ -56,7 +57,13 @@ export async function handleRequest(request, env) {
     return handleSideload(request, env)
   }
 
+  if (url.pathname.startsWith('/ocr/')) {
+    return handleOcr(request, env)
+  }
+
   switch (url.pathname) {
+  case '/health':
+    return handleHealth(request, env)
   case '/quote':
     return handleQuote(request, env)
   case '/history':
@@ -70,6 +77,21 @@ export async function handleRequest(request, env) {
       'Cache-Control': 'no-store',
     })
   }
+}
+
+function handleHealth(request, env) {
+  return jsonResponse({
+    ok: true,
+    service: 'resplit-currency-api',
+    environment: env.SENTRY_ENVIRONMENT || 'production',
+    release: env.SENTRY_RELEASE || 'resplit-fx',
+    timestamp: new Date().toISOString(),
+  }, {
+    requestId: resolveRequestId(request),
+    headers: {
+      'Cache-Control': 'no-store',
+    },
+  })
 }
 
 async function handleQuote(request, env) {
