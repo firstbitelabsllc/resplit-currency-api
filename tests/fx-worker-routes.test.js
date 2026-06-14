@@ -349,6 +349,30 @@ test('worker coverage route rejects impossible calendar anchor dates', async () 
   })
 })
 
+test('worker coverage route defaults an empty days param to the 30-day window', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const availableDates = enumerateDates('2026-02-23', '2026-03-24')
+
+  await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=', {
+        headers: { 'x-request-id': 'req-coverage-empty-days' },
+      }),
+      {
+        ASSET_BASE_URL: 'https://example-assets.dev',
+      }
+    )
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-request-id'), 'req-coverage-empty-days')
+
+    const body = await response.json()
+    // Empty `days` must fall back to the documented default (30), not floor to 1.
+    assert.equal(body.requestedDays, 30)
+    assert.equal(body.historyCoverage.availableDays, 30)
+  })
+})
+
 test('worker cron route rejects unauthorized requests', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 
