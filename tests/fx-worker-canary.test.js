@@ -10,45 +10,10 @@ test('defaultFxCanaryAnchorDates stays inside the retention window', async () =>
   )
 })
 
-test('runFxCanary checks the retention-safe default anchors', async () => {
-  const { defaultFxCanaryAnchorDates, runFxCanary } = await import('../worker/src/fx-canary.mjs')
-  const seenAnchorDates = []
-  const fixedToday = new Date('2026-03-21T12:00:00.000Z')
-  const expectedAnchorDates = defaultFxCanaryAnchorDates(fixedToday)
-
-  const report = await runFxCanary({
-    pairs: [{ from: 'AED', to: 'USD' }],
-    anchorDates: expectedAnchorDates,
-    buildReport: async ({ anchorDate }) => {
-      seenAnchorDates.push(anchorDate)
-      return {
-        mismatchCount: 0,
-        from: 'AED',
-        to: 'USD',
-        anchorDate,
-        requestedDays: 30,
-        quote: {
-          resolutionKind: 'exact',
-          resolvedDate: anchorDate,
-        },
-        historyCoverage: {
-          availableDays: 30,
-          missingDayCount: 0,
-          archiveGapCount: 0,
-        },
-        freshness: {
-          quoteResolvedLagDays: 0,
-          archiveLatestLagDays: 0,
-          staleAgainstAnchor: false,
-        },
-        signals: [],
-      }
-    },
-  })
-
-  assert.deepEqual(seenAnchorDates, expectedAnchorDates)
-  assert.equal(report.ok, true)
-  assert.equal(report.mismatchCount, 0)
-  assert.equal(report.failureCount, 0)
-  assert.deepEqual(report.results.map((result) => result.anchorDate), expectedAnchorDates)
-})
+// The 'runFxCanary checks the retention-safe default anchors' test was removed: it
+// passed a buildReport stub hardcoded to mismatchCount:0 and then asserted the
+// aggregator produced ok:true / mismatchCount:0 — a mock asserting the mock. A
+// planted `ok: true` bug (dropping the failureCount guard) left it green. The real
+// runFxCanary aggregation, including the failure path, is covered end-to-end by
+// fx-worker-routes.test.js ('returns canary report' over 12 real reports +
+// 'reports canary_error on unexpected failures'), which caught that planted bug.
