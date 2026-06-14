@@ -3,10 +3,23 @@ const assert = require('node:assert/strict')
 
 const {
   defaultWorkerBase,
+  isRecoveryCoverageGap,
+  resolveFreshnessContract,
   resolveExpectedDate,
+  resolveGithubFallbackAcceptance,
   resolveWorkerBase,
   smokeCheckWorker,
 } = require('../scripts/smoke-check-deploy.js')
+
+function makeWorkerHealthPayload() {
+  return {
+    ok: true,
+    service: 'resplit-currency-api',
+    environment: 'production',
+    release: 'release-123',
+    timestamp: '2026-03-25T14:00:00.000Z',
+  }
+}
 
 test('resolveWorkerBase defaults to the canonical production worker host', () => {
   assert.equal(resolveWorkerBase({}), defaultWorkerBase)
@@ -57,10 +70,100 @@ test('resolveExpectedDate supports explicit stale deploy smoke fallback', () => 
   )
 })
 
+test('resolveFreshnessContract accepts prior date during publish grace window', () => {
+  const contract = resolveFreshnessContract({
+    latestDate: '2026-05-24',
+    metaLatestDate: '2026-05-24',
+    now: new Date('2026-05-25T03:08:00Z'),
+    publishGraceMinutes: 45,
+  })
+
+  assert.equal(contract.mode, 'publish_grace')
+  assert.equal(contract.expectedDate, '2026-05-24')
+  assert.equal(contract.strictExpectedDate, '2026-05-25')
+  assert.equal(contract.graceEndsAt, '2026-05-25T03:45:00.000Z')
+})
+
+test('resolveFreshnessContract stays strict outside publish grace window', () => {
+  const contract = resolveFreshnessContract({
+    latestDate: '2026-05-24',
+    metaLatestDate: '2026-05-24',
+    now: new Date('2026-05-25T04:00:00Z'),
+    publishGraceMinutes: 45,
+  })
+
+  assert.equal(contract.mode, 'strict')
+  assert.equal(contract.expectedDate, '2026-05-25')
+})
+
+test('resolveFreshnessContract keeps explicit requested date strict', () => {
+  const contract = resolveFreshnessContract({
+    requestedDate: '2026-05-25',
+    latestDate: '2026-05-24',
+    metaLatestDate: '2026-05-24',
+    now: new Date('2026-05-25T03:08:00Z'),
+  })
+
+  assert.equal(contract.mode, 'requested')
+  assert.equal(contract.expectedDate, '2026-05-25')
+})
+
+test('resolveGithubFallbackAcceptance accepts a fresh fallback', () => {
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-29',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T03:36:00Z'),
+  })
+
+  assert.equal(result.accepted, true)
+  assert.equal(result.stale, false)
+  assert.equal(result.reason, 'fresh')
+})
+
+test('resolveGithubFallbackAcceptance tolerates one-day lag inside the propagation grace window', () => {
+  // The ~03:36Z scheduled run: Cloudflare already serves today, github.io still
+  // serves yesterday. This is the exact red-flap we are de-flaking.
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-28',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T03:36:00Z'),
+  })
+
+  assert.equal(result.accepted, true)
+  assert.equal(result.stale, true)
+  assert.equal(result.reason, 'propagation_grace')
+  assert.equal(result.graceEndsAt, '2026-05-29T05:00:00.000Z')
+})
+
+test('resolveGithubFallbackAcceptance stays strict outside the propagation grace window', () => {
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-28',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T14:00:00Z'),
+  })
+
+  assert.equal(result.accepted, false)
+  assert.equal(result.reason, 'propagation_grace_expired')
+})
+
+test('resolveGithubFallbackAcceptance rejects a >1 day stale fallback even inside the window', () => {
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-05-27',
+    expectedDate: '2026-05-29',
+    now: new Date('2026-05-29T03:36:00Z'),
+  })
+
+  assert.equal(result.accepted, false)
+  assert.equal(result.reason, 'not_one_day_stale')
+})
+
 test('smokeCheckWorker rejects degraded coverage payloads', async () => {
   await assert.rejects(
     smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
       fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return makeWorkerHealthPayload()
+        }
         if (String(url).includes('/quote?')) {
           return {
             from: 'AED',
@@ -99,10 +202,128 @@ test('smokeCheckWorker rejects degraded coverage payloads', async () => {
   )
 })
 
+test('smokeCheckWorker warns through archive-only recovery gaps', async () => {
+  const warnings = []
+  const originalWarn = console.warn
+
+  console.warn = (message) => warnings.push(message)
+
+  try {
+    await assert.doesNotReject(
+      smokeCheckWorker('https://fx.resplit.app', '2026-05-24', {
+        fetchJson: async (url) => {
+          if (String(url).endsWith('/health')) {
+            return makeWorkerHealthPayload()
+          }
+          if (String(url).includes('/quote?')) {
+            return {
+              from: 'AED',
+              to: 'USD',
+              requestedDate: '2026-05-24',
+              resolvedDate: '2026-05-24',
+              resolutionKind: 'exact',
+              rate: 0.27,
+            }
+          }
+          if (String(url).includes('/history?')) {
+            return {
+              points: [
+                { date: '2026-05-24', rate: 0.27 },
+              ],
+            }
+          }
+          return {
+            quote: {
+              resolvedDate: '2026-05-24',
+              resolutionKind: 'exact',
+            },
+            historyCoverage: {
+              requestedDays: 30,
+              availableDays: 18,
+              missingDayCount: 12,
+              archiveLatestDate: '2026-05-24',
+            },
+            freshness: {
+              quoteResolvedLagDays: 0,
+              archiveLatestLagDays: 0,
+              staleAgainstAnchor: false,
+            },
+            mismatchCount: 24,
+            signals: ['history_range_incomplete', 'archive_gap_detected'],
+          }
+        },
+      })
+    )
+  } finally {
+    console.warn = originalWarn
+  }
+
+  assert.ok(warnings.some((line) => line.includes('recovery archive gaps')))
+})
+
+test('isRecoveryCoverageGap rejects stale or fallback coverage', () => {
+  assert.equal(
+    isRecoveryCoverageGap({
+      quote: { resolutionKind: 'prior_day_fallback' },
+      historyCoverage: {
+        archiveLatestDate: '2026-05-24',
+      },
+      freshness: {
+        quoteResolvedLagDays: 1,
+        archiveLatestLagDays: 0,
+        staleAgainstAnchor: true,
+      },
+      signals: ['prior_day_fallback_used', 'history_range_incomplete'],
+    }, '2026-05-24'),
+    false
+  )
+})
+
+test('smokeCheckWorker rejects missing worker health payloads', async () => {
+  await assert.rejects(
+    smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
+      fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return {
+            ok: false,
+            service: 'unknown',
+            timestamp: '2026-03-25T14:00:00.000Z',
+          }
+        }
+        throw new Error(`Unexpected URL: ${url}`)
+      },
+    }),
+    /worker health shape mismatch/
+  )
+})
+
+test('smokeCheckWorker rejects health payloads without release metadata', async () => {
+  await assert.rejects(
+    smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
+      fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return {
+            ok: true,
+            service: 'resplit-currency-api',
+            environment: 'production',
+            release: 'unknown',
+            timestamp: '2026-03-25T14:00:00.000Z',
+          }
+        }
+        throw new Error(`Unexpected URL: ${url}`)
+      },
+    }),
+    /worker health release missing/
+  )
+})
+
 test('smokeCheckWorker accepts exact coverage payloads', async () => {
   await assert.doesNotReject(
     smokeCheckWorker('https://fx.resplit.app', '2026-03-25', {
       fetchJson: async (url) => {
+        if (String(url).endsWith('/health')) {
+          return makeWorkerHealthPayload()
+        }
         if (String(url).includes('/quote?')) {
           return {
             from: 'AED',
@@ -147,6 +368,9 @@ test('smokeCheckWorker anchors history start to the requested publish date', asy
     smokeCheckWorker('https://fx.resplit.app', '2026-03-01', {
       fetchJson: async (url) => {
         seenUrls.push(String(url))
+        if (String(url).endsWith('/health')) {
+          return makeWorkerHealthPayload()
+        }
         if (String(url).includes('/quote?')) {
           return {
             from: 'AED',
@@ -183,6 +407,9 @@ test('smokeCheckWorker anchors history start to the requested publish date', asy
     })
   )
 
+  assert.ok(
+    seenUrls.includes('https://fx.resplit.app/health')
+  )
   assert.ok(
     seenUrls.includes('https://fx.resplit.app/history?from=AED&to=USD&start=2026-02-27&end=2026-03-01')
   )
