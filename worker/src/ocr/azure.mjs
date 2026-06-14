@@ -9,9 +9,7 @@ const RECEIPT_MODEL_ID = 'prebuilt-receipt'
 const LAYOUT_MODEL_ID = 'prebuilt-layout'
 const API_VERSION = '2024-11-30'
 
-export const OCR_SCHEMA_VERSION = 'azure.v4.2024-11-30'
 export const OCR_PROVIDER = 'azure-di'
-export const OCR_PROVIDER_VERSION = 'v4-2024-11-30'
 
 export class AzureConfigError extends Error {
   constructor(message) {
