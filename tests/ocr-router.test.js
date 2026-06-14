@@ -189,6 +189,24 @@ test('missing ATTEST_KV binding is a 503 misconfiguration, not a crash', async (
   assert.equal(res.status, 503)
 })
 
+test('missing ATTEST_KV binding emits a structured ocr_misconfigured error so it is visible on the dashboard', async () => {
+  const env = makeEnv({ ATTEST_KV: undefined })
+  const origError = console.error
+  const lines = []
+  console.error = (line) => lines.push(line)
+  try {
+    await handleOcr(scanRequest(new Uint8Array([1])), env)
+  } finally {
+    console.error = origError
+  }
+  const monitoringLine = lines.find((l) => typeof l === 'string' && l.startsWith('[OCR_MONITORING] '))
+  assert.ok(monitoringLine, 'a misconfigured binding must emit an [OCR_MONITORING] line, not 503 silently')
+  const json = JSON.parse(monitoringLine.replace('[OCR_MONITORING] ', ''))
+  assert.equal(json.signal, 'ocr_misconfigured')
+  assert.equal(json.reason, 'attest_kv_unbound')
+  assert.equal(json.domain, 'ocr')
+})
+
 test('empty image body is a 400', async () => {
   stubAzure()
   const res = await handleOcr(scanRequest(new Uint8Array([])), makeEnv())

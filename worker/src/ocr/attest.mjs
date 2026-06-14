@@ -108,7 +108,7 @@ export async function importCoseEcKey(coseBytes) {
 }
 
 // DER ECDSA (SEQUENCE { INTEGER r, INTEGER s }) -> raw 64-byte r||s.
-export function derToRawEcdsa(der) {
+function derToRawEcdsa(der) {
   let pos = 0
   if (der[pos++] !== 0x30) throw new AttestError('SIG', 'bad DER sig')
   if (der[pos] & 0x80) pos += 1 + (der[pos] & 0x7f); else pos++
