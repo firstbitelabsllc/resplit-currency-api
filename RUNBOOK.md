@@ -26,6 +26,159 @@ curl -s "$FX_WORKER_BASE_URL/history?from=AED&to=USD&start=$(date -u -v-7d +%Y-%
 curl -s "$FX_WORKER_BASE_URL/coverage?from=AED&to=USD&anchorDate=$(date -u +%Y-%m-%d)&days=30" | head -c 160
 ```
 
+## Reliability Cockpit
+
+Use the local cockpit when you need one operator view that joins repo-owned
+local CI, git/source state, agent/nurse-log truth, release gates, and
+OTEL/Grafana readiness:
+
+```bash
+npm run reliability:cockpit
+open reports/resplit-fx-reliability-cockpit.html
+```
+
+The cockpit is read-only and writes ignored local artifacts under `reports/`.
+It does not run live deploys, mutate Cloudflare/GitHub/Grafana, or replace
+`npm run check`, `npm run smoke:deploy`, or the strict release-history gate. A
+green local-CI lane is only trusted after the FirstBite MCP records a matching
+report/log artifact with source state for `resplit_currency_api`.
+
+The cockpit also renders a `Tracked Source Contract`. Launch trust requires the
+repo-owned `.firstbite/local-ci.json`, package scripts used by declared lanes
+such as `check:publish`, and their script file inputs to exist on the tracked
+execution source (`HEAD` and current `origin/main`). A dirty-current pass with
+current-only manifest/scripts is an operator hint, not clean release proof.
+The latest MCP proof must also have run the same lane commands declared by the
+current manifest; same lane IDs with different commands are treated as command
+drift, not green proof.
+
+When the source contract is red, write the read-only promotion packet before
+staging anything:
+
+```bash
+npm run source:promotion-packet
+open reports/resplit-fx-source-promotion-packet.md
+```
+
+The packet is built from the same cockpit model and separates exact stage
+candidates from dirty files that should be held by default, including agent
+local state, snapshot archives, queue files, and Cloudflare/config edits that
+need separate review. It prints the exact `git add -- ...` command for the
+candidate bundle, plus an unstage command, but does not run either.
+
+Use the cockpit `Trust Contracts` table as the handoff checklist. It maps each
+red/yellow boundary to current truth, the proof artifact that would make the
+claim inspectable, and the next operator action. This is the first place to look
+before deciding whether to rerun local CI, reload the MCP host, attach Grafana
+evidence, or keep release-history readiness yellow.
+
+The `Operator Recovery Flow` and `Operator Action Queue` above the trust table
+are the working order for the current operator. The flow names the next safe
+local command, the first dependency-blocked action, and boundary counts; the
+queue keeps the full prioritized rows with owner, runnable command, proof
+requirement, and blocker text. Source promotion, clean FirstBite proof, loaded
+MCP refresh, Grafana evidence, and release-history repair must stay distinct
+instead of blending into one red badge.
+
+Use the `Proof Freshness Ledger` before trusting any red/yellow/green badge.
+It separates artifact freshness from trust status, so a proof can be fresh but
+still red, or stale even when the underlying contract is otherwise understood.
+Refresh stale rows with the listed next action before making launch claims.
+
+Use the cockpit `Agent Activity Matrix` when you need to trust local coding
+agent handoffs. It summarizes recent repo-scoped ledger rows by status, age,
+agent family, lane, handoff state, proof artifact, and summary. Treat yellow or
+red rows as follow-up signals; the table is read-only and derives from the
+append-only repo/shared ledgers.
+
+When handing this lane across agents, prefer the bundled local preflight:
+
+```bash
+npm run trust:preflight
+```
+
+It runs syntax checks, targeted cockpit/Grafana/preflight tests, the
+missing-config Grafana verifier, and cockpit regeneration, then writes
+`reports/resplit-fx-trust-preflight.json` plus
+`reports/resplit-fx-trust-preflight.md`. The command intentionally exits nonzero
+while the cockpit verdict is red; inspect the artifact instead of treating the
+process exit alone as the result. Use `npm run trust:preflight -- --full` when
+you also need the full test suite, `check:publish`, live deploy smoke, and strict
+release-history validation captured in one bundle.
+
+OTEL/Grafana stays yellow until there is a fresh Tempo + Loki evidence artifact.
+The read-only verifier below can create that artifact after Grafana Cloud and
+Cloudflare Observability Pipeline destinations exist:
+
+```bash
+GRAFANA_BASE_URL="https://<stack>.grafana.net" \
+GRAFANA_API_TOKEN="<read-only service account token>" \
+GRAFANA_TEMPO_DATASOURCE_UID="<tempo uid>" \
+GRAFANA_LOKI_DATASOURCE_UID="<loki uid>" \
+npm run observability:otel-smoke -- --since-minutes 60
+```
+
+For a local contract check without touching the Worker or Grafana, run:
+
+```bash
+npm run observability:otel-smoke -- --skip-trigger
+```
+
+That writes `reports/grafana-otel-smoke.json` with a yellow missing-config
+status when the required Grafana env is absent. It never writes the Grafana API
+token into the report.
+
+MCP source state has two meanings in current reports. `primary_source_state` is
+the repo checkout that declared the lane. `execution_source_state` is the
+directory where the command actually ran, usually a disposable worktree.
+Compatibility `source_state` mirrors execution truth. Clean launch proof
+requires the execution source to be clean and current with `origin/main`; a
+dirty primary checkout is still an operator risk and should stay visible.
+
+For host-loaded MCP drift, mirror the current Codex/Cursor `firstbite-local-ci`
+`list_lanes` output into `reports/firstbite-loaded-mcp-lanes.json` before
+regenerating the cockpit. The cockpit compares that loaded catalog against
+`.firstbite/local-ci.json` and stays red when the host process is missing
+`resplit_currency_api` or any declared FX lane. The repo-backed MCP package is
+the fallback source of truth until the host app restarts. The loaded-host probe
+artifact must also be fresh; artifacts older than 60 minutes are yellow even
+when their catalog contents look correct.
+
+```bash
+# Live capture after restarting/reloading the Codex/Cursor MCP host.
+mcp__firstbite_local_ci.list_lanes > /tmp/firstbite-loaded-mcp.json
+npm run mcp:loaded-probe -- --input /tmp/firstbite-loaded-mcp.json
+
+# Refresh only the prior artifact timestamp while preserving its payload.
+# This keeps stale-host evidence fresh, but it is not host-restart proof.
+npm run mcp:loaded-probe -- --reuse-existing
+npm run reliability:cockpit
+```
+
+For the repo-backed package comparison:
+
+```bash
+cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci
+npm run --silent call -- list_lanes '{}'
+```
+
+`npm run reliability:cockpit` also runs that repo-backed `list_lanes` probe
+read-only and renders a `Repo-Backed MCP Catalog` section. Treat that section
+as the control-plane source of truth and the `Loaded MCP Probe` as the current
+Codex/Cursor host truth. A green repo-backed catalog with a red loaded probe
+means the package is fixed but the long-lived host process still needs restart;
+it is not a loaded-host green. The `MCP Catalog Delta` section compares those
+two catalogs directly and must clear before trusting loaded-host execution. Use
+`--skip-repo-backed-mcp` only when debugging the cockpit without touching the
+MCP package process.
+
+The `FirstBite Operating Readout` section also renders the M4 peer execution
+boundary. A healthy Moussey or M4 HTTP/LAN response is support evidence only;
+the peer is not execution-ready until an M4-local `run_lanes` execute report
+exists. If the cockpit shows `M4 peer support-only`, use the linked fresh-clone
+commands on the M4 Pro and recapture the readout instead of treating a Studio
+handoff or ping as lane proof.
+
 The production mirror should speak the same contract:
 ```bash
 FX_WEB_BASE_URL="${FX_WEB_BASE_URL:-https://www.resplit.app/api/fx}"
@@ -63,17 +216,33 @@ and iOS consumer still agree on the live contract.
 ```bash
 gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3
 cd /Users/leokwan/Development/resplit-currency-api
+npm run check:publish
 npm run smoke:deploy
 ```
 
 Pass criteria:
 - the latest `Update Currency Rates` run is `success`
+- `npm run check:publish` passes locally or in Actions, with no unexpected validation errors
 - `npm run smoke:deploy` ends with `smoke-check-deploy: OK (...)`
 - the smoke output reports today's UTC `date` plus a 30-point history payload
 
 `npm run smoke:deploy` fails stale deployments by default. Use `EXPECTED_DATE=yyyy-mm-dd` for a
 known workflow date, or `ALLOW_STALE_DEPLOY_SMOKE=1` only for diagnostics when you intentionally
 need to inspect the latest deployed stale package.
+
+For release readiness, run `npm run check`. It is stricter than the publish-recovery gate and fails
+when the actual latest 30-calendar-day `history/30d` window is incomplete.
+
+When a release-history gap needs backfill, audit sources before writing any snapshot:
+
+```bash
+npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23
+```
+
+Pass criteria:
+- every missing date reports at least one `complete=` source
+- the source covers the full current package currency set, not just canary pairs
+- no snapshot is written from merged or partial third-party data unless the package contract is explicitly changed
 
 ### 2. Worker + web mirror parity
 
@@ -399,7 +568,8 @@ missing days (e.g., first run or recovery from a reset).
 | `.github/workflows/run.yml` | Daily cron, deploy to CDNs, commit archive |
 | `scripts/sentry-monitoring.js` | Shared Sentry issue, log, and cron check-in helper |
 | `scripts/sentry-checkin.js` | Workflow helper for start/finish/error check-ins |
-| `scripts/validate-package.js` | Validates generated package structure and numeric consistency |
+| `scripts/audit-history-backfill-sources.js` | Read-only audit for historical source completeness before backfilling snapshot gaps. Fails closed when no single source covers the full current package currency set. |
+| `scripts/validate-package.js` | Validates generated package structure and numeric consistency. Default mode is publish-recovery tolerant; `STRICT_HISTORY_COVERAGE=1` / `npm run validate:release` requires full 30-calendar-day history. |
 | `scripts/smoke-check-deploy.js` | Verifies Pages, dated snapshot, GitHub fallback, and canonical Worker after publish. Defaults to current UTC date; `EXPECTED_DATE=yyyy-mm-dd` pins workflow checks, `ALLOW_STALE_DEPLOY_SMOKE=1` is diagnostic-only, and `SKIP_WORKER_SMOKE_CHECK=1` only bypasses the Worker check intentionally. |
 | `.env.local` | Local Cloudflare credentials (gitignored) |
 | `INFRASTRUCTURE.md` | Account IDs, URLs, secrets inventory |

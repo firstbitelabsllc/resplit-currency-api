@@ -12,12 +12,18 @@ function withTempPackage(t) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'validate-package-'))
   const tempPackage = path.join(tempRoot, 'package')
   const previousPackageRoot = process.env.CURRENCY_PACKAGE_ROOT
+  const previousStrictHistoryCoverage = process.env.STRICT_HISTORY_COVERAGE
 
   t.after(() => {
     if (previousPackageRoot === undefined) {
       delete process.env.CURRENCY_PACKAGE_ROOT
     } else {
       process.env.CURRENCY_PACKAGE_ROOT = previousPackageRoot
+    }
+    if (previousStrictHistoryCoverage === undefined) {
+      delete process.env.STRICT_HISTORY_COVERAGE
+    } else {
+      process.env.STRICT_HISTORY_COVERAGE = previousStrictHistoryCoverage
     }
     delete require.cache[validatePackagePath]
     fs.removeSync(tempRoot)
@@ -29,7 +35,10 @@ function withTempPackage(t) {
 
   return {
     packageRoot: tempPackage,
-    validate: () => require(validatePackagePath).main()
+    validate: () => {
+      delete require.cache[validatePackagePath]
+      return require(validatePackagePath).main()
+    }
   }
 }
 
@@ -69,15 +78,48 @@ test('validate-package still fails when a latest currency artifact is missing', 
   )
 })
 
-test('validate-package still fails when 30-day history coverage is truncated', (t) => {
+test('validate-package warns instead of blocking recovery publishes with incomplete calendar history', (t) => {
   const temp = withTempPackage(t)
-  const historyPath = path.join(temp.packageRoot, 'history', '30d', 'usd.json')
-  const history = fs.readJsonSync(historyPath)
-  history.points = history.points.slice(0, 29)
-  fs.writeJsonSync(historyPath, history, { spaces: '\t' })
+  const warnings = []
+  const originalWarn = console.warn
+
+  t.after(() => {
+    console.warn = originalWarn
+  })
+
+  removeMiddleHistoryDate(temp.packageRoot)
+  console.warn = (message) => warnings.push(message)
+
+  assert.doesNotThrow(() => temp.validate())
+  assert.ok(warnings.some((line) => line.includes('history/30d calendar coverage incomplete')))
+})
+
+test('validate-package fails strict release validation with incomplete calendar history', (t) => {
+  const temp = withTempPackage(t)
+
+  removeMiddleHistoryDate(temp.packageRoot)
+  process.env.STRICT_HISTORY_COVERAGE = '1'
 
   assert.throws(
     () => temp.validate(),
-    /history\/30d\/usd\.json points must contain exactly 30 entries/
+    /history\/30d calendar coverage incomplete/
   )
 })
+
+function removeMiddleHistoryDate(tempPackage) {
+  const historyPath = path.join(tempPackage, 'history', '30d', 'usd.json')
+  const minHistoryPath = path.join(tempPackage, 'history', '30d', 'usd.min.json')
+  const metaPath = path.join(tempPackage, 'meta.json')
+  const minMetaPath = path.join(tempPackage, 'meta.min.json')
+  const history = fs.readJsonSync(historyPath)
+  const removeIndex = Math.max(0, Math.min(history.points.length - 2, Math.floor(history.points.length / 2)))
+  const removedDate = history.points[removeIndex].date
+  history.points = history.points.filter((point) => point.date !== removedDate)
+  fs.writeJsonSync(historyPath, history, { spaces: '\t' })
+  fs.writeJsonSync(minHistoryPath, history)
+
+  const meta = fs.readJsonSync(metaPath)
+  meta.availableHistoryDates = meta.availableHistoryDates.filter((date) => date !== removedDate)
+  fs.writeJsonSync(metaPath, meta, { spaces: '\t' })
+  fs.writeJsonSync(minMetaPath, meta)
+}

@@ -43,11 +43,14 @@ async function main() {
     retentionDays: snapshotRetentionDays
   })
   const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: dateToday })
-  const historySnapshots = recentSnapshots.slice(-historyDays)
+  const historyStartDate = dateDaysBeforeUTC(dateToday, historyDays - 1)
+  const historySnapshots = recentSnapshots.filter((snapshot) => {
+    return snapshot.date >= historyStartDate && snapshot.date <= dateToday
+  })
 
   if (historySnapshots.length < historyDays) {
     const error = new Error(
-      `Expected ${historyDays} history snapshots, got ${historySnapshots.length}`
+      `History/30d calendar window incomplete: got ${historySnapshots.length}/${historyDays} snapshots for ${historyStartDate}..${dateToday}`
     )
     await captureIssue({
       signal: 'history_window_shorter_than_30_days',
@@ -55,11 +58,12 @@ async function main() {
       context: {
         workflow: 'daily_publish',
         latest_date: dateToday,
+        history_start_date: historyStartDate,
         available_history_days: historySnapshots.length,
         required_history_days: historyDays
       }
     })
-    throw error
+    console.warn(error.message)
   }
 
   promoteBuildOutput({

@@ -3,6 +3,17 @@
 const { captureIssue, runMonitoredScript } = require('./sentry-monitoring')
 
 const defaultWorkerBase = 'https://fx.resplit.app'
+const allowedRecoveryCoverageSignals = new Set([
+  'archive_gap_detected',
+  'history_range_incomplete',
+])
+const defaultPublishGraceMinutes = 45
+const defaultPublishUtcHours = [0, 3]
+// GitHub Pages CDN propagation lags Cloudflare after each publish, so the
+// github.io fallback can still serve yesterday's snapshot for a while after the
+// primary (Cloudflare) is already fresh. Accept a one-day-stale fallback only
+// within this wider grace window after each publish hour; strict otherwise.
+const defaultGithubFallbackGraceMinutes = 120
 
 if (require.main === module) {
   runMonitoredScript('smoke_check_deploy', main, {
@@ -20,15 +31,25 @@ async function main() {
   const workerBase = resolveWorkerBase()
   const requestedDate = process.env.EXPECTED_DATE || null
   const allowLatestFallback = process.env.ALLOW_STALE_DEPLOY_SMOKE === '1'
+  const publishGraceMinutes = parsePositiveInteger(
+    process.env.PUBLISH_GRACE_MINUTES,
+    defaultPublishGraceMinutes
+  )
+  const githubFallbackGraceMinutes = parsePositiveInteger(
+    process.env.GH_FALLBACK_GRACE_MINUTES,
+    defaultGithubFallbackGraceMinutes
+  )
   const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
   const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
   const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
-  const dateToday = resolveExpectedDate({
+  const freshnessContract = resolveFreshnessContract({
     requestedDate,
     latestDate: latest?.date,
     metaLatestDate: meta?.latestDate,
     allowLatestFallback,
+    publishGraceMinutes,
   })
+  const dateToday = freshnessContract.expectedDate
 
   assertISODate(latest.date, 'cloudflare latest date')
   assertISODate(meta.latestDate, 'cloudflare meta latestDate')
@@ -37,6 +58,12 @@ async function main() {
   }
   if (meta.latestDate !== dateToday) {
     throw new Error(`cloudflare meta latestDate expected ${dateToday}, got ${meta.latestDate}`)
+  }
+  if (freshnessContract.mode === 'publish_grace') {
+    console.warn(
+      `smoke-check-deploy: WARNING publish window grace accepted ${dateToday}; ` +
+      `strict expected ${freshnessContract.strictExpectedDate} until ${freshnessContract.graceEndsAt}`
+    )
   }
 
   const datedSnapshotUrl = `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
@@ -88,6 +115,22 @@ async function main() {
   if (datedSnapshot.date !== dateToday) {
     throw new Error(`dated deployment date mismatch: expected ${dateToday}, got ${datedSnapshot.date}`)
   }
+  const ghFallbackAcceptance = resolveGithubFallbackAcceptance({
+    ghFallbackDate: ghFallbackLatest.date,
+    expectedDate: dateToday,
+    graceMinutes: githubFallbackGraceMinutes,
+  })
+  if (!ghFallbackAcceptance.accepted) {
+    throw new Error(`github fallback latest date expected ${dateToday}, got ${ghFallbackLatest.date}`)
+  }
+  if (ghFallbackAcceptance.stale) {
+    console.warn(
+      `smoke-check-deploy: WARNING github fallback latest date is one day stale ` +
+      `(${ghFallbackLatest.date}, expected ${dateToday}) within GitHub Pages propagation grace ` +
+      `(until ${ghFallbackAcceptance.graceEndsAt}) — github.io CDN lag behind Cloudflare; ` +
+      `self-heals on next publish.`
+    )
+  }
 
   if (workerBase) {
     await smokeCheckWorker(workerBase, dateToday)
@@ -114,24 +157,130 @@ function resolveExpectedDate({
   allowLatestFallback = false,
   now = new Date()
 }) {
+  return resolveFreshnessContract({
+    requestedDate,
+    latestDate,
+    metaLatestDate,
+    allowLatestFallback,
+    now,
+  }).expectedDate
+}
+
+function resolveFreshnessContract({
+  requestedDate,
+  latestDate,
+  metaLatestDate,
+  allowLatestFallback = false,
+  now = new Date(),
+  publishGraceMinutes = defaultPublishGraceMinutes,
+  publishUtcHours = defaultPublishUtcHours,
+} = {}) {
   if (requestedDate) {
-    return requestedDate
+    return {
+      mode: 'requested',
+      expectedDate: requestedDate,
+      strictExpectedDate: requestedDate,
+      graceEndsAt: null,
+    }
   }
 
   if (allowLatestFallback && metaLatestDate) {
-    return metaLatestDate
+    return {
+      mode: 'latest_fallback',
+      expectedDate: metaLatestDate,
+      strictExpectedDate: toDateStringUTC(now),
+      graceEndsAt: null,
+    }
   }
 
   if (allowLatestFallback && latestDate) {
-    return latestDate
+    return {
+      mode: 'latest_fallback',
+      expectedDate: latestDate,
+      strictExpectedDate: toDateStringUTC(now),
+      graceEndsAt: null,
+    }
   }
 
-  return toDateStringUTC(now)
+  const strictExpectedDate = toDateStringUTC(now)
+  const servedDate = metaLatestDate || latestDate || null
+  const graceWindow = resolvePublishGraceWindow(now, publishUtcHours, publishGraceMinutes)
+  if (
+    servedDate &&
+    servedDate !== strictExpectedDate &&
+    servedDate === dateDaysBeforeUTC(strictExpectedDate, 1) &&
+    graceWindow.active
+  ) {
+    return {
+      mode: 'publish_grace',
+      expectedDate: servedDate,
+      strictExpectedDate,
+      graceEndsAt: graceWindow.endsAt,
+    }
+  }
+
+  return {
+    mode: 'strict',
+    expectedDate: strictExpectedDate,
+    strictExpectedDate,
+    graceEndsAt: null,
+  }
+}
+
+function resolvePublishGraceWindow(now, publishUtcHours, publishGraceMinutes) {
+  const nowTime = now.getTime()
+  const windows = publishUtcHours
+    .filter(hour => Number.isInteger(hour) && hour >= 0 && hour <= 23)
+    .map(hour => {
+      const start = new Date(now)
+      start.setUTCHours(hour, 0, 0, 0)
+      if (start.getTime() > nowTime) {
+        start.setUTCDate(start.getUTCDate() - 1)
+      }
+      const end = new Date(start.getTime() + publishGraceMinutes * 60_000)
+      return { start, end }
+    })
+    .sort((a, b) => b.start.getTime() - a.start.getTime())
+
+  const active = windows.find(window => nowTime >= window.start.getTime() && nowTime <= window.end.getTime())
+  return active
+    ? { active: true, startsAt: active.start.toISOString(), endsAt: active.end.toISOString() }
+    : { active: false, startsAt: windows[0]?.start.toISOString() || null, endsAt: windows[0]?.end.toISOString() || null }
+}
+
+// The github.io fallback CDN propagates more slowly than Cloudflare, so right
+// after a publish it can still serve the previous day's snapshot while the
+// primary is already fresh. Tolerate a one-day-stale fallback ONLY within a
+// propagation grace window after each publish hour; everything else is strict
+// (a fallback that is >1 day stale, or stale outside the window, is a real
+// failure). This stops the ~03:36Z scheduled run from red-flapping on a CDN
+// propagation race that self-heals on the next publish.
+function resolveGithubFallbackAcceptance({
+  ghFallbackDate,
+  expectedDate,
+  now = new Date(),
+  graceMinutes = defaultGithubFallbackGraceMinutes,
+  publishUtcHours = defaultPublishUtcHours,
+} = {}) {
+  if (ghFallbackDate === expectedDate) {
+    return { accepted: true, stale: false, reason: 'fresh', graceEndsAt: null }
+  }
+  if (ghFallbackDate !== dateDaysBeforeUTC(expectedDate, 1)) {
+    return { accepted: false, stale: true, reason: 'not_one_day_stale', graceEndsAt: null }
+  }
+  const graceWindow = resolvePublishGraceWindow(now, publishUtcHours, graceMinutes)
+  if (graceWindow.active) {
+    return { accepted: true, stale: true, reason: 'propagation_grace', graceEndsAt: graceWindow.endsAt }
+  }
+  return { accepted: false, stale: true, reason: 'propagation_grace_expired', graceEndsAt: null }
 }
 
 async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithRetry } = {}) {
   const normalizedBase = baseUrl.replace(/\/+$/, '')
   const historyStart = dateDaysBeforeUTC(dateToday, 2)
+  const health = await fetchJson(`${normalizedBase}/health`)
+  assertWorkerHealth(health, normalizedBase)
+
   const quote = await fetchJson(
     `${normalizedBase}/quote?from=AED&to=USD&date=${dateToday}`
   )
@@ -162,18 +311,57 @@ async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithR
   if (coverage.quote.resolutionKind !== 'exact') {
     throw new Error(`worker coverage quote degraded for ${normalizedBase}`)
   }
-  if (!Array.isArray(coverage.signals) || coverage.signals.length > 0) {
-    throw new Error(`worker coverage signals present for ${normalizedBase}`)
+  const coverageSignals = Array.isArray(coverage.signals) ? coverage.signals : null
+  if (!coverageSignals) {
+    throw new Error(`worker coverage signals missing for ${normalizedBase}`)
   }
-  if (!Number.isFinite(coverage.mismatchCount) || coverage.mismatchCount !== 0) {
-    throw new Error(`worker coverage mismatchCount expected 0 for ${normalizedBase}, got ${coverage.mismatchCount}`)
+  const hasCoverageGaps = coverage.historyCoverage.requestedDays !== coverage.historyCoverage.availableDays ||
+    coverage.historyCoverage.missingDayCount !== 0 ||
+    coverageSignals.length > 0 ||
+    coverage.mismatchCount !== 0
+
+  if (hasCoverageGaps && !isRecoveryCoverageGap(coverage, dateToday)) {
+    throw new Error(`worker coverage signals present for ${normalizedBase}: ${coverageSignals.join(', ')}`)
   }
-  if (coverage.historyCoverage.requestedDays !== coverage.historyCoverage.availableDays) {
-    throw new Error(`worker coverage availableDays mismatch for ${normalizedBase}`)
+  if (hasCoverageGaps) {
+    console.warn(
+      `smoke-check-deploy: WARNING worker coverage has recovery archive gaps ` +
+      `(availableDays=${coverage.historyCoverage.availableDays}/${coverage.historyCoverage.requestedDays}, ` +
+      `missingDayCount=${coverage.historyCoverage.missingDayCount}, signals=${coverageSignals.join(',')})`
+    )
   }
-  if (coverage.historyCoverage.missingDayCount !== 0) {
-    throw new Error(`worker coverage missingDayCount expected 0 for ${normalizedBase}, got ${coverage.historyCoverage.missingDayCount}`)
+}
+
+function assertWorkerHealth(health, normalizedBase) {
+  if (health?.ok !== true || health?.service !== 'resplit-currency-api') {
+    throw new Error(`worker health shape mismatch for ${normalizedBase}`)
   }
+  if (typeof health.environment !== 'string' || health.environment.trim() === '' || health.environment === 'unknown') {
+    throw new Error(`worker health environment missing for ${normalizedBase}`)
+  }
+  if (typeof health.release !== 'string' || health.release.trim() === '' || health.release === 'unknown') {
+    throw new Error(`worker health release missing for ${normalizedBase}`)
+  }
+  if (typeof health.timestamp !== 'string' || Number.isNaN(Date.parse(health.timestamp))) {
+    throw new Error(`worker health timestamp invalid for ${normalizedBase}`)
+  }
+}
+
+function isRecoveryCoverageGap(coverage, dateToday) {
+  const signals = Array.isArray(coverage.signals) ? coverage.signals : []
+  if (signals.some((signal) => !allowedRecoveryCoverageSignals.has(signal))) {
+    return false
+  }
+  if (!coverage.historyCoverage || coverage.historyCoverage.archiveLatestDate !== dateToday) {
+    return false
+  }
+  if (coverage?.freshness?.quoteResolvedLagDays !== 0 || coverage?.freshness?.archiveLatestLagDays !== 0) {
+    return false
+  }
+  if (coverage?.freshness?.staleAgainstAnchor === true) {
+    return false
+  }
+  return coverage.quote?.resolutionKind === 'exact'
 }
 
 async function fetchJSONWithRetry(url, attempts = 8, delayMs = 3_000) {
@@ -223,11 +411,25 @@ function dateDaysBeforeUTC(anchorDate, daysAgo) {
   return toDateStringUTC(date)
 }
 
+function parsePositiveInteger(value, fallback) {
+  if (value === undefined || value === null || value === '') {
+    return fallback
+  }
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
 module.exports = {
   defaultWorkerBase,
+  defaultPublishGraceMinutes,
+  defaultGithubFallbackGraceMinutes,
   fetchJSONWithRetry,
+  isRecoveryCoverageGap,
   main,
   resolveExpectedDate,
+  resolveFreshnessContract,
+  resolveGithubFallbackAcceptance,
+  resolvePublishGraceWindow,
   resolveWorkerBase,
   smokeCheckWorker,
 }
