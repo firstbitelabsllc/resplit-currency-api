@@ -55,6 +55,9 @@ export async function handleOcr(request, env) {
   if (method === 'OPTIONS') return handlePreflight(request, requestId)
 
   if (!env.ATTEST_KV) {
+    // A missing binding takes the whole OCR surface down, so it must be visible on
+    // the same dashboard as scan traffic — not just a silent 503 in CF analytics.
+    logOcrMonitoringEvent('error', { signal: 'ocr_misconfigured', reason: 'attest_kv_unbound', requestId }, env)
     return errorResponse('OCR_MISCONFIGURED', 'attest store not bound', 503, requestId, RESPONSE_HEADERS)
   }
 

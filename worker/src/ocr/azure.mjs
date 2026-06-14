@@ -11,7 +11,7 @@ const API_VERSION = '2024-11-30'
 
 export const OCR_PROVIDER = 'azure-di'
 
-export class AzureConfigError extends Error {
+class AzureConfigError extends Error {
   constructor(message) {
     super(message)
     this.name = 'AzureConfigError'
