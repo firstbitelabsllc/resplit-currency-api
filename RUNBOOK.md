@@ -218,7 +218,34 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 | Worker + web mirrors down | iOS falls through to Cloudflare Pages, then GitHub Pages. |
 | Worker + CDNs down | iOS app uses cached data from `FXRateCache`. Stale but functional. |
 
-### 4. Cloudflare token expired or revoked
+### 4. Receipt OCR scans spike or Azure spend must stop
+
+**Symptoms**: `/ocr/scan` traffic is abusive, Azure spend is rising, App Attest is degraded,
+or the team needs to stop receipt scans without touching FX quote routes.
+
+**Emergency stop**:
+Set the Cloudflare Worker variable `OCR_SCAN_KILL_SWITCH=enabled` for the deployed root
+worker (`resplit-fx`). When enabled, `POST /ocr/scan` returns `503 OCR_DISABLED` with
+`Retry-After: 300` before reading the image body, charging the daily cap, or calling Azure.
+
+**Verify**:
+```bash
+curl -i -X POST "https://fx.resplit.app/ocr/scan" \
+  -H "content-type: image/jpeg" \
+  -H "x-resplit-attest-soft-fail: true" \
+  --data-binary @/path/to/tiny-receipt.jpg
+```
+
+Pass criteria:
+- response status is `503`
+- JSON body has `{"error":"OCR_DISABLED", ...}`
+- Cloudflare logs include `[OCR_MONITORING]` with `status:"disabled"`
+- FX `/quote`, `/history`, and `/coverage` remain unaffected
+
+**Re-enable**: unset the variable, or set it to `off`, then rerun the Worker smoke plus one
+controlled `/ocr/scan` proof.
+
+### 5. Cloudflare token expired or revoked
 
 **Symptoms**: Pipeline runs but Cloudflare deploy step fails.
 
@@ -231,7 +258,7 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
    ```
 4. Re-trigger the workflow.
 
-### 5. Upstream data source dies permanently
+### 6. Upstream data source dies permanently
 
 **Symptoms**: `open.er-api.com` returns errors for multiple days.
 
@@ -240,7 +267,7 @@ gh run list --repo firstbitelabsllc/resplit-currency-api --limit 7
 2. **Add a paid source** — sign up for a paid API, add the key as a GitHub secret, update the fetch function.
 3. **Fall back to fawazahmed0 CDN** — the original upstream still publishes daily. Change iOS URLs back temporarily.
 
-### 6. Cloudflare Pages warns about `pages_build_output_dir`
+### 7. Cloudflare Pages warns about `pages_build_output_dir`
 
 **Symptoms**: the workflow stays green, but each `wrangler pages deploy` step warns that
 `wrangler.jsonc` is missing `pages_build_output_dir`.
@@ -267,7 +294,7 @@ npx wrangler pages download config resplit-currency-api
 Then review the generated Pages config against dashboard reality before replacing or
 splitting the current Worker-focused config.
 
-### 7. Side-load upload or list fails
+### 8. Side-load upload or list fails
 
 **Symptoms**: iOS sideload client gets 502 `SIDELOAD_FAILED`, 401/403 auth errors,
 or upload returns `SIZE_MISMATCH`/`HASH_MISMATCH`.

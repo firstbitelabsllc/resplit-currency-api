@@ -34,7 +34,7 @@ const SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
-const KV_EXTRAS_ENABLED_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
+const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 
 const sha256Hex = async (bytes) => {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
@@ -116,6 +116,10 @@ async function handleScan(request, env, requestId) {
   const assertionB64 = request.headers.get('x-resplit-attest-assertion') || ''
   const contentType = request.headers.get('content-type') || 'image/jpeg'
 
+  if (scanKillSwitchEnabled(env)) {
+    return scanDisabled(env, { scanId, requestId, clientVersion })
+  }
+
   const imageBytes = new Uint8Array(await request.arrayBuffer())
   if (imageBytes.length === 0) {
     return errorResponse('BAD_REQUEST', 'empty image body', 400, requestId, RESPONSE_HEADERS)
@@ -192,7 +196,15 @@ function envelope({ status, raw, scanId, kvExtras }) {
 }
 
 function keyValueExtrasEnabled(env) {
-  return KV_EXTRAS_ENABLED_VALUES.has(String(env.AZURE_OCR_KV_EXTRAS || '').trim().toLowerCase())
+  return enabledEnvFlag(env.AZURE_OCR_KV_EXTRAS)
+}
+
+function scanKillSwitchEnabled(env) {
+  return enabledEnvFlag(env.OCR_SCAN_KILL_SWITCH)
+}
+
+function enabledEnvFlag(value) {
+  return ENABLED_ENV_VALUES.has(String(value || '').trim().toLowerCase())
 }
 
 // Returns { result, kvExtras } so the envelope can distinguish "no adjustments on
@@ -276,6 +288,16 @@ async function rateLimited(env, { scanId, attest, requestId, clientVersion }) {
   }, env)
   const body = JSON.stringify(envelope({ status: 'rate_limited', raw: null, scanId }))
   return new Response(body, { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', 'x-request-id': requestId } })
+}
+
+function scanDisabled(env, { scanId, requestId, clientVersion }) {
+  logOcrMonitoringEvent('warn', {
+    signal: 'scan', phase: 'scan', status: 'disabled', scanId, requestId, client_version: clientVersion,
+  }, env)
+  return errorResponse('OCR_DISABLED', 'OCR scan temporarily disabled', 503, requestId, {
+    ...RESPONSE_HEADERS,
+    'Retry-After': '300',
+  })
 }
 
 // Sliding daily counter in KV, denominated in Azure analyze calls. Returns true

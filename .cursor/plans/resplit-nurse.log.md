@@ -1,5 +1,26 @@
 # Resplit Nurse Log
 
+## 2026-06-14 21:34 EDT / 2026-06-15 01:34 UTC
+
+- `GO/code-proven` for the OCR wallet guard on branch `codex/a24-ocr-kill-switch-20260615`; `NO-GO/deploy-proof-pending` only for the default live FX smoke because UTC has rolled to `2026-06-15` while production is still serving the expected pre-03:00 UTC `2026-06-14` publish date.
+- Shipped delta: added `OCR_SCAN_KILL_SWITCH=enabled` to the `/ocr/scan` hot path. When enabled, the Worker returns `503 OCR_DISABLED` with `Retry-After: 300` before reading the image body, charging the daily cap, or calling Azure; added structured `[OCR_MONITORING]` `status:"disabled"` telemetry; documented the emergency stop in `RUNBOOK.md`.
+- Fresh proof:
+  - `node --test tests/ocr-router.test.js` -> `16/16` OCR router tests green, including no-Azure/no-counter kill switch, unreadable-body early return, and disabled telemetry coverage.
+  - `npm run check` -> generated `2026-06-15`, `validate:release` OK, `248/248` tests green.
+  - `npx wrangler deploy --config wrangler.jsonc --env="" --dry-run` -> bundle OK; bindings include `ATTEST_KV`, `SIDELOAD_R2`, `ASSET_BASE_URL`, `SENTRY_ENVIRONMENT`, `AZURE_OCR_ENDPOINT`.
+  - `npm run smoke:deploy` -> expected live freshness failure: `cloudflare latest date expected 2026-06-15, got 2026-06-14` before the 03:00 UTC refresh.
+  - `EXPECTED_DATE=2026-06-14 npm run smoke:deploy` -> `OK (date=2026-06-14, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `git diff --check` -> clean.
+- Known / unknown / forgotten work surfaced:
+  - known: A24's rate-limit half was already on `origin/main` and covered by the soft-fail/IP cap plus key-value-extras Azure-unit tests; this slice closes the missing hard kill switch.
+  - unknown: the switch is not live until this branch merges and deploys through the normal Worker release path.
+  - forgotten: default live smoke can read red between UTC midnight and the 03:00 UTC refresh; use `EXPECTED_DATE=<current deployed date>` only to document that specific window, not to hide stale data after the publish window.
+- Exact next slice: push/merge this branch, let GitHub Actions deploy the Worker, then rerun `npm run smoke:deploy` after the 03:00 UTC publish refresh or with the exact deployed date if still inside the documented window. After merge/deploy, update the iOS Authority Store A24 row from open-wallet to on-main/deploy-pending or shipped with the Worker release hash.
+- Current build boundary: branch base `origin/main` `3c3f7db`; FX production publish date `2026-06-14`; new OCR kill switch not deployed yet.
+- Latency: `hygiene` `8m`, `discovery` `10m`, `implementation` `8m`, `proof/wait` `8m`.
+
+<promise>KEEP-GOING: merge/deploy OCR kill switch</promise>
+
 ## 2026-06-10 03:28 EDT
 
 - `NO-GO` overall launch until AKig has merged/deployed FX key-value OCR proof, the opt-in Worker env is enabled, and a real TestFlight scan observes discount/credit extras. `PR-proven` for the FX Worker code path on branch `codex/ocr-kv-layout-20260610`.

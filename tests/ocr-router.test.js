@@ -184,6 +184,57 @@ test('per-device (soft-fail/IP) cap returns 429 with rate_limited envelope', asy
   assert.equal(azureCalls.submit, 0, 'capped request must not reach Azure')
 })
 
+test('kill switch returns 503 before billing Azure or touching the daily counter', async () => {
+  stubAzure()
+  const env = makeEnv({ OCR_SCAN_KILL_SWITCH: 'enabled' })
+  const day = new Date().toISOString().slice(0, 10)
+  const res = await handleOcr(scanRequest(new Uint8Array([8, 8, 8])), env)
+  assert.equal(res.status, 503)
+  assert.equal(res.headers.get('retry-after'), '300')
+  const body = await res.json()
+  assert.equal(body.error, 'OCR_DISABLED')
+  assert.equal(azureCalls.submit, 0, 'disabled scans must not reach Azure')
+  assert.equal(await env.ATTEST_KV.get(`count:ip:unknown:${day}`), null, 'disabled scans must not spend cap units')
+})
+
+test('kill switch returns before reading the request body', async () => {
+  const env = makeEnv({ OCR_SCAN_KILL_SWITCH: 'enabled' })
+  const unreadableBody = new ReadableStream({
+    pull() {
+      throw new Error('disabled OCR must not consume the image body')
+    },
+  })
+  const req = new Request('https://fx.resplit.app/ocr/scan', {
+    method: 'POST',
+    headers: { 'content-type': 'image/jpeg', 'x-resplit-attest-soft-fail': 'true' },
+    body: unreadableBody,
+    duplex: 'half',
+  })
+
+  const res = await handleOcr(req, env)
+  assert.equal(res.status, 503)
+  const body = await res.json()
+  assert.equal(body.error, 'OCR_DISABLED')
+})
+
+test('kill switch emits structured OCR monitoring for the disabled scan state', async () => {
+  const env = makeEnv({ OCR_SCAN_KILL_SWITCH: 'enabled' })
+  const origWarn = console.warn
+  const lines = []
+  console.warn = (line) => lines.push(line)
+  try {
+    await handleOcr(scanRequest(new Uint8Array([8, 8, 8])), env)
+  } finally {
+    console.warn = origWarn
+  }
+  const monitoringLine = lines.find((l) => typeof l === 'string' && l.startsWith('[OCR_MONITORING] '))
+  assert.ok(monitoringLine, 'disabled scans must emit an [OCR_MONITORING] line')
+  const json = JSON.parse(monitoringLine.replace('[OCR_MONITORING] ', ''))
+  assert.equal(json.signal, 'scan')
+  assert.equal(json.status, 'disabled')
+  assert.equal(json.domain, 'ocr')
+})
+
 test('missing ATTEST_KV binding is a 503 misconfiguration, not a crash', async () => {
   const env = makeEnv({ ATTEST_KV: undefined })
   const res = await handleOcr(scanRequest(new Uint8Array([1])), env)
