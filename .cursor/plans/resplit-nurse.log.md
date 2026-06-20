@@ -1,5 +1,45 @@
 # Resplit Nurse Log
 
+## 2026-06-20 02:49 EDT / 2026-06-20 06:49 UTC
+
+- `GO/local-eve-receiver-proven` for branch
+  `codex/eve-studio-resplit-currency-api-20260620`; `NO-GO/merge-replay-pending`
+  for claiming trunk is Eve-powered until the branch is reviewed, merged, and
+  re-proved from `origin/main`.
+- Shipped delta: added a local-only Eve cockpit under `agent/`, wrapper skills
+  for `auto`, `vidux`, `moussey`, `resplit-currency-api`, and optional
+  `glm-local`, a read-only `fx-readiness` subagent, root `npm run eve:*`
+  scripts, generated-artifact ignores, and `scripts/eve-capability-check.mjs`.
+  Copied the existing `vidux/pre-launch-architecture/PLAN.md` into the clean
+  branch so future agents can rehydrate project authority from disk.
+- Fresh proof:
+  - `npm install -D --save-exact eve@0.11.5 ai@7.0.0-beta.178 zod@4.4.3` -> lockfile updated; npm audit reports 12 existing/new dependency-tree vulnerabilities.
+  - `npm ci --dry-run` -> clean.
+  - `npm run eve:capabilities -- --json` -> `resplit_currency_api_eve_installed_local_only`, no errors or warnings.
+  - `npm run eve:info -- --json` -> status `ready`, 0 errors, 0 warnings; skills: `auto`, `glm-local`, `moussey`, `resplit-currency-api`, `vidux`.
+  - `npm run eve:build` -> `.output` built successfully.
+  - `node --check scripts/eve-capability-check.mjs` -> clean.
+  - `git diff --check` -> clean.
+  - `npm run check` -> generated `2026-06-20`, `validate:release` OK, `248/248` tests green.
+  - `npm run smoke:deploy` -> `OK (date=2026-06-20, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+- Known / unknown / forgotten work surfaced:
+  - known: the attached root checkout remains dirty on
+    `codex/w2-5-fx-manifest-source-custody` and was not mutated.
+  - known: worktree GC found dirty/open historical worktrees requiring owner
+    review before cleanup; no automated removal happened.
+  - unknown: CI/PR status until the branch is pushed and GitHub checks settle.
+  - forgotten: clean `origin/main` did not carry the Vidux plan even though the
+    dirty root checkout did; this branch restores that plan context for Eve.
+- Exact next slice: push the branch, open a draft PR, emit ledger proof, update
+  the command-center receipt, then after review/merge re-run the Eve and Ralph
+  proof commands from merged `origin/main`.
+- Current build boundary: branch base `origin/main` `5947eafb`; FX production
+  publish date `2026-06-20`; no Cloudflare/GCP deploy, workflow dispatch,
+  infrastructure mutation, credential handling, model/API call, production
+  snapshot publication, or remote-machine mutation happened.
+
+<promise>KEEP-GOING: push Eve receiver PR and re-prove after merge</promise>
+
 ## 2026-06-14 21:34 EDT / 2026-06-15 01:34 UTC
 
 - `GO/code-proven` for the OCR wallet guard on branch `codex/a24-ocr-kill-switch-20260615`; `NO-GO/deploy-proof-pending` only for the default live FX smoke because UTC has rolled to `2026-06-15` while production is still serving the expected pre-03:00 UTC `2026-06-14` publish date.
