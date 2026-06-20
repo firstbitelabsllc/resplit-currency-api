@@ -23,6 +23,15 @@
   No Cloudflare/GCP deploy, infrastructure mutation, workflow dispatch,
   credential handling, model/API call, production publish, or remote-machine
   mutation happened.
+- 2026-06-20: Studio re-proved the same Eve receiver branch as a true-integration
+  candidate for PR `#24`. Hardened `scripts/eve-capability-check.mjs` so it now
+  verifies installed `node_modules` packages plus `node_modules/.bin/eve`, then
+  re-ran install, lockfile dry-run, Eve capability/info/build, `npm run check`
+  (`248/248`), `npm run smoke:deploy`, GitHub run list, and live
+  `fx.resplit.app` quote/coverage probes. Moussey handoff
+  `d4e3f5c5-0717-4e2d-9329-6460b84bb0f8` is staged for verifier pickup.
+  Non-claim: `origin/main` is still not Eve-powered until PR `#24` is reviewed,
+  merged or replayed, and re-proved from trunk.
 
 ## Purpose
 

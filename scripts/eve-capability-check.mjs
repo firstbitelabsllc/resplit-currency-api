@@ -41,6 +41,10 @@ const requiredDeps = {
   zod: "4.4.3",
 };
 
+const requiredBinaries = [
+  "node_modules/.bin/eve",
+];
+
 const expectedBranchFragments = [
   "codex/eve-studio-resplit-currency-api-20260620",
 ];
@@ -107,6 +111,20 @@ for (const script of requiredScripts) {
 for (const [name, version] of Object.entries(requiredDeps)) {
   const actual = packageJson.dependencies?.[name] ?? packageJson.devDependencies?.[name];
   if (actual !== version) errors.push(`Dependency ${name} must be ${version}, got ${actual ?? "missing"}`);
+
+  const installedPackagePath = path.join("node_modules", name, "package.json");
+  if (!exists(installedPackagePath)) {
+    errors.push(`Dependency ${name}@${version} is not installed; run npm install --package-lock=false`);
+  } else {
+    const installed = readJson(installedPackagePath);
+    if (installed.version !== version) {
+      errors.push(`Installed dependency ${name} must be ${version}, got ${installed.version ?? "unknown"}`);
+    }
+  }
+}
+
+for (const binary of requiredBinaries) {
+  if (!exists(binary)) errors.push(`Required local binary is missing: ${binary}`);
 }
 
 const searchable = requiredFiles.filter(

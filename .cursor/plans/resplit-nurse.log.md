@@ -1,5 +1,53 @@
 # Resplit Nurse Log
 
+## 2026-06-20 09:42 EDT / 2026-06-20 13:42 UTC
+
+- `GO/pr-ready-local-proof` for Eve receiver PR `#24`; `NO-GO/trunk-powered`
+  until the branch is reviewed, merged or replayed, and re-proved from
+  `origin/main`.
+- Shipped delta: hardened `scripts/eve-capability-check.mjs` to fail when the
+  required Eve dependency packages are missing from `node_modules` or when
+  `node_modules/.bin/eve` is absent. Updated the repo-owned Vidux plan and Eve
+  receipt with the true-integration proof boundary.
+- Fresh proof:
+  - `git fetch origin --prune` and branch comparison showed the receiver branch
+    current with `origin/main` before this reproof commit.
+  - `npm install --package-lock=false` -> audited 125 packages, 0 vulnerabilities.
+  - `npm ci --dry-run` -> clean.
+  - `npm ls eve ai zod --depth=0` -> `eve@0.11.5`, `ai@7.0.0-beta.178`,
+    `zod@4.4.3`.
+  - `node --check scripts/eve-capability-check.mjs` -> clean.
+  - `git diff --check` -> clean.
+  - `npm run eve:capabilities -- --json` -> `ok: true`, 0 errors, 0 warnings.
+  - `npm run eve:info -- --json` -> status `ready`, 0 errors, 0 warnings.
+  - `npm run eve:build` -> `.output` built successfully.
+  - `npm run check` -> generated `2026-06-20`, package validation OK, `248/248`
+    tests green.
+  - `npm run smoke:deploy` -> `OK (date=2026-06-20, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `gh run list --repo firstbitelabsllc/resplit-currency-api --limit 3` -> latest
+    pages deployment, scheduled currency-rate update, and PR CodeQL runs were
+    completed/success.
+  - Live quote and coverage probes against `fx.resplit.app` returned exact
+    `2026-06-20` data, `mismatchCount: 0`, and freshness lags of 0 days.
+- Moussey coding handoff `d4e3f5c5-0717-4e2d-9329-6460b84bb0f8` is staged for a
+  verifier lane and was read back from the local API.
+- Known / unknown / forgotten work surfaced:
+  - known: the attached root checkout remains dirty on
+    `codex/w2-5-fx-manifest-source-custody` and was not mutated.
+  - known: PR `#24` had no reviews or comments at reproof time.
+  - unknown: refreshed GitHub checks after the reproof commit until the branch is
+    pushed and Actions/Graphite settle.
+- Exact next slice: push this reproof commit, mark PR `#24` ready for review,
+  wait for refreshed checks, emit ledger proof, then after review/merge re-run
+  Eve and Ralph proof commands from merged `origin/main`.
+- Current build boundary: branch base `origin/main` `5947eafb`; pre-reproof head
+  `44373510`; FX production publish date `2026-06-20`; no Cloudflare/GCP deploy,
+  workflow dispatch, infrastructure mutation, credential handling, hosted model
+  call, production snapshot publication, remote-machine mutation, or dirty-root
+  mutation happened.
+
+<promise>KEEP-GOING: push PR-ready Eve receiver proof and re-prove after merge</promise>
+
 ## 2026-06-20 02:49 EDT / 2026-06-20 06:49 UTC
 
 - `GO/local-eve-receiver-proven` for branch
