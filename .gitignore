@@ -7,3 +7,5 @@ package/
 !.agent-ledger/
 !.agent-ledger/activity.jsonl
 !.agent-ledger/hot-files.md
+.eve/
+.output/
