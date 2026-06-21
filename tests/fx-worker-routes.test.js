@@ -151,6 +151,32 @@ test('worker quote route returns request id on invalid query', async () => {
   })
 })
 
+test('worker health route returns no-store service metadata', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      headers: { 'x-request-id': 'req-health' },
+    }),
+    {
+      SENTRY_ENVIRONMENT: 'production',
+      SENTRY_RELEASE: 'release-123',
+    }
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-request-id'), 'req-health')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+
+  const body = await response.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.service, 'resplit-currency-api')
+  assert.equal(body.environment, 'production')
+  assert.equal(body.release, 'release-123')
+  assert.equal(typeof body.timestamp, 'string')
+  assert.ok(!Number.isNaN(Date.parse(body.timestamp)))
+})
+
 test('worker quote route rejects impossible calendar dates', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 

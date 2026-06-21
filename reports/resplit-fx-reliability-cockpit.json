@@ -1,0 +1,2983 @@
+{
+  "generatedAt": "2026-06-20T18:42:25.174Z",
+  "title": "Resplit FX Reliability Cockpit",
+  "repo": {
+    "name": "resplit-currency-api",
+    "path": "/Users/leokwan/Development/resplit-currency-api",
+    "git": {
+      "status": "dirty",
+      "branch": "codex/w2-5-fx-manifest-source-custody",
+      "head": "46c8f62fbf94",
+      "originMain": "5947eafbf009",
+      "shortStatus": "## codex/w2-5-fx-manifest-source-custody...origin/codex/w2-5-fx-manifest-source-custody\n M .cursor/plans/resplit-nurse.log.md\nA  .firstbite/source-promotion-decisions.json\n M .gitignore\n M INBOX.md\n M README.md\n M RUNBOOK.md\nM  currscript.js\n M package-lock.json\nMM package.json\nA  scripts/audit-history-backfill-sources.js\nA  scripts/capture-loaded-mcp-probe.js\nA  scripts/reliability-cockpit.js\nM  scripts/smoke-check-deploy.js\nA  scripts/source-promotion-packet.js\nA  scripts/trust-preflight.js\nM  scripts/validate-package.js\nA  scripts/verify-grafana-otel-smoke.js\n D snapshot-archive/2025-05-12.json\n D snapshot-archive/2025-05-13.json\n D snapshot-archive/2025-05-14.json\n D snapshot-archive/2025-05-15.json\n D snapshot-archive/2025-05-16.json\n D snapshot-archive/2025-05-17.json\n D snapshot-archive/2025-05-18.json\n D snapshot-archive/2025-05-19.json\n D snapshot-archive/2025-05-20.json\n D snapshot-archive/2025-05-21.json\n D snapshot-archive/2025-05-22.json\n D snapshot-archive/2025-05-23.json\n D snapshot-archive/2025-05-24.json\n D snapshot-archive/2025-05-25.json\n D snapshot-archive/2025-05-26.json\nA  tests/audit-history-backfill-sources.test.js\nA  tests/capture-loaded-mcp-probe.test.js\n M tests/fx-worker-routes.test.js\nA  tests/reliability-cockpit.test.js\nM  tests/smoke-check-deploy.test.js\nA  tests/source-promotion-packet.test.js\nA  tests/trust-preflight.test.js\nM  tests/validate-package.test.js\nA  tests/verify-grafana-otel-smoke.test.js\n M worker/src/index.mjs\n M wrangler.jsonc\n?? .agents/\n?? docs/\n?? scripts/backfill-history-snapshots.js\n?? snapshot-archive/2026-05-12.json\n?? snapshot-archive/2026-05-13.json\n?? snapshot-archive/2026-05-14.json\n?? snapshot-archive/2026-05-15.json\n?? snapshot-archive/2026-05-16.json\n?? snapshot-archive/2026-05-17.json\n?? snapshot-archive/2026-05-18.json\n?? snapshot-archive/2026-05-19.json\n?? snapshot-archive/2026-05-20.json\n?? snapshot-archive/2026-05-21.json\n?? snapshot-archive/2026-05-22.json\n?? snapshot-archive/2026-05-23.json\n?? snapshot-archive/2026-05-24.json\n?? snapshot-archive/2026-05-25.json\n?? snapshot-archive/2026-05-26.json\n?? tests/backfill-history-snapshots.test.js\n?? tests/ocr-attest.test.js\n?? tests/ocr-monitoring.test.js\n?? tests/ocr-router.test.js\n?? vidux/pre-launch-architecture/\n?? worker/src/ocr/",
+      "dirtyCount": 67,
+      "behindOriginMain": 53
+    }
+  },
+  "verdict": {
+    "status": "red",
+    "label": "RED - missing required trust contract"
+  },
+  "localCi": {
+    "status": "yellow",
+    "manifestPath": "/Users/leokwan/Development/resplit-currency-api/.firstbite/local-ci.json",
+    "manifestPresent": true,
+    "repoKey": "resplit_currency_api",
+    "display": "Resplit FX",
+    "lanes": [
+      {
+        "id": "resplit_currency_api_unit",
+        "kind": "unit",
+        "command": "npm ci && npm run generate && npm run test",
+        "timeoutMs": 1200000,
+        "note": null
+      },
+      {
+        "id": "resplit_currency_api_integration",
+        "kind": "integration",
+        "command": "npm ci && npm run check:publish",
+        "timeoutMs": 1500000,
+        "note": null
+      },
+      {
+        "id": "resplit_currency_api_trust_preflight",
+        "kind": "integration",
+        "command": "npm ci && npm run trust:preflight",
+        "timeoutMs": 1500000,
+        "note": "Launch-trust lane: generates local cockpit, Cloudflare destination, Grafana, source-promotion, and local-agent trust artifacts. Exit 1 is expected yellow while proof is incomplete; exit 2 remains red/fail. Do not treat endpoint smoke as launch-green without this lane."
+      },
+      {
+        "id": "resplit_currency_api_ui",
+        "kind": "ui",
+        "command": "npm ci && npm run smoke:deploy",
+        "timeoutMs": 1500000,
+        "note": "Live Worker/CDN smoke; this repo has no browser UI, so the UI lane is the user-facing FX contract smoke. The smoke script keeps strict date checks outside a narrow publish grace window and emits a warning when grace is active."
+      }
+    ],
+    "missingKinds": [],
+    "proofFreshness": {
+      "status": "yellow",
+      "ageMinutes": null,
+      "summary": "No execute report was found for this repo."
+    },
+    "proofManifestMatch": {
+      "status": "yellow",
+      "missingLaneIds": [
+        "resplit_currency_api_unit",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui"
+      ],
+      "mismatches": [],
+      "unknownLaneIds": [],
+      "summary": "No MCP proof exists to compare against the manifest commands."
+    },
+    "currentManifestProof": null,
+    "diagnosticStatus": "green",
+    "diagnosticSummary": "",
+    "mcpProof": {
+      "reportRoot": "/Users/leokwan/.agent-ledger/firstbite-local-ci-mcp",
+      "searchedReports": 12,
+      "latest": null,
+      "latestComplete": null,
+      "latestCleanComplete": null,
+      "latestPartial": null,
+      "history": []
+    },
+    "loadedMcpProbe": {
+      "path": "/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json",
+      "expectedRepo": "resplit_currency_api",
+      "expectedLaneIds": [
+        "resplit_currency_api_unit",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui"
+      ],
+      "checkedAt": "2026-05-25T08:09:51.376Z",
+      "ageMinutes": 38073,
+      "source": "previous-loaded-mcp-artifact:reports/firstbite-loaded-mcp-lanes.json",
+      "freshnessStatus": "yellow",
+      "freshnessSummary": "Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary.",
+      "catalogVersion": null,
+      "repoPresent": false,
+      "expectedLaneCount": 4,
+      "repoKeys": [
+        "moussey",
+        "resplit_ios",
+        "resplit_web",
+        "strongyes_web"
+      ],
+      "groupKeys": [
+        "all_critical",
+        "all_integration",
+        "all_ui",
+        "all_unit",
+        "critical_fast",
+        "moussey_all",
+        "resplit_ios_all",
+        "resplit_web_all",
+        "strongyes_web_all"
+      ],
+      "allLaneIds": [
+        "moussey_integration",
+        "moussey_ui",
+        "moussey_unit",
+        "resplit_ios_integration",
+        "resplit_ios_ui",
+        "resplit_ios_unit",
+        "resplit_web_integration",
+        "resplit_web_ui",
+        "resplit_web_unit",
+        "strongyes_web_integration",
+        "strongyes_web_ui",
+        "strongyes_web_unit"
+      ],
+      "laneCount": 12,
+      "loadedLaneIds": [],
+      "missingLaneIds": [
+        "resplit_currency_api_unit",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui"
+      ],
+      "restartHint": "MCP clients keep long-lived stdio processes; restart Codex/Cursor if this catalog is missing current repo-manifest lanes.",
+      "status": "red",
+      "summary": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s)."
+    },
+    "repoBackedMcpProbe": {
+      "packageDir": "/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci",
+      "command": "npm run --silent call -- list_lanes {}",
+      "expectedRepo": "resplit_currency_api",
+      "expectedLaneIds": [
+        "resplit_currency_api_unit",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui"
+      ],
+      "checkedAt": "2026-06-20T18:42:25.174Z",
+      "ageMinutes": 0,
+      "source": "repo-backed package:list_lanes",
+      "catalogVersion": "repo-manifest-v2",
+      "repoPresent": true,
+      "expectedLaneCount": 4,
+      "repoKeys": [
+        "moussey",
+        "resplit_currency_api",
+        "resplit_ios",
+        "resplit_web",
+        "strongyes_web",
+        "trysnowcubes_web"
+      ],
+      "groupKeys": [
+        "all_critical",
+        "all_integration",
+        "all_lint",
+        "all_ui",
+        "all_unit",
+        "critical_fast",
+        "moussey_all",
+        "resplit_currency_api_all",
+        "resplit_ios_all",
+        "resplit_web_all",
+        "snowcubes_all",
+        "snowcubes_critical",
+        "strongyes_web_all",
+        "trysnowcubes_web_all"
+      ],
+      "allLaneIds": [
+        "moussey_coding_console",
+        "moussey_integration",
+        "moussey_scenarios",
+        "moussey_snowcubes_invoice",
+        "moussey_snowcubes_readiness",
+        "moussey_ui",
+        "moussey_unit",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui",
+        "resplit_currency_api_unit",
+        "resplit_ios_integration",
+        "resplit_ios_lint",
+        "resplit_ios_receipt_splitter_unit",
+        "resplit_ios_ui",
+        "resplit_ios_ui_full",
+        "resplit_ios_unit",
+        "resplit_web_integration",
+        "resplit_web_ui",
+        "resplit_web_unit",
+        "strongyes_web_dsa_chat",
+        "strongyes_web_dsa_code_execution",
+        "strongyes_web_dsa_code_suggest",
+        "strongyes_web_dsa_journey",
+        "strongyes_web_dsa_mcp",
+        "strongyes_web_dsa_part2",
+        "strongyes_web_dsa_tabs",
+        "strongyes_web_integration",
+        "strongyes_web_launch_guest",
+        "strongyes_web_ui",
+        "strongyes_web_unit",
+        "trysnowcubes_reviews_worker",
+        "trysnowcubes_web_invoice",
+        "trysnowcubes_web_reviews"
+      ],
+      "laneCount": 34,
+      "loadedLaneIds": [
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui",
+        "resplit_currency_api_unit"
+      ],
+      "missingLaneIds": [],
+      "manifestPortability": {
+        "expected_repo_count": 6,
+        "committed_repo_count": 6,
+        "uncommitted_repo_count": 0,
+        "missing_repo_count": 0,
+        "fresh_clone_repo_count": 6,
+        "fresh_clone_missing_count": 0,
+        "fresh_clone_ready": true,
+        "fresh_clone_remote_confirmed_count": 0,
+        "fresh_clone_unverified_count": 6,
+        "fresh_clone_remote_confirmed_ready": false,
+        "remote_confirmation_proof": null,
+        "ready": true,
+        "rule": "Fresh-clone portability requires .firstbite/local-ci.json on origin/main; active checkout readiness additionally requires the file to be tracked and clean in the current repo path. Remote-confirmed readiness requires a fresh remote confirmation, not just a local remote-tracking ref."
+      },
+      "manifestStates": [
+        {
+          "repo": "resplit_web",
+          "repo_display": "Resplit Web",
+          "repo_path": "/Users/leokwan/Development/resplit-web",
+          "declaration_path": "/Users/leokwan/Development/resplit-web/.firstbite/local-ci.json",
+          "exists": true,
+          "is_git": true,
+          "tracked": true,
+          "porcelain": null,
+          "origin_main_has_manifest": true,
+          "origin_main_status": "present",
+          "origin_main_source_status": "local_tracking_unverified",
+          "origin_main_source_reason": "manifest was found in the local origin/main remote-tracking ref; this read-only catalog did not freshly confirm the remote",
+          "origin_main_local_head": "bff06d077844",
+          "origin_main_remote_head": null,
+          "portability_status": "committed"
+        },
+        {
+          "repo": "resplit_ios",
+          "repo_display": "Resplit iOS",
+          "repo_path": "/Users/leokwan/Development/resplit-ios",
+          "declaration_path": "/Users/leokwan/Development/resplit-ios/.firstbite/local-ci.json",
+          "exists": true,
+          "is_git": true,
+          "tracked": true,
+          "porcelain": null,
+          "origin_main_has_manifest": true,
+          "origin_main_status": "present",
+          "origin_main_source_status": "local_tracking_unverified",
+          "origin_main_source_reason": "manifest was found in the local origin/main remote-tracking ref; this read-only catalog did not freshly confirm the remote",
+          "origin_main_local_head": "14911a90d190",
+          "origin_main_remote_head": null,
+          "portability_status": "committed"
+        },
+        {
+          "repo": "resplit_currency_api",
+          "repo_display": "Resplit FX",
+          "repo_path": "/Users/leokwan/Development/resplit-currency-api",
+          "declaration_path": "/Users/leokwan/Development/resplit-currency-api/.firstbite/local-ci.json",
+          "exists": true,
+          "is_git": true,
+          "tracked": true,
+          "porcelain": null,
+          "origin_main_has_manifest": true,
+          "origin_main_status": "present",
+          "origin_main_source_status": "local_tracking_unverified",
+          "origin_main_source_reason": "manifest was found in the local origin/main remote-tracking ref; this read-only catalog did not freshly confirm the remote",
+          "origin_main_local_head": "5947eafbf009",
+          "origin_main_remote_head": null,
+          "portability_status": "committed"
+        },
+        {
+          "repo": "strongyes_web",
+          "repo_display": "StrongYes Web",
+          "repo_path": "/Users/leokwan/Development/strongyes-web",
+          "declaration_path": "/Users/leokwan/Development/strongyes-web/.firstbite/local-ci.json",
+          "exists": true,
+          "is_git": true,
+          "tracked": true,
+          "porcelain": null,
+          "origin_main_has_manifest": true,
+          "origin_main_status": "present",
+          "origin_main_source_status": "local_tracking_unverified",
+          "origin_main_source_reason": "manifest was found in the local origin/main remote-tracking ref; this read-only catalog did not freshly confirm the remote",
+          "origin_main_local_head": "5469f8a27451",
+          "origin_main_remote_head": null,
+          "portability_status": "committed"
+        },
+        {
+          "repo": "trysnowcubes_web",
+          "repo_display": "TrySnowCubes Web",
+          "repo_path": "/Users/leokwan/Development/trysnowcubes-web",
+          "declaration_path": "/Users/leokwan/Development/trysnowcubes-web/.firstbite/local-ci.json",
+          "exists": true,
+          "is_git": true,
+          "tracked": true,
+          "porcelain": null,
+          "origin_main_has_manifest": true,
+          "origin_main_status": "present",
+          "origin_main_source_status": "local_tracking_unverified",
+          "origin_main_source_reason": "manifest was found in the local origin/main remote-tracking ref; this read-only catalog did not freshly confirm the remote",
+          "origin_main_local_head": "bd3e073af795",
+          "origin_main_remote_head": null,
+          "portability_status": "committed"
+        },
+        {
+          "repo": "moussey",
+          "repo_display": "Moussey",
+          "repo_path": "/Users/leokwan/Development/moussey",
+          "declaration_path": "/Users/leokwan/Development/moussey/.firstbite/local-ci.json",
+          "exists": true,
+          "is_git": true,
+          "tracked": true,
+          "porcelain": null,
+          "origin_main_has_manifest": true,
+          "origin_main_status": "present",
+          "origin_main_source_status": "local_tracking_unverified",
+          "origin_main_source_reason": "manifest was found in the local origin/main remote-tracking ref; this read-only catalog did not freshly confirm the remote",
+          "origin_main_local_head": "4765907fc48c",
+          "origin_main_remote_head": null,
+          "portability_status": "committed"
+        }
+      ],
+      "restartHint": "Operator approval is required before any host-app refresh. Process termination is a separate explicit-approval action.",
+      "status": "green",
+      "summary": "Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true."
+    },
+    "mcpCatalogDelta": {
+      "status": "red",
+      "expectedRepo": "resplit_currency_api",
+      "expectedLaneIds": [
+        "resplit_currency_api_unit",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui"
+      ],
+      "loadedCheckedAt": "2026-05-25T08:09:51.376Z",
+      "repoBackedCheckedAt": "2026-06-20T18:42:25.174Z",
+      "loadedLaneCount": 12,
+      "repoBackedLaneCount": 34,
+      "loadedCatalogVersion": null,
+      "repoBackedCatalogVersion": "repo-manifest-v2",
+      "missingReposInLoaded": [
+        "resplit_currency_api",
+        "trysnowcubes_web"
+      ],
+      "missingGroupsInLoaded": [
+        "all_lint",
+        "resplit_currency_api_all",
+        "snowcubes_all",
+        "snowcubes_critical",
+        "trysnowcubes_web_all"
+      ],
+      "missingLanesInLoaded": [
+        "moussey_coding_console",
+        "moussey_scenarios",
+        "moussey_snowcubes_invoice",
+        "moussey_snowcubes_readiness",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui",
+        "resplit_currency_api_unit",
+        "resplit_ios_lint",
+        "resplit_ios_receipt_splitter_unit",
+        "resplit_ios_ui_full",
+        "strongyes_web_dsa_chat",
+        "strongyes_web_dsa_code_execution",
+        "strongyes_web_dsa_code_suggest",
+        "strongyes_web_dsa_journey",
+        "strongyes_web_dsa_mcp",
+        "strongyes_web_dsa_part2",
+        "strongyes_web_dsa_tabs",
+        "strongyes_web_launch_guest",
+        "trysnowcubes_reviews_worker",
+        "trysnowcubes_web_invoice",
+        "trysnowcubes_web_reviews"
+      ],
+      "missingExpectedLanesInLoaded": [
+        "resplit_currency_api_unit",
+        "resplit_currency_api_integration",
+        "resplit_currency_api_trust_preflight",
+        "resplit_currency_api_ui"
+      ],
+      "summary": "Loaded MCP host differs from repo-backed catalog: missing 2 repo(s), 4/4 expected FX lane(s), 5 group(s), and 22 total lane(s).",
+      "nextAction": "Restart or reload the Codex/Cursor MCP host, capture mcp__firstbite_local_ci.list_lanes again, and require this delta to clear before trusting loaded-host execution."
+    },
+    "trackedSource": {
+      "status": "red",
+      "summary": "3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)",
+      "refs": {
+        "head": "HEAD",
+        "origin": "origin/main",
+        "originAvailable": true
+      },
+      "manifestLaneCommands": [
+        {
+          "lane": "resplit_currency_api_integration",
+          "status": "green",
+          "currentCommand": "npm ci && npm run check:publish",
+          "headCommand": "npm ci && npm run check:publish",
+          "originCommand": "npm ci && npm run check:publish",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        },
+        {
+          "lane": "resplit_currency_api_trust_preflight",
+          "status": "green",
+          "currentCommand": "npm ci && npm run trust:preflight",
+          "headCommand": "npm ci && npm run trust:preflight",
+          "originCommand": "npm ci && npm run trust:preflight",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        },
+        {
+          "lane": "resplit_currency_api_ui",
+          "status": "green",
+          "currentCommand": "npm ci && npm run smoke:deploy",
+          "headCommand": "npm ci && npm run smoke:deploy",
+          "originCommand": "npm ci && npm run smoke:deploy",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        },
+        {
+          "lane": "resplit_currency_api_unit",
+          "status": "green",
+          "currentCommand": "npm ci && npm run generate && npm run test",
+          "headCommand": "npm ci && npm run generate && npm run test",
+          "originCommand": "npm ci && npm run generate && npm run test",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        }
+      ],
+      "requiredScripts": [
+        {
+          "name": "check:publish",
+          "status": "red",
+          "currentCommand": "npm run generate && npm run validate && npm run test",
+          "headCommand": null,
+          "originCommand": "npm run generate && npm run validate && npm run test",
+          "currentPresent": true,
+          "headPresent": false,
+          "originPresent": true
+        },
+        {
+          "name": "generate",
+          "status": "green",
+          "currentCommand": "node currscript.js",
+          "headCommand": "node currscript.js",
+          "originCommand": "node currscript.js",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        },
+        {
+          "name": "reliability:cockpit",
+          "status": "red",
+          "currentCommand": "node scripts/reliability-cockpit.js",
+          "headCommand": null,
+          "originCommand": "node scripts/reliability-cockpit.js",
+          "currentPresent": true,
+          "headPresent": false,
+          "originPresent": true
+        },
+        {
+          "name": "smoke:deploy",
+          "status": "green",
+          "currentCommand": "node scripts/smoke-check-deploy.js",
+          "headCommand": "node scripts/smoke-check-deploy.js",
+          "originCommand": "node scripts/smoke-check-deploy.js",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        },
+        {
+          "name": "source:promotion-packet",
+          "status": "red",
+          "currentCommand": "node scripts/source-promotion-packet.js",
+          "headCommand": null,
+          "originCommand": "node scripts/source-promotion-packet.js",
+          "currentPresent": true,
+          "headPresent": false,
+          "originPresent": true
+        },
+        {
+          "name": "test",
+          "status": "green",
+          "currentCommand": "node --test tests/*.test.js",
+          "headCommand": "node --test tests/*.test.js",
+          "originCommand": "node --test tests/*.test.js",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        },
+        {
+          "name": "trust:preflight",
+          "status": "red",
+          "currentCommand": "node scripts/trust-preflight.js",
+          "headCommand": null,
+          "originCommand": "node scripts/trust-preflight.js",
+          "currentPresent": true,
+          "headPresent": false,
+          "originPresent": true
+        },
+        {
+          "name": "validate",
+          "status": "green",
+          "currentCommand": "node scripts/validate-package.js",
+          "headCommand": "node scripts/validate-package.js",
+          "originCommand": "node scripts/validate-package.js",
+          "currentPresent": true,
+          "headPresent": true,
+          "originPresent": true
+        }
+      ],
+      "files": [
+        {
+          "path": ".firstbite/local-ci.json",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": ""
+        },
+        {
+          "path": "package.json",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "MM package.json"
+        },
+        {
+          "path": "currscript.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  currscript.js"
+        },
+        {
+          "path": "scripts/reliability-cockpit.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/reliability-cockpit.js"
+        },
+        {
+          "path": "scripts/smoke-check-deploy.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  scripts/smoke-check-deploy.js"
+        },
+        {
+          "path": "scripts/source-promotion-packet.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/source-promotion-packet.js"
+        },
+        {
+          "path": "scripts/trust-preflight.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/trust-preflight.js"
+        },
+        {
+          "path": "scripts/validate-package.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  scripts/validate-package.js"
+        }
+      ]
+    },
+    "cleanProofReadiness": {
+      "status": "red",
+      "summary": "3 clean-proof readiness issue(s); current lane count 4.",
+      "runnerContract": "FirstBite run_lanes with worktree=true creates disposable detached worktrees from source_ref; launch proof must pass source_ref=refs/remotes/origin/main so a dirty registered checkout cannot leak into execution. worktree=false runs the active checkout and is supporting evidence only.",
+      "reasons": [
+        {
+          "status": "red",
+          "area": "tracked contract",
+          "detail": "3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)"
+        },
+        {
+          "status": "yellow",
+          "area": "selected proof",
+          "detail": "No selected MCP execute proof exists for a clean worktree run."
+        },
+        {
+          "status": "yellow",
+          "area": "primary checkout",
+          "detail": "Primary checkout is dirty 67 and behind 53 on codex/w2-5-fx-manifest-source-custody."
+        }
+      ],
+      "selectedProof": null,
+      "currentManifestProof": null,
+      "commands": {
+        "cleanWorktree": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'",
+        "dirtySupporting": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":false,\"run_id\":\"verify-resplit-fx-current-manifest-YYYYMMDD\"}'"
+      },
+      "nextAction": "Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command."
+    },
+    "summary": "Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.",
+    "operatingReadout": {
+      "status": "yellow",
+      "reportRoot": "/Users/leokwan/.agent-ledger/firstbite-operating-readout",
+      "reportPath": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+      "summaryPath": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/summary.md",
+      "runId": "codex-goal-20260610T-cycle142-preflight",
+      "createdAt": "2026-06-10T13:09:19Z",
+      "ageMinutes": 14733,
+      "searchedReports": 390,
+      "localCi": {
+        "latestLaneCount": 0,
+        "latestLanePassCount": 0,
+        "latestLaneFailCount": 0,
+        "runRoot": "/Users/leokwan/.agent-ledger/firstbite-local-ci-mcp",
+        "xcodeLock": null
+      },
+      "catalog": {
+        "version": "repo-manifest-v2",
+        "laneCount": 34,
+        "declaredCount": 34,
+        "repoCount": 6,
+        "serverPid": 73875,
+        "loadedAt": "2026-06-10T13:08:43Z",
+        "repoPresent": true,
+        "restartHint": "Operator approval is required before any host-app refresh. Process termination is a separate explicit-approval action."
+      },
+      "manifestPortability": {
+        "expected_repo_count": 6,
+        "committed_repo_count": 6,
+        "uncommitted_repo_count": 0,
+        "missing_repo_count": 0,
+        "fresh_clone_repo_count": 6,
+        "fresh_clone_missing_count": 0,
+        "fresh_clone_ready": true,
+        "fresh_clone_remote_confirmed_count": 6,
+        "fresh_clone_unverified_count": 0,
+        "fresh_clone_remote_confirmed_ready": true,
+        "remote_confirmation_proof": {
+          "run_id": "codex-goal-20260610T-cycle142-preflight-manifest-convergence",
+          "created_at": "2026-06-10T13:08:41Z",
+          "report_path": "/Users/leokwan/.agent-ledger/firstbite-manifest-convergence-plan/codex-goal-20260610T-cycle142-preflight-manifest-convergence/report.json",
+          "age_ms": 3294,
+          "max_age_ms": 3600000,
+          "repo_count": 6,
+          "remote_confirmed_count": 6,
+          "remote_confirmed_ready": true
+        },
+        "ready": true,
+        "rule": "Fresh-clone portability requires .firstbite/local-ci.json on origin/main; active checkout readiness additionally requires the file to be tracked and clean in the current repo path. Remote-confirmed readiness requires a fresh remote confirmation, not just a local remote-tracking ref."
+      },
+      "expectedManifestState": {
+        "repo": "resplit_currency_api",
+        "repo_display": "Resplit FX",
+        "repo_path": "/Users/leokwan/Development/resplit-currency-api",
+        "declaration_path": "/Users/leokwan/Development/resplit-currency-api/.firstbite/local-ci.json",
+        "exists": true,
+        "is_git": true,
+        "tracked": true,
+        "porcelain": null,
+        "origin_main_has_manifest": true,
+        "origin_main_status": "present",
+        "origin_main_source_status": "remote_confirmed",
+        "origin_main_source_reason": "local refs/remotes/origin/main matches remote refs/heads/main",
+        "origin_main_local_head": "5a23eba78802",
+        "origin_main_remote_head": "5a23eba78802",
+        "portability_status": "committed",
+        "origin_main_source_proof": {
+          "run_id": "codex-goal-20260610T-cycle142-preflight-manifest-convergence",
+          "created_at": "2026-06-10T13:08:41Z",
+          "report_path": "/Users/leokwan/.agent-ledger/firstbite-manifest-convergence-plan/codex-goal-20260610T-cycle142-preflight-manifest-convergence/report.json",
+          "age_ms": 3294,
+          "max_age_ms": 3600000,
+          "status": "remote_confirmed",
+          "reason": "local refs/remotes/origin/main matches remote refs/heads/main"
+        }
+      },
+      "failedLanes": [],
+      "expectedRepoFailures": [],
+      "mousseyLocal": {
+        "verdict": "live_runtime_stale_source_contract_blocked",
+        "proofRule": "Moussey /coding proof requires localhost API success; launchd registration alone is not enough.",
+        "localCiApi": {
+          "rc": 0,
+          "ok": true,
+          "ok_present": true,
+          "latest_lane_count": 0,
+          "latest_lane_pass_count": 0,
+          "latest_lane_fail_count": 0,
+          "peer_proof_count": 8,
+          "generated_at": "2026-06-10T13:08:54.053Z",
+          "raw_text": null
+        },
+        "lanStatus": {
+          "rc": 0,
+          "ok": true,
+          "whoami_rc": 0,
+          "whoami_ok": true,
+          "self_name": "Studio",
+          "self_pid": 49250,
+          "peer_count": 3,
+          "healthy_peer_count": 2,
+          "raw_text": null
+        }
+      },
+      "m4PeerProbe": {
+        "dashboardUrl": "http://Leos-Macbook-M4-Pro.local:4321",
+        "sshHost": "Leos-Macbook-M4-Pro.local",
+        "http": {
+          "health": "200",
+          "local_ci_api": "200",
+          "self_refresh": "200",
+          "trigger_claude": "200",
+          "lan_status": "200"
+        },
+        "ssh": {
+          "rc": "255"
+        },
+        "triggerClaude": {
+          "accepting": true,
+          "peer_count": 1
+        },
+        "lanStatus": {
+          "self_name": "M4 Pro",
+          "peer_count": 1
+        },
+        "verdict": "moussey_surface_ready_needs_m4_execute_report",
+        "executionReady": false,
+        "proofRule": "M4 execution requires an M4-local launch-grade lane report; HTTP health, LAN status, self-refresh, or SSH probes are not lane proof."
+      },
+      "m4FreshClonePacket": {
+        "available": true,
+        "latestReport": "/Users/leokwan/.agent-ledger/firstbite-m4-fresh-clone-plan/codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request/report.json",
+        "latestSummary": "/Users/leokwan/.agent-ledger/firstbite-m4-fresh-clone-plan/codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request/summary.md",
+        "latestCommands": null,
+        "summaryExists": true,
+        "commandsExists": false,
+        "runId": "codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request",
+        "createdAt": "2026-06-10T11:23:51Z",
+        "generatedOnHost": "Leos-Mac-Studio-10442.local",
+        "generatedMousseySelfName": "Studio",
+        "freshRoot": "/Users/leokwan/Development/firstbite-local-ci-fresh/codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request",
+        "defaultTargetedExecuteLane": "moussey_unit",
+        "targetedExecuteSkipEnv": "FIRSTBITE_M4_SKIP_TARGET_EXECUTE=1",
+        "completionGates": [
+          "Generate a fingerprint-bound Moussey runtime-refresh request with /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-moussey-runtime-refresh-request.sh, validate the edited approval record with /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-moussey-runtime-refresh-approval-validate.sh, only after validation returns ok=true may an operator perform the controlled runtime refresh, and after refresh validate the applied receipt with /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-moussey-runtime-refresh-applied-receipt.sh before handing M4 packet material to another host.",
+          "Do not surface receiver command paths or execute-enabling environment until the proof boundary is launch-ready.",
+          "Only a passing M4-local launch-grade lane report proves M4 execution."
+        ],
+        "executionReady": false,
+        "supportBoundary": "Packet is support-only while command redaction is active; execution readiness requires a passing M4-local launch-grade lane report."
+      },
+      "peerExecutionBoundary": {
+        "status": "yellow",
+        "summary": "M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.",
+        "executionReady": false,
+        "supportOnly": true,
+        "proofRule": "M4 execution requires an M4-local launch-grade lane report; HTTP health, LAN status, self-refresh, or SSH probes are not lane proof.",
+        "nextAction": "Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready."
+      },
+      "summary": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.",
+      "nextAction": "Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims."
+    },
+    "sourcePromotionBundle": {
+      "status": "red",
+      "summary": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+      "files": [
+        {
+          "path": ".firstbite/local-ci.json",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "",
+          "role": "local-CI contract",
+          "action": "already tracked"
+        },
+        {
+          "path": "package.json",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "MM package.json",
+          "role": "local-CI contract",
+          "action": "include modified current source"
+        },
+        {
+          "path": "currscript.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  currscript.js",
+          "role": "local-CI contract",
+          "action": "include modified current source"
+        },
+        {
+          "path": "scripts/reliability-cockpit.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/reliability-cockpit.js",
+          "role": "local-CI contract",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "scripts/smoke-check-deploy.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  scripts/smoke-check-deploy.js",
+          "role": "local-CI contract",
+          "action": "include modified current source"
+        },
+        {
+          "path": "scripts/source-promotion-packet.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/source-promotion-packet.js",
+          "role": "local-CI contract",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "scripts/trust-preflight.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/trust-preflight.js",
+          "role": "local-CI contract",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "scripts/validate-package.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  scripts/validate-package.js",
+          "role": "local-CI contract",
+          "action": "include modified current source"
+        },
+        {
+          "path": ".firstbite/source-promotion-decisions.json",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  .firstbite/source-promotion-decisions.json",
+          "role": "source-promotion review",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "tests/reliability-cockpit.test.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  tests/reliability-cockpit.test.js",
+          "role": "verification",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "tests/source-promotion-packet.test.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  tests/source-promotion-packet.test.js",
+          "role": "verification",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "tests/trust-preflight.test.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  tests/trust-preflight.test.js",
+          "role": "verification",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "scripts/capture-loaded-mcp-probe.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/capture-loaded-mcp-probe.js",
+          "role": "MCP host probe",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "tests/capture-loaded-mcp-probe.test.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  tests/capture-loaded-mcp-probe.test.js",
+          "role": "verification",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "scripts/verify-grafana-otel-smoke.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/verify-grafana-otel-smoke.js",
+          "role": "telemetry proof",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "tests/verify-grafana-otel-smoke.test.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  tests/verify-grafana-otel-smoke.test.js",
+          "role": "verification",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "scripts/audit-history-backfill-sources.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  scripts/audit-history-backfill-sources.js",
+          "role": "release-history audit",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "tests/audit-history-backfill-sources.test.js",
+          "currentExists": true,
+          "headExists": false,
+          "originExists": true,
+          "gitStatus": "A  tests/audit-history-backfill-sources.test.js",
+          "role": "verification",
+          "action": "add to HEAD before clean proof"
+        },
+        {
+          "path": "tests/smoke-check-deploy.test.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  tests/smoke-check-deploy.test.js",
+          "role": "verification",
+          "action": "include modified current source"
+        },
+        {
+          "path": "tests/validate-package.test.js",
+          "currentExists": true,
+          "headExists": true,
+          "originExists": true,
+          "gitStatus": "M  tests/validate-package.test.js",
+          "role": "verification",
+          "action": "include modified current source"
+        }
+      ],
+      "commandDrift": [
+        {
+          "kind": "package script",
+          "name": "check:publish",
+          "status": "red",
+          "current": "npm run generate && npm run validate && npm run test",
+          "head": null,
+          "origin": "npm run generate && npm run validate && npm run test"
+        },
+        {
+          "kind": "package script",
+          "name": "reliability:cockpit",
+          "status": "red",
+          "current": "node scripts/reliability-cockpit.js",
+          "head": null,
+          "origin": "node scripts/reliability-cockpit.js"
+        },
+        {
+          "kind": "package script",
+          "name": "source:promotion-packet",
+          "status": "red",
+          "current": "node scripts/source-promotion-packet.js",
+          "head": null,
+          "origin": "node scripts/source-promotion-packet.js"
+        },
+        {
+          "kind": "package script",
+          "name": "trust:preflight",
+          "status": "red",
+          "current": "node scripts/trust-preflight.js",
+          "head": null,
+          "origin": "node scripts/trust-preflight.js"
+        }
+      ],
+      "counts": {
+        "currentOnlyFiles": 13,
+        "modifiedFiles": 19,
+        "missingCurrentFiles": 0,
+        "missingHeadFiles": 13,
+        "missingOriginFiles": 0,
+        "commandDrift": 4
+      },
+      "recommendedPaths": [
+        "scripts/reliability-cockpit.js",
+        "scripts/source-promotion-packet.js",
+        "scripts/trust-preflight.js",
+        ".firstbite/source-promotion-decisions.json",
+        "tests/reliability-cockpit.test.js",
+        "tests/source-promotion-packet.test.js",
+        "tests/trust-preflight.test.js",
+        "scripts/capture-loaded-mcp-probe.js",
+        "tests/capture-loaded-mcp-probe.test.js",
+        "scripts/verify-grafana-otel-smoke.js",
+        "tests/verify-grafana-otel-smoke.test.js",
+        "scripts/audit-history-backfill-sources.js",
+        "tests/audit-history-backfill-sources.test.js",
+        "package.json",
+        "currscript.js",
+        "scripts/reliability-cockpit.js",
+        "scripts/smoke-check-deploy.js",
+        "scripts/source-promotion-packet.js",
+        "scripts/trust-preflight.js",
+        "scripts/validate-package.js",
+        ".firstbite/source-promotion-decisions.json",
+        "tests/reliability-cockpit.test.js",
+        "tests/source-promotion-packet.test.js",
+        "tests/trust-preflight.test.js",
+        "scripts/capture-loaded-mcp-probe.js",
+        "tests/capture-loaded-mcp-probe.test.js",
+        "scripts/verify-grafana-otel-smoke.js",
+        "tests/verify-grafana-otel-smoke.test.js",
+        "scripts/audit-history-backfill-sources.js",
+        "tests/audit-history-backfill-sources.test.js",
+        "tests/smoke-check-deploy.test.js",
+        "tests/validate-package.test.js"
+      ],
+      "commands": {
+        "inspectStatus": "git status --short -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "inspectDiff": "git diff -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "inspectUntracked": "git ls-files --others --exclude-standard -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "writePacket": "npm run source:promotion-packet",
+        "reviewPacket": "reports/resplit-fx-source-promotion-packet.md",
+        "cleanProofAfterPromotion": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'"
+      },
+      "nextAction": "Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof."
+    },
+    "sourcePromotionPacket": {
+      "status": "red",
+      "summary": "status=red; stage candidates 19; hold by default 56; command drift 4; cockpit=RED - missing required trust contract; reconciliation red (19 candidate(s) reviewed; 12 already present on origin/main; 10 origin drift row(s); 0 new local-only file(s); 6 modified tracked file(s))",
+      "artifactPath": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.json",
+      "markdownPath": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.md",
+      "generatedAt": "2026-06-20T18:42:21.446Z",
+      "ageMinutes": 0,
+      "promotionReview": {
+        "status": "red",
+        "summary": "19 candidate(s) reviewed; 12 already present on origin/main; 10 origin drift row(s); 0 new local-only file(s); 6 modified tracked file(s)",
+        "counts": {
+          "total": 19,
+          "red": 1,
+          "yellow": 18,
+          "green": 0,
+          "upstreamPresent": 12,
+          "upstreamDrift": 10,
+          "newLocalOnly": 0,
+          "modifiedTracked": 6
+        },
+        "rows": [
+          {
+            "path": "package.json",
+            "status": "red",
+            "classification": "modified-tracked-origin-drift",
+            "gitStatus": "MM package.json",
+            "currentExists": true,
+            "headExists": true,
+            "originExists": true,
+            "currentHash": "295faa8f2f11",
+            "headHash": "a0e3e6a8e15d",
+            "originHash": "ffb5de2b1cf4",
+            "comparisonSource": "index",
+            "currentLines": 33,
+            "headLines": 24,
+            "originLines": 35,
+            "lineDeltaVsHead": 9,
+            "lineDeltaVsOrigin": -2,
+            "reviewCommand": "git diff -- 'package.json' && git diff origin/main -- 'package.json'",
+            "reviewDecision": null,
+            "action": "Diff against both HEAD and origin/main before staging; branch drift and local edits overlap."
+          },
+          {
+            "path": "currscript.js",
+            "status": "yellow",
+            "classification": "modified-tracked",
+            "gitStatus": "M  currscript.js",
+            "currentExists": true,
+            "headExists": true,
+            "originExists": true,
+            "currentHash": "c15af4ace2d6",
+            "headHash": "e9029b11ec70",
+            "originHash": "c15af4ace2d6",
+            "comparisonSource": "worktree",
+            "currentLines": 628,
+            "headLines": 624,
+            "originLines": 628,
+            "lineDeltaVsHead": 4,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "git diff -- 'currscript.js'",
+            "reviewDecision": null,
+            "action": "Review the working-tree diff before staging this tracked file."
+          },
+          {
+            "path": "scripts/reliability-cockpit.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  scripts/reliability-cockpit.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "6f5e9b171353",
+            "headHash": null,
+            "originHash": "a8fb476b07b4",
+            "comparisonSource": "worktree",
+            "currentLines": 4919,
+            "headLines": null,
+            "originLines": 4885,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 34,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/reliability-cockpit.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/reliability-cockpit.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current cockpit preserves explicit origin-main source_ref clean proof semantics while adding Grafana source-identity trust and keeping source-promotion truth separate from clean-proof readiness.",
+              "evidence": [
+                "git diff origin/main -- scripts/reliability-cockpit.js reviewed",
+                "node --check scripts/reliability-cockpit.js",
+                "node --test tests/reliability-cockpit.test.js"
+              ],
+              "currentHash": "6f5e9b171353",
+              "originHash": "a8fb476b07b4"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current cockpit preserves explicit origin-main source_ref clean proof semantics while adding Grafana source-identity trust and keeping source-promotion truth separate from clean-proof readiness."
+          },
+          {
+            "path": "scripts/smoke-check-deploy.js",
+            "status": "yellow",
+            "classification": "modified-tracked",
+            "gitStatus": "M  scripts/smoke-check-deploy.js",
+            "currentExists": true,
+            "headExists": true,
+            "originExists": true,
+            "currentHash": "3021f4fc2f95",
+            "headHash": "4f6c021ea796",
+            "originHash": "3021f4fc2f95",
+            "comparisonSource": "worktree",
+            "currentLines": 435,
+            "headLines": 233,
+            "originLines": 435,
+            "lineDeltaVsHead": 202,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "git diff -- 'scripts/smoke-check-deploy.js'",
+            "reviewDecision": null,
+            "action": "Review the working-tree diff before staging this tracked file."
+          },
+          {
+            "path": "scripts/source-promotion-packet.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  scripts/source-promotion-packet.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "68648860a0e2",
+            "headHash": null,
+            "originHash": "015418faae18",
+            "comparisonSource": "worktree",
+            "currentLines": 1158,
+            "headLines": null,
+            "originLines": 1089,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 69,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/source-promotion-packet.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/source-promotion-packet.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current packet keeps landed zero-candidate bundles green, keeps review-decision metadata non-self-blocking, compares the staged package contract when package.json also has unrelated unstaged OCR dependency drift, and excludes that index-sourced package row from generated git-add commands.",
+              "evidence": [
+                "git diff origin/main -- scripts/source-promotion-packet.js reviewed",
+                "node --check scripts/source-promotion-packet.js",
+                "node --test tests/source-promotion-packet.test.js"
+              ],
+              "currentHash": "68648860a0e2",
+              "originHash": "015418faae18"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current packet keeps landed zero-candidate bundles green, keeps review-decision metadata non-self-blocking, compares the staged package contract when package.json also has unrelated unstaged OCR dependency drift, and excludes that index-sourced package row from generated git-add commands."
+          },
+          {
+            "path": "scripts/trust-preflight.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  scripts/trust-preflight.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "5ebfd6c46195",
+            "headHash": null,
+            "originHash": "dc4bc63a57af",
+            "comparisonSource": "worktree",
+            "currentLines": 372,
+            "headLines": null,
+            "originLines": 372,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/trust-preflight.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/trust-preflight.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current preflight writes the Grafana missing-config proof to the cockpit-consumed grafana-otel-smoke-missing-config-preflight.json path.",
+              "evidence": [
+                "git diff origin/main -- scripts/trust-preflight.js reviewed",
+                "node --check scripts/trust-preflight.js",
+                "node --test tests/source-promotion-packet.test.js"
+              ],
+              "currentHash": "5ebfd6c46195",
+              "originHash": "dc4bc63a57af"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current preflight writes the Grafana missing-config proof to the cockpit-consumed grafana-otel-smoke-missing-config-preflight.json path."
+          },
+          {
+            "path": "scripts/validate-package.js",
+            "status": "yellow",
+            "classification": "modified-tracked",
+            "gitStatus": "M  scripts/validate-package.js",
+            "currentExists": true,
+            "headExists": true,
+            "originExists": true,
+            "currentHash": "99ee426ff2dd",
+            "headHash": "d843ba715acd",
+            "originHash": "99ee426ff2dd",
+            "comparisonSource": "worktree",
+            "currentLines": 274,
+            "headLines": 207,
+            "originLines": 274,
+            "lineDeltaVsHead": 67,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "git diff -- 'scripts/validate-package.js'",
+            "reviewDecision": null,
+            "action": "Review the working-tree diff before staging this tracked file."
+          },
+          {
+            "path": ".firstbite/source-promotion-decisions.json",
+            "status": "yellow",
+            "classification": "review-decision-manifest-update",
+            "gitStatus": "A  .firstbite/source-promotion-decisions.json",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "62de1e11196f",
+            "headHash": null,
+            "originHash": "2cae36b2395b",
+            "comparisonSource": "worktree",
+            "currentLines": 120,
+            "headLines": null,
+            "originLines": 50,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 70,
+            "reviewCommand": "git status --short -- '.firstbite/source-promotion-decisions.json'",
+            "reviewDecision": null,
+            "action": "Review decision manifest changed; keep it stageable but do not require a self-referential hash decision."
+          },
+          {
+            "path": "tests/reliability-cockpit.test.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  tests/reliability-cockpit.test.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "241093c717c7",
+            "headHash": null,
+            "originHash": "80542a682a39",
+            "comparisonSource": "worktree",
+            "currentLines": 2608,
+            "headLines": null,
+            "originLines": 2531,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 77,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/reliability-cockpit.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/reliability-cockpit.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current tests lock source_ref=refs/remotes/origin/main proof, Grafana source-identity trust, and source-promotion/clean-proof gate separation.",
+              "evidence": [
+                "git diff origin/main -- tests/reliability-cockpit.test.js reviewed",
+                "node --test tests/reliability-cockpit.test.js"
+              ],
+              "currentHash": "241093c717c7",
+              "originHash": "80542a682a39"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current tests lock source_ref=refs/remotes/origin/main proof, Grafana source-identity trust, and source-promotion/clean-proof gate separation."
+          },
+          {
+            "path": "tests/source-promotion-packet.test.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  tests/source-promotion-packet.test.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "c013bf41d115",
+            "headHash": null,
+            "originHash": "d8fb20d3c470",
+            "comparisonSource": "worktree",
+            "currentLines": 547,
+            "headLines": null,
+            "originLines": 473,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 74,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/source-promotion-packet.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/source-promotion-packet.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current tests preserve zero-candidate green attestation, cover the decision-manifest non-self-blocking metadata row, and lock the staged-package/unstaged-drift split including safe git-add command generation.",
+              "evidence": [
+                "git diff origin/main -- tests/source-promotion-packet.test.js reviewed",
+                "node --test tests/source-promotion-packet.test.js"
+              ],
+              "currentHash": "c013bf41d115",
+              "originHash": "d8fb20d3c470"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current tests preserve zero-candidate green attestation, cover the decision-manifest non-self-blocking metadata row, and lock the staged-package/unstaged-drift split including safe git-add command generation."
+          },
+          {
+            "path": "tests/trust-preflight.test.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  tests/trust-preflight.test.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "2c4a9d21e1ce",
+            "headHash": null,
+            "originHash": "bd6500043935",
+            "comparisonSource": "worktree",
+            "currentLines": 122,
+            "headLines": null,
+            "originLines": 122,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/trust-preflight.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/trust-preflight.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current test locks the renamed Grafana missing-config preflight artifact path.",
+              "evidence": [
+                "git diff origin/main -- tests/trust-preflight.test.js reviewed",
+                "node --test tests/source-promotion-packet.test.js"
+              ],
+              "currentHash": "2c4a9d21e1ce",
+              "originHash": "bd6500043935"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current test locks the renamed Grafana missing-config preflight artifact path."
+          },
+          {
+            "path": "scripts/capture-loaded-mcp-probe.js",
+            "status": "yellow",
+            "classification": "origin-present-match",
+            "gitStatus": "A  scripts/capture-loaded-mcp-probe.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "70c380a12d76",
+            "headHash": null,
+            "originHash": "70c380a12d76",
+            "comparisonSource": "worktree",
+            "currentLines": 258,
+            "headLines": null,
+            "originLines": 258,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/capture-loaded-mcp-probe.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/capture-loaded-mcp-probe.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": null,
+            "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+          },
+          {
+            "path": "tests/capture-loaded-mcp-probe.test.js",
+            "status": "yellow",
+            "classification": "origin-present-match",
+            "gitStatus": "A  tests/capture-loaded-mcp-probe.test.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "1b9b63cd7611",
+            "headHash": null,
+            "originHash": "1b9b63cd7611",
+            "comparisonSource": "worktree",
+            "currentLines": 94,
+            "headLines": null,
+            "originLines": 94,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/capture-loaded-mcp-probe.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/capture-loaded-mcp-probe.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": null,
+            "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+          },
+          {
+            "path": "scripts/verify-grafana-otel-smoke.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  scripts/verify-grafana-otel-smoke.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "9a2cd523eb61",
+            "headHash": null,
+            "originHash": "dad7b3b6f716",
+            "comparisonSource": "worktree",
+            "currentLines": 613,
+            "headLines": null,
+            "originLines": 551,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 62,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/verify-grafana-otel-smoke.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/verify-grafana-otel-smoke.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current Grafana proof records source identity so telemetry evidence carries checkout head, branch, dirty path, and generated-artifact context.",
+              "evidence": [
+                "git diff origin/main -- scripts/verify-grafana-otel-smoke.js reviewed",
+                "node --check scripts/verify-grafana-otel-smoke.js",
+                "node --test tests/source-promotion-packet.test.js"
+              ],
+              "currentHash": "9a2cd523eb61",
+              "originHash": "dad7b3b6f716"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current Grafana proof records source identity so telemetry evidence carries checkout head, branch, dirty path, and generated-artifact context."
+          },
+          {
+            "path": "tests/verify-grafana-otel-smoke.test.js",
+            "status": "yellow",
+            "classification": "origin-present-origin-drift-reviewed",
+            "gitStatus": "A  tests/verify-grafana-otel-smoke.test.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "5f1a6594c30f",
+            "headHash": null,
+            "originHash": "2fa56a14cc75",
+            "comparisonSource": "worktree",
+            "currentLines": 223,
+            "headLines": null,
+            "originLines": 171,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 52,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/verify-grafana-otel-smoke.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/verify-grafana-otel-smoke.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current tests cover the source-identity provenance added to Grafana telemetry proof.",
+              "evidence": [
+                "git diff origin/main -- tests/verify-grafana-otel-smoke.test.js reviewed",
+                "node --test tests/source-promotion-packet.test.js"
+              ],
+              "currentHash": "5f1a6594c30f",
+              "originHash": "2fa56a14cc75"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current tests cover the source-identity provenance added to Grafana telemetry proof."
+          },
+          {
+            "path": "scripts/audit-history-backfill-sources.js",
+            "status": "yellow",
+            "classification": "origin-present-match",
+            "gitStatus": "A  scripts/audit-history-backfill-sources.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "1d25c3ba3d4c",
+            "headHash": null,
+            "originHash": "1d25c3ba3d4c",
+            "comparisonSource": "worktree",
+            "currentLines": 532,
+            "headLines": null,
+            "originLines": 532,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/audit-history-backfill-sources.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/audit-history-backfill-sources.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": null,
+            "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+          },
+          {
+            "path": "tests/audit-history-backfill-sources.test.js",
+            "status": "yellow",
+            "classification": "origin-present-match",
+            "gitStatus": "A  tests/audit-history-backfill-sources.test.js",
+            "currentExists": true,
+            "headExists": false,
+            "originExists": true,
+            "currentHash": "3b4ecb521790",
+            "headHash": null,
+            "originHash": "3b4ecb521790",
+            "comparisonSource": "worktree",
+            "currentLines": 236,
+            "headLines": null,
+            "originLines": 236,
+            "lineDeltaVsHead": null,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/audit-history-backfill-sources.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/audit-history-backfill-sources.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+            "reviewDecision": null,
+            "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+          },
+          {
+            "path": "tests/smoke-check-deploy.test.js",
+            "status": "yellow",
+            "classification": "modified-tracked-origin-drift-reviewed",
+            "gitStatus": "M  tests/smoke-check-deploy.test.js",
+            "currentExists": true,
+            "headExists": true,
+            "originExists": true,
+            "currentHash": "01d4d89c8a52",
+            "headHash": "8b8294fde2f7",
+            "originHash": "b61212349834",
+            "comparisonSource": "worktree",
+            "currentLines": 416,
+            "headLines": 189,
+            "originLines": 531,
+            "lineDeltaVsHead": 227,
+            "lineDeltaVsOrigin": -115,
+            "reviewCommand": "git diff -- 'tests/smoke-check-deploy.test.js' && git diff origin/main -- 'tests/smoke-check-deploy.test.js'",
+            "reviewDecision": {
+              "status": "accepted",
+              "decision": "accept-current",
+              "reason": "Current tests keep the GitHub Pages propagation-grace coverage while avoiding the duplicated recovery-gap test block present on origin/main.",
+              "evidence": [
+                "git diff origin/main -- tests/smoke-check-deploy.test.js reviewed",
+                "node --check scripts/smoke-check-deploy.js",
+                "node --test tests/smoke-check-deploy.test.js"
+              ],
+              "currentHash": "01d4d89c8a52",
+              "originHash": "b61212349834"
+            },
+            "action": "Hash-locked review accepts current over origin/main: Current tests keep the GitHub Pages propagation-grace coverage while avoiding the duplicated recovery-gap test block present on origin/main."
+          },
+          {
+            "path": "tests/validate-package.test.js",
+            "status": "yellow",
+            "classification": "modified-tracked",
+            "gitStatus": "M  tests/validate-package.test.js",
+            "currentExists": true,
+            "headExists": true,
+            "originExists": true,
+            "currentHash": "a22bcaad51f5",
+            "headHash": "1304acf4b498",
+            "originHash": "a22bcaad51f5",
+            "comparisonSource": "worktree",
+            "currentLines": 125,
+            "headLines": 83,
+            "originLines": 125,
+            "lineDeltaVsHead": 42,
+            "lineDeltaVsOrigin": 0,
+            "reviewCommand": "git diff -- 'tests/validate-package.test.js'",
+            "reviewDecision": null,
+            "action": "Review the working-tree diff before staging this tracked file."
+          }
+        ]
+      },
+      "stagingGate": {
+        "status": "red",
+        "fullStageBlocked": true,
+        "summary": "Full bundle staging is blocked by 1 red upstream-drift candidate(s); 18 non-red candidate(s) remain available for separate review-only staging.",
+        "nextAction": "Run the red-row review commands, decide current-vs-origin content, then regenerate this packet before staging the full bundle.",
+        "fullStageCommand": "BLOCKED: resolve 1 red candidate(s) before staging the full bundle",
+        "nonRedStageCommand": "git add -- 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "blockedPaths": [
+          "package.json"
+        ],
+        "blockedRows": [
+          {
+            "path": "package.json",
+            "classification": "modified-tracked-origin-drift",
+            "reviewCommand": "git diff -- 'package.json' && git diff origin/main -- 'package.json'",
+            "action": "Diff against both HEAD and origin/main before staging; branch drift and local edits overlap.",
+            "lineDeltaVsOrigin": -2
+          }
+        ],
+        "nonRedStageablePaths": [
+          "currscript.js",
+          "scripts/reliability-cockpit.js",
+          "scripts/smoke-check-deploy.js",
+          "scripts/source-promotion-packet.js",
+          "scripts/trust-preflight.js",
+          "scripts/validate-package.js",
+          ".firstbite/source-promotion-decisions.json",
+          "tests/reliability-cockpit.test.js",
+          "tests/source-promotion-packet.test.js",
+          "tests/trust-preflight.test.js",
+          "scripts/capture-loaded-mcp-probe.js",
+          "tests/capture-loaded-mcp-probe.test.js",
+          "scripts/verify-grafana-otel-smoke.js",
+          "tests/verify-grafana-otel-smoke.test.js",
+          "scripts/audit-history-backfill-sources.js",
+          "tests/audit-history-backfill-sources.test.js",
+          "tests/smoke-check-deploy.test.js",
+          "tests/validate-package.test.js"
+        ],
+        "commandStageablePaths": [
+          "currscript.js",
+          "scripts/reliability-cockpit.js",
+          "scripts/smoke-check-deploy.js",
+          "scripts/source-promotion-packet.js",
+          "scripts/trust-preflight.js",
+          "scripts/validate-package.js",
+          ".firstbite/source-promotion-decisions.json",
+          "tests/reliability-cockpit.test.js",
+          "tests/source-promotion-packet.test.js",
+          "tests/trust-preflight.test.js",
+          "scripts/capture-loaded-mcp-probe.js",
+          "tests/capture-loaded-mcp-probe.test.js",
+          "scripts/verify-grafana-otel-smoke.js",
+          "tests/verify-grafana-otel-smoke.test.js",
+          "scripts/audit-history-backfill-sources.js",
+          "tests/audit-history-backfill-sources.test.js",
+          "tests/smoke-check-deploy.test.js",
+          "tests/validate-package.test.js"
+        ],
+        "indexSourcedPaths": []
+      },
+      "stagedBundle": {
+        "status": "red",
+        "exactMatch": false,
+        "summary": "Index attestation is red because the full staging gate is blocked.",
+        "nextAction": "Resolve red staging-gate rows before trusting anything currently staged.",
+        "stageableCount": 19,
+        "stagedCount": 19,
+        "stagedStageableCount": 19,
+        "unstagedStageableCount": 0,
+        "unexpectedStagedCount": 0,
+        "dirtyAfterStagingCount": 1,
+        "ignoredDirtyAfterStagingCount": 0,
+        "stagedPaths": [
+          ".firstbite/source-promotion-decisions.json",
+          "currscript.js",
+          "package.json",
+          "scripts/audit-history-backfill-sources.js",
+          "scripts/capture-loaded-mcp-probe.js",
+          "scripts/reliability-cockpit.js",
+          "scripts/smoke-check-deploy.js",
+          "scripts/source-promotion-packet.js",
+          "scripts/trust-preflight.js",
+          "scripts/validate-package.js",
+          "scripts/verify-grafana-otel-smoke.js",
+          "tests/audit-history-backfill-sources.test.js",
+          "tests/capture-loaded-mcp-probe.test.js",
+          "tests/reliability-cockpit.test.js",
+          "tests/smoke-check-deploy.test.js",
+          "tests/source-promotion-packet.test.js",
+          "tests/trust-preflight.test.js",
+          "tests/validate-package.test.js",
+          "tests/verify-grafana-otel-smoke.test.js"
+        ],
+        "stagedStageablePaths": [
+          ".firstbite/source-promotion-decisions.json",
+          "currscript.js",
+          "package.json",
+          "scripts/audit-history-backfill-sources.js",
+          "scripts/capture-loaded-mcp-probe.js",
+          "scripts/reliability-cockpit.js",
+          "scripts/smoke-check-deploy.js",
+          "scripts/source-promotion-packet.js",
+          "scripts/trust-preflight.js",
+          "scripts/validate-package.js",
+          "scripts/verify-grafana-otel-smoke.js",
+          "tests/audit-history-backfill-sources.test.js",
+          "tests/capture-loaded-mcp-probe.test.js",
+          "tests/reliability-cockpit.test.js",
+          "tests/smoke-check-deploy.test.js",
+          "tests/source-promotion-packet.test.js",
+          "tests/trust-preflight.test.js",
+          "tests/validate-package.test.js",
+          "tests/verify-grafana-otel-smoke.test.js"
+        ],
+        "unstagedStageablePaths": [],
+        "unexpectedStagedPaths": [],
+        "stagedHoldByDefaultPaths": [],
+        "dirtyAfterStagingPaths": [
+          "package.json"
+        ],
+        "ignoredDirtyAfterStagingPaths": []
+      },
+      "counts": {
+        "commandDrift": 4,
+        "stageCandidates": 19,
+        "stageablePaths": 19,
+        "stageBlockedPaths": 1,
+        "stageNonRedPaths": 18,
+        "stagedPaths": 19,
+        "stagedStageablePaths": 19,
+        "unstagedStageablePaths": 0,
+        "unexpectedStagedPaths": 0,
+        "dirtyAfterStagingPaths": 1,
+        "holdByDefault": 56,
+        "dirtyFiles": 75,
+        "reconciliationRed": 1,
+        "reconciliationYellow": 18,
+        "upstreamPresent": 12
+      },
+      "commands": {
+        "inspectStatus": "git status --short -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "inspectDiff": "git diff -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "inspectOriginDiff": "git diff origin/main -- 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "inspectUntracked": "git ls-files --others --exclude-standard -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "stageExactBundle": "BLOCKED: resolve 1 red candidate(s) before staging the full bundle",
+        "stageNonRedCandidates": "git add -- 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "reviewStaged": "git diff --cached --stat && git diff --cached --check",
+        "verifyStagedExactBundle": "npm run source:promotion-packet && git diff --cached --name-status && git diff --cached --check",
+        "unstageExactBundle": "git restore --staged -- 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+        "cleanProofAfterPromotion": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'"
+      }
+    }
+  },
+  "gates": {
+    "status": "green",
+    "required": [
+      {
+        "name": "test",
+        "command": "node --test tests/*.test.js",
+        "present": true
+      },
+      {
+        "name": "check:publish",
+        "command": "npm run generate && npm run validate && npm run test",
+        "present": true
+      },
+      {
+        "name": "check",
+        "command": "npm run generate && npm run validate:release && npm run test",
+        "present": true
+      },
+      {
+        "name": "smoke:deploy",
+        "command": "node scripts/smoke-check-deploy.js",
+        "present": true
+      },
+      {
+        "name": "audit:backfill-sources",
+        "command": "node scripts/audit-history-backfill-sources.js",
+        "present": true
+      }
+    ]
+  },
+  "telemetry": {
+    "status": "yellow",
+    "wranglerPath": "/Users/leokwan/Development/resplit-currency-api/wrangler.jsonc",
+    "workerName": "resplit-fx",
+    "observability": {
+      "enabled": true,
+      "scope": "env.production",
+      "logsEnabled": true,
+      "tracesEnabled": true,
+      "sampling": {
+        "logs": 0.1,
+        "traces": 0.1
+      },
+      "destinationNames": [
+        "grafana-traces-prod",
+        "grafana-logs-prod"
+      ]
+    },
+    "grafana": {
+      "tempoVerifierPresent": true,
+      "verifierPaths": [
+        "/Users/leokwan/Development/resplit-currency-api/scripts/verify-grafana-otel-smoke.js"
+      ],
+      "observabilityScripts": [
+        "observability:otel-smoke"
+      ],
+      "evidence": {
+        "status": "yellow",
+        "parseStatus": "parsed",
+        "latestPath": "/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json",
+        "checkedAt": "2026-06-20T18:42:14.410Z",
+        "ageMinutes": 0,
+        "tempoMatched": false,
+        "lokiMatched": false,
+        "traceId": null,
+        "sourceIdentity": {
+          "status": "ok",
+          "repoPath": "/Users/leokwan/Development/resplit-currency-api",
+          "branch": "codex/w2-5-fx-manifest-source-custody",
+          "head": "46c8f62fbf94",
+          "headFull": "46c8f62fbf94f70b4da72bf724c0f380e44a621d",
+          "dirtyCount": 75,
+          "sourceDirtyCount": 74,
+          "sourceDirtyPaths": [
+            ".cursor/plans/resplit-nurse.log.md",
+            ".firstbite/source-promotion-decisions.json",
+            ".gitignore",
+            "INBOX.md",
+            "README.md",
+            "RUNBOOK.md",
+            "currscript.js",
+            "package-lock.json",
+            "package.json",
+            "scripts/audit-history-backfill-sources.js",
+            "scripts/capture-loaded-mcp-probe.js",
+            "scripts/reliability-cockpit.js",
+            "scripts/smoke-check-deploy.js",
+            "scripts/source-promotion-packet.js",
+            "scripts/trust-preflight.js",
+            "scripts/validate-package.js",
+            "scripts/verify-grafana-otel-smoke.js",
+            "snapshot-archive/2025-05-12.json",
+            "snapshot-archive/2025-05-13.json",
+            "snapshot-archive/2025-05-14.json",
+            "snapshot-archive/2025-05-15.json",
+            "snapshot-archive/2025-05-16.json",
+            "snapshot-archive/2025-05-17.json",
+            "snapshot-archive/2025-05-18.json",
+            "snapshot-archive/2025-05-19.json"
+          ]
+        },
+        "sourceTrusted": false,
+        "checks": [
+          {
+            "id": "worker-trigger",
+            "label": "Worker request trigger",
+            "status": "yellow",
+            "proof": "Worker trigger skipped by --skip-trigger.",
+            "nextAction": "Run without --skip-trigger after Cloudflare destinations exist so the smoke creates fresh trace and log candidates."
+          },
+          {
+            "id": "grafana-read-config",
+            "label": "Grafana read configuration",
+            "status": "yellow",
+            "proof": "Missing GRAFANA_BASE_URL, GRAFANA_TEMPO_DATASOURCE_UID, GRAFANA_LOKI_DATASOURCE_UID.",
+            "nextAction": "Set the missing Grafana base URL and datasource UID env vars locally, with the read token kept out of reports and git."
+          },
+          {
+            "id": "tempo-query",
+            "label": "Tempo trace query",
+            "status": "yellow",
+            "proof": "Tempo query blocked by missing config: GRAFANA_BASE_URL, GRAFANA_TEMPO_DATASOURCE_UID.",
+            "nextAction": "Verify the Cloudflare traces destination and query window, then rerun until Tempo returns at least one trace."
+          },
+          {
+            "id": "loki-query",
+            "label": "Loki log query",
+            "status": "yellow",
+            "proof": "Loki query blocked by missing config: GRAFANA_BASE_URL, GRAFANA_LOKI_DATASOURCE_UID.",
+            "nextAction": "Verify the Cloudflare logs destination and LogQL selector, then rerun until Loki returns at least one log line."
+          }
+        ],
+        "summary": "JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json."
+      },
+      "plan": "/Users/leokwan/Development/vidux/projects/fleet-otel-observability/PLAN.md#F-C1"
+    },
+    "summary": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json."
+  },
+  "agentState": {
+    "nurseLog": {
+      "status": "parsed",
+      "latestHeading": "2026-05-25 05:08 EDT",
+      "latestBullets": [
+        "`GO/exact-source-promotion-bundle-staged`, `GO/staged-index-attestation`, `GO/cockpit-staged-attestation-ui`, `NO-GO/source-promotion-landed`, `NO-GO/clean-tracked-local-ci`, `NO-GO/loaded-mcp-catalog`, `NO-GO/m4-peer-execution`, `NO-GO/telemetry-proof`, `NO-GO/release-readiness` for the Resplit FX reliability cockpit.",
+        "Shipped delta in working tree: staged only the 20-path source-promotion bundle generated by `reports/resplit-fx-source-promotion-packet.json`. Added a staged-bundle attestation layer to `scripts/source-promotion-packet.js` and `scripts/reliability-cockpit.js` so the packet and GUI distinguish \"stageable\" from \"actually staged exactly.\" The attestation fails red on unexpected staged paths, hold-by-default staged paths, or files changed again after staging.",
+        "Current source-promotion truth: `stagedBundle.status=green`, `exactMatch=true`, `stageableCount=20`, `stagedStageableCount=20`, `unstagedStageableCount=0`, `unexpectedStagedCount=0`, and `dirtyAfterStagingCount=0`. The packet remains overall red because the bundle is staged but not committed/landed; clean FirstBite proof remains blocked until this exact bundle is landed or otherwise run from a clean tracked source state.",
+        "Branch/PR promotion: moved the exact reviewed bundle onto clean worktree `/Users/leokwan/Development/resplit-currency-api-worktrees/source-promotion-attested-20260525` from `origin/main`, resolved three upstream-overlap conflicts by preserving the reviewed local-CI/smoke hardening, amended CodeQL escaping/URL-sanitization fixes into commit `bb842d3 vidux: promote FX reliability cockpit source`, pushed branch `codex/resplit-fx-source-promotion-attested-20260525`, and opened ready PR #7 (`https://github.com/firstbitelabsllc/resplit-currency-api/pull/7`). In that clean branch, the staged source-promotion delta is 18 paths because `origin/main` already contains the audit-history script/test pair.",
+        "Fresh proof:",
+        "`git diff --cached --check` -> pass.",
+        "`git diff --cached --name-status` -> exactly the 20 source-promotion candidate paths, no hold-by-default rows.",
+        "`npm run source:promotion-packet` -> expected rc `1`; `stagedBundle.status=green`, `exactMatch=true`, `20/20` staged, zero unexpected staged paths, zero dirty-after-staging paths."
+      ],
+      "firstBullet": "`GO/exact-source-promotion-bundle-staged`, `GO/staged-index-attestation`, `GO/cockpit-staged-attestation-ui`, `NO-GO/source-promotion-landed`, `NO-GO/clean-tracked-local-ci`, `NO-GO/loaded-mcp-catalog`, `NO-GO/m4-peer-execution`, `NO-GO/telemetry-proof`, `NO-GO/release-readiness` for the Resplit FX reliability cockpit.",
+      "releaseReadiness": "yellow",
+      "releaseHistoryEvidence": "Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.",
+      "currentBlocker": "source-promotion is now index-attested, PR-open, and GitHub-check-clean, but not landed. The primary checkout is still behind `origin/main` by 10 and carries unrelated hold-by-default dirt outside the staged bundle; loaded Codex/Cursor MCP still exposes the stale 12-lane catalog without `resplit_currency_api`; M4 remains support-only until M4-local execute proof exists; Grafana Tempo/Loki evidence is absent; and clean FirstBite proof still needs to run from the landed tracked source.",
+      "nextSlice": "merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates."
+    },
+    "inbox": {
+      "status": "parsed",
+      "activeItems": [
+        {
+          "title": "[2026-05-24] P1 release-history risk: daily publish and Worker liveness are fresh again, but the May 12-23 history hole remains",
+          "raw": "- [ ] [2026-05-24] **P1 release-history risk: daily publish and Worker liveness are fresh again, but the May 12-23 history hole remains.** GitHub scout evidence: `gh -R firstbitelabsllc/resplit-currency-api run list --workflow 'Update Currency Rates' --limit 60` showed continuous failures through run `26354168265` (`2026-05-24T06:36:42Z`, head `68bbb436`). `gh run view 26350936742 --log-failed` showed generation reached `Snapshot window: 351 days (350 local, 0 network)` and wrote package files, then `validate-package` failed with `archive availableDates must contain at least 358 dates, got 351`. Root cause: validation blocked the daily snapshot commit before the workflow could recover from the May 12-23 publish hole; by May 24 the package has 351 dates and 14 archive gaps. Fix in this patch: `currscript.js` now writes `history/30d` from the real latest 30-calendar-day window instead of the last 30 available snapshots; `scripts/validate-package.js` has two explicit gates. `npm run validate` / `npm run check:publish` allow recovery publishes with warnings, while `STRICT_HISTORY_COVERAGE=1 npm run validate` / `npm run check` fail release readiness until full 30-day calendar coverage is restored. The smoke gate is also hardened: `npm run smoke:deploy` defaults to current UTC date, fails stale production, and warns through the known archive-only recovery signals (`history_range_incomplete`, `archive_gap_detected`) only when quote freshness is exact. Current proof: workflow run `26356586086` succeeded on head `3ec116c7977148829a7dea179885018a66e40081`, including `Deploy FX Worker` and `Smoke check deployed endpoints`; live `fx.resplit.app/health` GET/HEAD return 200/no-store/request-id and POST returns 405; live exact quote for `AED -> USD` on `2026-05-24` has no warning; `/coverage` reports `quoteResolvedLagDays=0`, `archiveLatestLagDays=0`, `availableDays=18/30`, `missingDayCount=12`; `node --test tests/validate-package.test.js tests/smoke-check-deploy.test.js tests/fx-worker-routes.test.js` passes 25/25; `npm run validate` warns but passes; `EXPECTED_DATE=2026-05-24 npm run smoke:deploy` passes with the explicit worker coverage warning; `npm run validate:release` still fails honestly at strict release validation until `2026-05-12`..`2026-05-23` are backfilled or age out. 2026-05-24 05:33 EDT follow-up added `npm run audit:backfill-sources` as a read-only backfill gate. Live `npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23 --timeout-ms 5000` exits `2`: no date has a complete single source; `resplit-dated-pages` is 404, `fawaz-currency-api` misses at least `clf,fok,kid`, `fxratesapi` misses `cnh,fok,kid,mru,sle,ssp,stn,tvd,ves,xcg,zwg`, Frankfurter is far too narrow, and even the union still misses `fok,kid` on most dates. Until strict release validation passes, `RESPLIT-WEB-2` / FX canary should stay yellow rather than closed."
+        },
+        {
+          "title": "[2026-04-16] Grafana Cloud observability on Cloudflare Workers — prove first-party export",
+          "raw": "- [ ] [2026-04-16] **Grafana Cloud observability on Cloudflare Workers — prove first-party export.** Leo provisioned Grafana Cloud free-tier stack 2026-04-16. Current direction follows Cloudflare Workers native Observability Pipelines rather than Worker-side OTel packages: destination secrets live in the Cloudflare dashboard, and `wrangler.jsonc` declares logs/traces destinations. 2026-05-24 status: `wrangler.jsonc` has `observability.logs.destinations = [\"grafana-logs-prod\"]` and `observability.traces.destinations = [\"grafana-traces-prod\"]`, with production sampling at `0.1`; the local reliability cockpit reads this as config-present but still yellow because there is no deployment/Grafana evidence artifact yet. **Deliverable**: after Cloudflare dashboard destinations exist and the Worker is deployed, capture a fresh smoke showing at least one request trace/log in Grafana Tempo/Loki and write the evidence to `docs/grafana-otel-smoke-YYYYMMDD.md`. **Non-goal**: replacing Sentry — `@sentry/cloudflare` stays for errors. **Blocker**: dashboard destination/token setup and a real Grafana/Cloudflare proof path, tracked in `/Users/leokwan/Development/vidux/projects/fleet-otel-observability/PLAN.md#F-C1`."
+        }
+      ],
+      "hasGrafanaItem": true,
+      "hasStaleGrafanaItem": false,
+      "hasReleaseHistoryItem": true
+    },
+    "ledger": {
+      "status": "parsed",
+      "health": {
+        "status": "red",
+        "windowHours": 24,
+        "failureRows": [
+          {
+            "ts": "2026-06-20T06:52:15Z",
+            "eid": "evt_vidux_eve_resplit_handoff_ad8de258fb58",
+            "event": "eve_resplit_handoff",
+            "repo": "resplit-currency-api",
+            "lane": "eve-resplit-handoff",
+            "agentId": "codex/019ee39e",
+            "summary": "Currency API Eve receiver PR #24 open draft with local proof; commit 44373510; no deploy/model/secret/remote mutation",
+            "proof": "npm ci --dry-run; npm run eve:capabilities -- --json; npm run eve:info -- --json; npm run eve:build; node --check scripts/eve-capability-check.mjs; git diff --check; npm run check; npm run smoke:deploy",
+            "handoffStatus": "needs_review",
+            "files": [
+              "vidux/pre-launch-architecture/PLAN.md",
+              "vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+              ".cursor/plans/resplit-nurse.log.md"
+            ]
+          }
+        ],
+        "recoveryRows": [
+          {
+            "ts": "2026-06-20T13:45:23Z",
+            "eid": "evt_eve_currency_24_ready_resplitcurrency_20260620",
+            "event": "publish",
+            "repo": "resplit-currency-api",
+            "lane": "eve-true-integration",
+            "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+            "summary": null,
+            "proof": "Resplit Currency API PR #24 marked ready for review at head 21ef089c8dd9ae8c69f6044fceca8e899088a432; PR OPEN non-draft MERGEABLE/CLEAN; refreshed checks Analyze(actions) success, Analyze(javascript-typescript) success, Graphite mergeability success, CodeQL summary neutral/skipped. Local proof passed npm install --package-lock=false, npm ci --dry-run, npm ls eve/ai/zod, node --check scripts/eve-capability-check.mjs, git diff --check, eve:capabilities, eve:info, eve:build, npm run check 248/248, npm run smoke:deploy, gh run list, live fx.resplit.app quote/coverage. Moussey handoff d4e3f5c5-0717-4e2d-9329-6460b84bb0f8 verified. No deploy, workflow dispatch, secret, hosted model/API, production publish, remote-machine, primary checkout, or merge mutation.",
+            "handoffStatus": "needs_review",
+            "files": [
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/scripts/eve-capability-check.mjs",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/.cursor/plans/resplit-nurse.log.md"
+            ]
+          },
+          {
+            "ts": "2026-06-20T13:45:52Z",
+            "eid": "evt_eve_currency_24_ready_resplitcurrency_summary_20260620",
+            "event": "publish",
+            "repo": "resplit-currency-api",
+            "lane": "eve-true-integration",
+            "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+            "summary": "Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged.",
+            "proof": "Repairs missing-summary row evt_eve_currency_24_ready_resplitcurrency_20260620. PR #24 OPEN non-draft MERGEABLE/CLEAN at 21ef089c8dd9ae8c69f6044fceca8e899088a432; Analyze(actions), Analyze(javascript-typescript), and Graphite mergeability success; CodeQL summary neutral/skipped. Local proof passed npm install --package-lock=false, npm ci --dry-run, npm ls eve/ai/zod, node --check, git diff --check, eve:capabilities, eve:info, eve:build, npm run check 248/248, smoke:deploy, gh run list, and live quote/coverage. Handoff d4e3f5c5-0717-4e2d-9329-6460b84bb0f8 verified. No deploy, workflow dispatch, secret, hosted model/API, production publish, remote-machine, primary checkout, or merge mutation. repairs:evt_eve_currency_24_ready_resplitcurrency_20260620",
+            "handoffStatus": "needs_review",
+            "files": [
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/scripts/eve-capability-check.mjs",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/.cursor/plans/resplit-nurse.log.md"
+            ]
+          }
+        ],
+        "repairRows": [
+          {
+            "ts": "2026-06-20T13:45:52Z",
+            "eid": "evt_eve_currency_24_ready_resplitcurrency_summary_20260620",
+            "event": "publish",
+            "repo": "resplit-currency-api",
+            "lane": "eve-true-integration",
+            "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+            "summary": "Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged.",
+            "proof": "Repairs missing-summary row evt_eve_currency_24_ready_resplitcurrency_20260620. PR #24 OPEN non-draft MERGEABLE/CLEAN at 21ef089c8dd9ae8c69f6044fceca8e899088a432; Analyze(actions), Analyze(javascript-typescript), and Graphite mergeability success; CodeQL summary neutral/skipped. Local proof passed npm install --package-lock=false, npm ci --dry-run, npm ls eve/ai/zod, node --check, git diff --check, eve:capabilities, eve:info, eve:build, npm run check 248/248, smoke:deploy, gh run list, and live quote/coverage. Handoff d4e3f5c5-0717-4e2d-9329-6460b84bb0f8 verified. No deploy, workflow dispatch, secret, hosted model/API, production publish, remote-machine, primary checkout, or merge mutation. repairs:evt_eve_currency_24_ready_resplitcurrency_20260620",
+            "handoffStatus": "needs_review",
+            "files": [
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/scripts/eve-capability-check.mjs",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/.cursor/plans/resplit-nurse.log.md"
+            ]
+          }
+        ],
+        "latestFailure": {
+          "ts": "2026-06-20T06:52:15Z",
+          "eid": "evt_vidux_eve_resplit_handoff_ad8de258fb58",
+          "event": "eve_resplit_handoff",
+          "repo": "resplit-currency-api",
+          "lane": "eve-resplit-handoff",
+          "agentId": "codex/019ee39e",
+          "summary": "Currency API Eve receiver PR #24 open draft with local proof; commit 44373510; no deploy/model/secret/remote mutation",
+          "proof": "npm ci --dry-run; npm run eve:capabilities -- --json; npm run eve:info -- --json; npm run eve:build; node --check scripts/eve-capability-check.mjs; git diff --check; npm run check; npm run smoke:deploy",
+          "handoffStatus": "needs_review",
+          "files": [
+            "vidux/pre-launch-architecture/PLAN.md",
+            "vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+            ".cursor/plans/resplit-nurse.log.md"
+          ]
+        },
+        "latestRecovery": {
+          "ts": "2026-06-20T13:45:52Z",
+          "eid": "evt_eve_currency_24_ready_resplitcurrency_summary_20260620",
+          "event": "publish",
+          "repo": "resplit-currency-api",
+          "lane": "eve-true-integration",
+          "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+          "summary": "Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged.",
+          "proof": "Repairs missing-summary row evt_eve_currency_24_ready_resplitcurrency_20260620. PR #24 OPEN non-draft MERGEABLE/CLEAN at 21ef089c8dd9ae8c69f6044fceca8e899088a432; Analyze(actions), Analyze(javascript-typescript), and Graphite mergeability success; CodeQL summary neutral/skipped. Local proof passed npm install --package-lock=false, npm ci --dry-run, npm ls eve/ai/zod, node --check, git diff --check, eve:capabilities, eve:info, eve:build, npm run check 248/248, smoke:deploy, gh run list, and live quote/coverage. Handoff d4e3f5c5-0717-4e2d-9329-6460b84bb0f8 verified. No deploy, workflow dispatch, secret, hosted model/API, production publish, remote-machine, primary checkout, or merge mutation. repairs:evt_eve_currency_24_ready_resplitcurrency_20260620",
+          "handoffStatus": "needs_review",
+          "files": [
+            "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/scripts/eve-capability-check.mjs",
+            "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+            "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+            "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/.cursor/plans/resplit-nurse.log.md"
+          ]
+        },
+        "summary": "1 unrecovered failure row(s) found in the last 24h ledger window."
+      },
+      "activityMatrix": [
+        {
+          "ts": "2026-06-20T13:45:52Z",
+          "ageMinutes": 297,
+          "status": "green",
+          "agent": "codex",
+          "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+          "lane": "eve-true-integration",
+          "event": "publish",
+          "handoffStatus": "needs_review",
+          "proof": "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+          "summary": "Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged."
+        },
+        {
+          "ts": "2026-06-20T13:45:23Z",
+          "ageMinutes": 297,
+          "status": "red",
+          "agent": "codex",
+          "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+          "lane": "eve-true-integration",
+          "event": "publish",
+          "handoffStatus": "needs_review",
+          "proof": "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+          "summary": ""
+        },
+        {
+          "ts": "2026-06-20T13:38:05Z",
+          "ageMinutes": 304,
+          "status": "yellow",
+          "agent": "codex",
+          "agentId": "codex/eve-true-integration/resplit-currency-api-20260620",
+          "lane": "eve-true-integration",
+          "event": "claim",
+          "handoffStatus": "in_progress",
+          "proof": "",
+          "summary": "Claiming Resplit Currency API Eve PR #24 reproof/readiness. Worktree is current against origin/main, PR is open draft/mergeable with CodeQL and Graphite AI Reviews green; primary checkout is dirty and will not be touched."
+        },
+        {
+          "ts": "2026-06-20T06:52:15Z",
+          "ageMinutes": 710,
+          "status": "red",
+          "agent": "codex",
+          "agentId": "codex/019ee39e",
+          "lane": "eve-resplit-handoff",
+          "event": "eve_resplit_handoff",
+          "handoffStatus": "needs_review",
+          "proof": "vidux/pre-launch-architecture/PLAN.md",
+          "summary": "Currency API Eve receiver PR #24 open draft with local proof; commit 44373510; no deploy/model/secret/remote mutation"
+        }
+      ],
+      "repo": {
+        "status": "empty",
+        "path": "/Users/leokwan/Development/resplit-currency-api/.agent-ledger/activity.jsonl",
+        "recentEntries": []
+      },
+      "shared": {
+        "status": "parsed",
+        "path": "/Users/leokwan/.agent-ledger/activity.jsonl",
+        "recentEntries": [
+          {
+            "ts": "2026-06-20T06:52:15Z",
+            "eid": "evt_vidux_eve_resplit_handoff_ad8de258fb58",
+            "event": "eve_resplit_handoff",
+            "repo": "resplit-currency-api",
+            "lane": "eve-resplit-handoff",
+            "agentId": "codex/019ee39e",
+            "summary": "Currency API Eve receiver PR #24 open draft with local proof; commit 44373510; no deploy/model/secret/remote mutation",
+            "proof": "npm ci --dry-run; npm run eve:capabilities -- --json; npm run eve:info -- --json; npm run eve:build; node --check scripts/eve-capability-check.mjs; git diff --check; npm run check; npm run smoke:deploy",
+            "handoffStatus": "needs_review",
+            "files": [
+              "vidux/pre-launch-architecture/PLAN.md",
+              "vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+              ".cursor/plans/resplit-nurse.log.md"
+            ]
+          },
+          {
+            "ts": "2026-06-20T13:38:05Z",
+            "eid": "evt_1b522dc1",
+            "event": "claim",
+            "repo": "resplit-currency-api",
+            "lane": "eve-true-integration",
+            "agentId": "codex/eve-true-integration/resplit-currency-api-20260620",
+            "summary": "Claiming Resplit Currency API Eve PR #24 reproof/readiness. Worktree is current against origin/main, PR is open draft/mergeable with CodeQL and Graphite AI Reviews green; primary checkout is dirty and will not be touched.",
+            "proof": "Will preserve existing dirty primary checkout, keep all proof local to /Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620, include stricter Eve capability check requiring installed deps/binary, and avoid Cloudflare/GCP deploy, workflow dispatch, secrets, model/API calls, production publication, and remote-machine mutation.",
+            "handoffStatus": "in_progress",
+            "files": []
+          },
+          {
+            "ts": "2026-06-20T13:45:23Z",
+            "eid": "evt_eve_currency_24_ready_resplitcurrency_20260620",
+            "event": "publish",
+            "repo": "resplit-currency-api",
+            "lane": "eve-true-integration",
+            "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+            "summary": null,
+            "proof": "Resplit Currency API PR #24 marked ready for review at head 21ef089c8dd9ae8c69f6044fceca8e899088a432; PR OPEN non-draft MERGEABLE/CLEAN; refreshed checks Analyze(actions) success, Analyze(javascript-typescript) success, Graphite mergeability success, CodeQL summary neutral/skipped. Local proof passed npm install --package-lock=false, npm ci --dry-run, npm ls eve/ai/zod, node --check scripts/eve-capability-check.mjs, git diff --check, eve:capabilities, eve:info, eve:build, npm run check 248/248, npm run smoke:deploy, gh run list, live fx.resplit.app quote/coverage. Moussey handoff d4e3f5c5-0717-4e2d-9329-6460b84bb0f8 verified. No deploy, workflow dispatch, secret, hosted model/API, production publish, remote-machine, primary checkout, or merge mutation.",
+            "handoffStatus": "needs_review",
+            "files": [
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/scripts/eve-capability-check.mjs",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/.cursor/plans/resplit-nurse.log.md"
+            ]
+          },
+          {
+            "ts": "2026-06-20T13:45:52Z",
+            "eid": "evt_eve_currency_24_ready_resplitcurrency_summary_20260620",
+            "event": "publish",
+            "repo": "resplit-currency-api",
+            "lane": "eve-true-integration",
+            "agentId": "codex/eve-true-integration/resplit-currency-api-20260620/eve-true-integration-resplit-currency-api-20260620",
+            "summary": "Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged.",
+            "proof": "Repairs missing-summary row evt_eve_currency_24_ready_resplitcurrency_20260620. PR #24 OPEN non-draft MERGEABLE/CLEAN at 21ef089c8dd9ae8c69f6044fceca8e899088a432; Analyze(actions), Analyze(javascript-typescript), and Graphite mergeability success; CodeQL summary neutral/skipped. Local proof passed npm install --package-lock=false, npm ci --dry-run, npm ls eve/ai/zod, node --check, git diff --check, eve:capabilities, eve:info, eve:build, npm run check 248/248, smoke:deploy, gh run list, and live quote/coverage. Handoff d4e3f5c5-0717-4e2d-9329-6460b84bb0f8 verified. No deploy, workflow dispatch, secret, hosted model/API, production publish, remote-machine, primary checkout, or merge mutation. repairs:evt_eve_currency_24_ready_resplitcurrency_20260620",
+            "handoffStatus": "needs_review",
+            "files": [
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/scripts/eve-capability-check.mjs",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md",
+              "/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/.cursor/plans/resplit-nurse.log.md"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "trustModel": {
+    "principles": [
+      "Repo-owned .firstbite/local-ci.json is the lane contract; dashboards and agents display or execute it.",
+      "A green lane is only trusted when it has source state, report/log artifacts, and the tested head is named.",
+      "FX launch readiness keeps freshness, release-history coverage, local CI, and OTEL/Grafana proof separate.",
+      "Grafana/OTEL readiness is configuration proof plus Tempo/Loki evidence, not an old nurse-log claim."
+    ],
+    "preflight": {
+      "status": "red",
+      "summary": "status=red; commands 7 green, 2 yellow, 0 red; cockpit=RED - missing required trust contract",
+      "path": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.json",
+      "generatedAt": "2026-06-20T18:42:25.167Z",
+      "ageMinutes": 0,
+      "mode": "fast",
+      "cockpitVerdict": {
+        "status": "red",
+        "label": "RED - missing required trust contract"
+      },
+      "markdownPath": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.md",
+      "commands": [
+        {
+          "id": "cockpit-syntax",
+          "label": "Cockpit syntax",
+          "command": "node --check scripts/reliability-cockpit.js",
+          "status": "green",
+          "rc": 0,
+          "durationMs": 122,
+          "expectedExitCodes": [
+            0
+          ]
+        },
+        {
+          "id": "preflight-syntax",
+          "label": "Preflight syntax",
+          "command": "node --check scripts/trust-preflight.js",
+          "status": "green",
+          "rc": 0,
+          "durationMs": 76,
+          "expectedExitCodes": [
+            0
+          ]
+        },
+        {
+          "id": "source-promotion-packet-syntax",
+          "label": "Source promotion packet syntax",
+          "command": "node --check scripts/source-promotion-packet.js",
+          "status": "green",
+          "rc": 0,
+          "durationMs": 84,
+          "expectedExitCodes": [
+            0
+          ]
+        },
+        {
+          "id": "grafana-verifier-syntax",
+          "label": "Grafana verifier syntax",
+          "command": "node --check scripts/verify-grafana-otel-smoke.js",
+          "status": "green",
+          "rc": 0,
+          "durationMs": 84,
+          "expectedExitCodes": [
+            0
+          ]
+        },
+        {
+          "id": "loaded-mcp-capture-syntax",
+          "label": "Loaded MCP capture syntax",
+          "command": "node --check scripts/capture-loaded-mcp-probe.js",
+          "status": "green",
+          "rc": 0,
+          "durationMs": 84,
+          "expectedExitCodes": [
+            0
+          ]
+        },
+        {
+          "id": "targeted-tests",
+          "label": "Targeted cockpit tests",
+          "command": "node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/source-promotion-packet.test.js tests/verify-grafana-otel-smoke.test.js tests/trust-preflight.test.js",
+          "status": "green",
+          "rc": 0,
+          "durationMs": 7985,
+          "expectedExitCodes": [
+            0
+          ]
+        },
+        {
+          "id": "grafana-missing-config-proof",
+          "label": "Grafana missing-config proof",
+          "command": "npm run observability:otel-smoke -- --skip-trigger --output reports/grafana-otel-smoke-missing-config-preflight.json",
+          "status": "yellow",
+          "rc": 2,
+          "durationMs": 765,
+          "expectedExitCodes": [
+            0,
+            2
+          ]
+        },
+        {
+          "id": "cockpit-generate",
+          "label": "Cockpit regenerate",
+          "command": "npm run reliability:cockpit",
+          "status": "green",
+          "rc": 0,
+          "durationMs": 6411,
+          "expectedExitCodes": [
+            0
+          ]
+        },
+        {
+          "id": "source-promotion-packet-generate",
+          "label": "Source promotion packet generate",
+          "command": "npm run source:promotion-packet",
+          "status": "yellow",
+          "rc": 1,
+          "durationMs": 4159,
+          "expectedExitCodes": [
+            0,
+            1
+          ]
+        }
+      ]
+    },
+    "launchTrustAudit": {
+      "status": "red",
+      "summary": "1 allowed, 3 caution, 5 forbidden claim boundary(s) across 9 launch-trust surfaces.",
+      "rows": [
+        {
+          "id": "overall-launch-trust",
+          "surface": "Overall Resplit FX launch trust",
+          "boundary": "release",
+          "owner": "Release operator",
+          "status": "red",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not call Resplit FX launch-ready while any trust contract below is red or yellow.",
+          "evidence": "12 trust contract(s) in this cockpit",
+          "gap": "Primary checkout: yellow; Tracked local-CI contract: red; Clean proof targetability: red; Source promotion bundle: red; FirstBite operating readout: yellow; M4 peer execution boundary: yellow; Selected local-CI proof: yellow; Loaded MCP host catalog: red; OTEL/Grafana evidence: yellow; Release-history strict coverage: yellow; Agent ledger health: red",
+          "nextAction": "Work the Operator Action Queue top-down until every launch-critical row turns green."
+        },
+        {
+          "id": "source-contract",
+          "surface": "Tracked source and source promotion",
+          "boundary": "local",
+          "owner": "Local source",
+          "status": "red",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not treat dirty/current-only control-plane files as launch source.",
+          "evidence": "git status --short --branch | cockpit Tracked Source Contract section | cockpit Source Promotion Bundle section",
+          "gap": "dirty 67 / behind 53 on codex/w2-5-fx-manifest-source-custody | 3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s) | 13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+          "nextAction": "Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof."
+        },
+        {
+          "id": "clean-firstbite-local-ci",
+          "surface": "Clean FirstBite local-CI execution",
+          "boundary": "local-ci",
+          "owner": "FirstBite local CI",
+          "status": "red",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not claim local CI validates the current launch source.",
+          "evidence": "missing MCP execute report",
+          "gap": "3 clean-proof readiness issue(s); current lane count 4. | Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.",
+          "nextAction": "Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command."
+        },
+        {
+          "id": "loaded-agent-mcp",
+          "surface": "Loaded Codex/Cursor MCP host",
+          "boundary": "local-agent-host",
+          "owner": "Codex/Cursor MCP host",
+          "status": "red",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not claim Codex/Cursor loaded MCP can execute or even see FX lanes from the current host process.",
+          "evidence": "/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json",
+          "gap": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s). | Loaded MCP host differs from repo-backed catalog: missing 2 repo(s), 4/4 expected FX lane(s), 5 group(s), and 22 total lane(s).",
+          "nextAction": "Restart or reload the Codex/Cursor MCP host, capture mcp__firstbite_local_ci.list_lanes again, and require this delta to clear before trusting loaded-host execution."
+        },
+        {
+          "id": "repo-backed-mcp-source",
+          "surface": "Repo-backed FirstBite MCP package",
+          "boundary": "control-plane",
+          "owner": "FirstBite MCP package",
+          "status": "green",
+          "claimAllowed": true,
+          "allowedClaim": "The repo-backed package is the current control-plane source of truth for lane catalog comparison.",
+          "forbiddenClaim": "",
+          "evidence": "/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci",
+          "gap": "Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.",
+          "nextAction": "Treat this as the control-plane source until loaded host catches up."
+        },
+        {
+          "id": "peer-execution",
+          "surface": "M4 peer execution",
+          "boundary": "peer-execution",
+          "owner": "M4 local agent peer",
+          "status": "yellow",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not treat LAN pings, dashboard health, or Studio-side handoffs as M4 execute proof.",
+          "evidence": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+          "gap": "M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.",
+          "nextAction": "Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready."
+        },
+        {
+          "id": "otel-grafana-proof",
+          "surface": "OTEL/Grafana observability",
+          "boundary": "external-observability",
+          "owner": "Cloudflare/Grafana",
+          "status": "yellow",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not claim telemetry is launch-trusted from config alone or an old nurse-log note.",
+          "evidence": "/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json",
+          "gap": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.",
+          "nextAction": "After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match."
+        },
+        {
+          "id": "release-history-quality",
+          "surface": "Release-history data quality",
+          "boundary": "data-quality",
+          "owner": "FX data",
+          "status": "yellow",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not claim release readiness while the May 12-23 history hole or strict validation gap remains.",
+          "evidence": "npm run validate:release",
+          "gap": "Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.",
+          "nextAction": "Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes."
+        },
+        {
+          "id": "agent-ledger-fleet",
+          "surface": "Agent ledger and fleet handoff",
+          "boundary": "local-agent-fleet",
+          "owner": "Ledger / local agent fleet",
+          "status": "red",
+          "claimAllowed": false,
+          "allowedClaim": "Only a limited diagnostic claim is allowed for this surface.",
+          "forbiddenClaim": "Do not use ledger or fleet rows as proof of execution readiness when they are stale, failed, or support-only.",
+          "evidence": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json | /Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive",
+          "gap": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only. | 1 unrecovered failure row(s) found in the last 24h ledger window.",
+          "nextAction": "Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims."
+        }
+      ]
+    },
+    "evidenceFreshness": {
+      "status": "yellow",
+      "summary": "4 fresh, 3 stale/missing across 7 proof artifact(s); trust colors remain separate.",
+      "generatedAt": "2026-06-20T18:42:25.174Z",
+      "freshnessLimitMinutes": 60,
+      "rows": [
+        {
+          "id": "local-trust-preflight",
+          "surface": "Local trust preflight",
+          "freshnessStatus": "green",
+          "freshnessSummary": "Local trust preflight is fresh: 0m old.",
+          "trustStatus": "red",
+          "checkedAt": "2026-06-20T18:42:25.167Z",
+          "ageMinutes": 0,
+          "freshForMinutes": 60,
+          "artifact": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.json",
+          "secondaryArtifact": null,
+          "summary": "status=red; commands 7 green, 2 yellow, 0 red; cockpit=RED - missing required trust contract",
+          "nextAction": "npm run trust:preflight"
+        },
+        {
+          "id": "source-promotion-packet",
+          "surface": "Source promotion packet",
+          "freshnessStatus": "green",
+          "freshnessSummary": "Source promotion packet is fresh: 0m old.",
+          "trustStatus": "red",
+          "checkedAt": "2026-06-20T18:42:21.446Z",
+          "ageMinutes": 0,
+          "freshForMinutes": 60,
+          "artifact": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.json",
+          "secondaryArtifact": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.md",
+          "summary": "status=red; stage candidates 19; hold by default 56; command drift 4; cockpit=RED - missing required trust contract",
+          "nextAction": "npm run source:promotion-packet"
+        },
+        {
+          "id": "selected-firstbite-execute-proof",
+          "surface": "Selected FirstBite execute proof",
+          "freshnessStatus": "yellow",
+          "freshnessSummary": "No execute report was found for this repo.",
+          "trustStatus": "yellow",
+          "checkedAt": null,
+          "ageMinutes": null,
+          "freshForMinutes": 360,
+          "artifact": "",
+          "secondaryArtifact": null,
+          "summary": "No execute report was found for this repo.",
+          "nextAction": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'"
+        },
+        {
+          "id": "loaded-mcp-host-probe",
+          "surface": "Loaded MCP host probe",
+          "freshnessStatus": "yellow",
+          "freshnessSummary": "Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary.",
+          "trustStatus": "red",
+          "checkedAt": "2026-05-25T08:09:51.376Z",
+          "ageMinutes": 38073,
+          "freshForMinutes": 60,
+          "artifact": "/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json",
+          "secondaryArtifact": null,
+          "summary": "Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary.",
+          "nextAction": "npm run mcp:loaded-probe -- --reuse-existing"
+        },
+        {
+          "id": "repo-backed-mcp-catalog",
+          "surface": "Repo-backed MCP catalog",
+          "freshnessStatus": "green",
+          "freshnessSummary": "Repo-backed MCP catalog is fresh: 0m old.",
+          "trustStatus": "green",
+          "checkedAt": "2026-06-20T18:42:25.174Z",
+          "ageMinutes": 0,
+          "freshForMinutes": 60,
+          "artifact": "/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci",
+          "secondaryArtifact": null,
+          "summary": "Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.",
+          "nextAction": "cd ~/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- list_lanes {}"
+        },
+        {
+          "id": "grafana-otel-smoke",
+          "surface": "Grafana OTEL smoke",
+          "freshnessStatus": "green",
+          "freshnessSummary": "Grafana OTEL smoke is fresh: 0m old.",
+          "trustStatus": "yellow",
+          "checkedAt": "2026-06-20T18:42:14.410Z",
+          "ageMinutes": 0,
+          "freshForMinutes": 60,
+          "artifact": "/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json",
+          "secondaryArtifact": null,
+          "summary": "JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.",
+          "nextAction": "npm run observability:otel-smoke -- --since-minutes 60"
+        },
+        {
+          "id": "firstbite-operating-readout",
+          "surface": "FirstBite operating readout",
+          "freshnessStatus": "yellow",
+          "freshnessSummary": "FirstBite operating readout is stale: 14733m old; refresh before trusting this proof boundary.",
+          "trustStatus": "yellow",
+          "checkedAt": "2026-06-10T13:09:19Z",
+          "ageMinutes": 14733,
+          "freshForMinutes": 60,
+          "artifact": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+          "secondaryArtifact": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/summary.md",
+          "summary": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.",
+          "nextAction": "bash ~/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh"
+        }
+      ]
+    },
+    "operatorActions": [
+      {
+        "id": "source-promotion-review",
+        "priority": 1,
+        "owner": "Local source",
+        "gate": "Source promotion bundle",
+        "status": "red",
+        "boundary": "local",
+        "canRunNow": true,
+        "blockedBy": "",
+        "command": "npm run source:promotion-packet",
+        "proof": "reports/resplit-fx-source-promotion-packet.md",
+        "blocker": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+        "nextAction": "Review the packet, stage only exact candidates, and keep hold-by-default rows out unless separately reviewed.",
+        "evidenceRequired": "A staged or landed diff whose paths match the packet stage candidates, with hold-by-default rows reviewed separately.",
+        "unblocks": "Clean worktree FirstBite proof"
+      },
+      {
+        "id": "clean-firstbite-proof",
+        "priority": 2,
+        "owner": "FirstBite local CI",
+        "gate": "Clean proof targetability",
+        "status": "red",
+        "boundary": "local-ci",
+        "canRunNow": false,
+        "blockedBy": "Source promotion bundle must land first.",
+        "command": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'",
+        "proof": "missing MCP execute report",
+        "blocker": "3 clean-proof readiness issue(s); current lane count 4.",
+        "nextAction": "Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command.",
+        "evidenceRequired": "A fresh worktree=true execute report with all resplit_currency_api lanes passing and commands matching .firstbite/local-ci.json.",
+        "unblocks": "Selected local-CI proof"
+      },
+      {
+        "id": "loaded-mcp-refresh",
+        "priority": 3,
+        "owner": "Codex/Cursor MCP host",
+        "gate": "Loaded MCP host catalog",
+        "status": "red",
+        "boundary": "local-agent-host",
+        "canRunNow": true,
+        "blockedBy": "",
+        "command": "npm run mcp:loaded-probe -- --reuse-existing",
+        "proof": "/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json",
+        "blocker": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).",
+        "nextAction": "Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.",
+        "evidenceRequired": "Fresh loaded-host list_lanes artifact with repo-manifest-v2, 15 lanes, and all resplit_currency_api lanes present.",
+        "unblocks": "In-app local coding agent trust"
+      },
+      {
+        "id": "grafana-otel-proof",
+        "priority": 4,
+        "owner": "Cloudflare/Grafana",
+        "gate": "OTEL/Grafana evidence",
+        "status": "yellow",
+        "boundary": "external-observability",
+        "canRunNow": false,
+        "blockedBy": "Requires Cloudflare destination setup, deployment, and Grafana read env.",
+        "command": "npm run observability:otel-smoke -- --since-minutes 60",
+        "proof": "/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json",
+        "blocker": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.",
+        "nextAction": "After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match.",
+        "evidenceRequired": "A fresh smoke artifact where Worker trigger, Grafana config, Tempo query, and Loki query are all green.",
+        "unblocks": "OTEL/Grafana launch trust"
+      },
+      {
+        "id": "release-history-backfill",
+        "priority": 5,
+        "owner": "FX data",
+        "gate": "Release-history strict coverage",
+        "status": "yellow",
+        "boundary": "data-quality",
+        "canRunNow": true,
+        "blockedBy": "",
+        "command": "npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23 && npm run validate:release",
+        "proof": "npm run validate:release",
+        "blocker": "[2026-05-24] P1 release-history risk: daily publish and Worker liveness are fresh again, but the May 12-23 history hole remains",
+        "nextAction": "Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes.",
+        "evidenceRequired": "Strict validation green, or an audit artifact proving every missing date has complete single-source coverage before backfill.",
+        "unblocks": "FX release readiness"
+      },
+      {
+        "id": "firstbite-operating-readout",
+        "priority": 6,
+        "owner": "Local agent fleet",
+        "gate": "FirstBite operating readout",
+        "status": "yellow",
+        "boundary": "local-agent-fleet",
+        "canRunNow": true,
+        "blockedBy": "",
+        "command": "bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh",
+        "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+        "blocker": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.",
+        "nextAction": "Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.",
+        "evidenceRequired": "Fresh readout separating FX repo proof from broader fleet warnings.",
+        "unblocks": "Fleet-wide local agent confidence"
+      },
+      {
+        "id": "m4-peer-execute-proof",
+        "priority": 7,
+        "owner": "M4 local agent peer",
+        "gate": "M4 peer execution boundary",
+        "status": "yellow",
+        "boundary": "peer-execution",
+        "canRunNow": false,
+        "blockedBy": "Requires running the generated packet on the M4 Pro and capturing proof from that host.",
+        "command": "Run generated fresh-clone-commands.sh on the M4 Pro",
+        "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+        "blocker": "M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.",
+        "nextAction": "Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready.",
+        "evidenceRequired": "M4-local support preflight plus run_lanes execute report from the M4 host; Studio HTTP/LAN/SSH probes are not execution proof.",
+        "unblocks": "Peer execution capacity trust"
+      },
+      {
+        "id": "ledger-health-repair",
+        "priority": 7,
+        "owner": "Ledger",
+        "gate": "Agent ledger health",
+        "status": "red",
+        "boundary": "ledger",
+        "canRunNow": true,
+        "blockedBy": "",
+        "command": "bash /Users/leokwan/Development/ai-leo/skills/ledger/scripts/audit_ledger_quality.sh",
+        "proof": "/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive",
+        "blocker": "1 unrecovered failure row(s) found in the last 24h ledger window.",
+        "nextAction": "Repair stale ledger rows with append-only scoped evidence.",
+        "evidenceRequired": "Ledger audit and fleet health return green/yellow with no unrecovered failures.",
+        "unblocks": "Agent history trust"
+      }
+    ],
+    "operatorRecoveryFlow": {
+      "status": "red",
+      "summary": "5 runnable action(s) now; 3 action(s) waiting on local or external dependencies.",
+      "nextLocalAction": {
+        "id": "source-promotion-review",
+        "priority": 1,
+        "status": "red",
+        "owner": "Local source",
+        "boundary": "local",
+        "command": "npm run source:promotion-packet",
+        "proof": "reports/resplit-fx-source-promotion-packet.md",
+        "blocker": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+        "unblocks": "Clean worktree FirstBite proof"
+      },
+      "firstBlockedAction": {
+        "id": "clean-firstbite-proof",
+        "priority": 2,
+        "status": "red",
+        "owner": "FirstBite local CI",
+        "boundary": "local-ci",
+        "command": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'",
+        "proof": "missing MCP execute report",
+        "blocker": "Source promotion bundle must land first.",
+        "unblocks": "Selected local-CI proof"
+      },
+      "runnableNow": [
+        {
+          "id": "source-promotion-review",
+          "priority": 1,
+          "status": "red",
+          "owner": "Local source",
+          "boundary": "local",
+          "command": "npm run source:promotion-packet",
+          "proof": "reports/resplit-fx-source-promotion-packet.md",
+          "blocker": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+          "unblocks": "Clean worktree FirstBite proof"
+        },
+        {
+          "id": "loaded-mcp-refresh",
+          "priority": 3,
+          "status": "red",
+          "owner": "Codex/Cursor MCP host",
+          "boundary": "local-agent-host",
+          "command": "npm run mcp:loaded-probe -- --reuse-existing",
+          "proof": "/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json",
+          "blocker": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).",
+          "unblocks": "In-app local coding agent trust"
+        },
+        {
+          "id": "release-history-backfill",
+          "priority": 5,
+          "status": "yellow",
+          "owner": "FX data",
+          "boundary": "data-quality",
+          "command": "npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23 && npm run validate:release",
+          "proof": "npm run validate:release",
+          "blocker": "[2026-05-24] P1 release-history risk: daily publish and Worker liveness are fresh again, but the May 12-23 history hole remains",
+          "unblocks": "FX release readiness"
+        },
+        {
+          "id": "firstbite-operating-readout",
+          "priority": 6,
+          "status": "yellow",
+          "owner": "Local agent fleet",
+          "boundary": "local-agent-fleet",
+          "command": "bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh",
+          "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+          "blocker": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.",
+          "unblocks": "Fleet-wide local agent confidence"
+        },
+        {
+          "id": "ledger-health-repair",
+          "priority": 7,
+          "status": "red",
+          "owner": "Ledger",
+          "boundary": "ledger",
+          "command": "bash /Users/leokwan/Development/ai-leo/skills/ledger/scripts/audit_ledger_quality.sh",
+          "proof": "/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive",
+          "blocker": "1 unrecovered failure row(s) found in the last 24h ledger window.",
+          "unblocks": "Agent history trust"
+        }
+      ],
+      "waitingOnDependency": [
+        {
+          "id": "clean-firstbite-proof",
+          "priority": 2,
+          "status": "red",
+          "owner": "FirstBite local CI",
+          "boundary": "local-ci",
+          "command": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'",
+          "proof": "missing MCP execute report",
+          "blocker": "Source promotion bundle must land first.",
+          "unblocks": "Selected local-CI proof"
+        },
+        {
+          "id": "grafana-otel-proof",
+          "priority": 4,
+          "status": "yellow",
+          "owner": "Cloudflare/Grafana",
+          "boundary": "external-observability",
+          "command": "npm run observability:otel-smoke -- --since-minutes 60",
+          "proof": "/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json",
+          "blocker": "Requires Cloudflare destination setup, deployment, and Grafana read env.",
+          "unblocks": "OTEL/Grafana launch trust"
+        },
+        {
+          "id": "m4-peer-execute-proof",
+          "priority": 7,
+          "status": "yellow",
+          "owner": "M4 local agent peer",
+          "boundary": "peer-execution",
+          "command": "Run generated fresh-clone-commands.sh on the M4 Pro",
+          "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+          "blocker": "Requires running the generated packet on the M4 Pro and capturing proof from that host.",
+          "unblocks": "Peer execution capacity trust"
+        }
+      ],
+      "boundaries": [
+        {
+          "boundary": "local",
+          "count": 1,
+          "red": 1,
+          "yellow": 0,
+          "actions": [
+            "source-promotion-review"
+          ]
+        },
+        {
+          "boundary": "local-ci",
+          "count": 1,
+          "red": 1,
+          "yellow": 0,
+          "actions": [
+            "clean-firstbite-proof"
+          ]
+        },
+        {
+          "boundary": "local-agent-host",
+          "count": 1,
+          "red": 1,
+          "yellow": 0,
+          "actions": [
+            "loaded-mcp-refresh"
+          ]
+        },
+        {
+          "boundary": "external-observability",
+          "count": 1,
+          "red": 0,
+          "yellow": 1,
+          "actions": [
+            "grafana-otel-proof"
+          ]
+        },
+        {
+          "boundary": "data-quality",
+          "count": 1,
+          "red": 0,
+          "yellow": 1,
+          "actions": [
+            "release-history-backfill"
+          ]
+        },
+        {
+          "boundary": "local-agent-fleet",
+          "count": 1,
+          "red": 0,
+          "yellow": 1,
+          "actions": [
+            "firstbite-operating-readout"
+          ]
+        },
+        {
+          "boundary": "peer-execution",
+          "count": 1,
+          "red": 0,
+          "yellow": 1,
+          "actions": [
+            "m4-peer-execute-proof"
+          ]
+        },
+        {
+          "boundary": "ledger",
+          "count": 1,
+          "red": 1,
+          "yellow": 0,
+          "actions": [
+            "ledger-health-repair"
+          ]
+        }
+      ]
+    },
+    "contracts": [
+      {
+        "gate": "Primary checkout",
+        "status": "yellow",
+        "current": "dirty 67 / behind 53 on codex/w2-5-fx-manifest-source-custody",
+        "proof": "git status --short --branch",
+        "nextAction": "Separate user changes from cockpit work, then prove the intended launch source from clean current origin/main."
+      },
+      {
+        "gate": "Tracked local-CI contract",
+        "status": "red",
+        "current": "3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)",
+        "proof": "cockpit Tracked Source Contract section",
+        "nextAction": "Land or sync .firstbite/local-ci.json, package scripts, and referenced script files onto tracked source before trusting clean-lane proof."
+      },
+      {
+        "gate": "Clean proof targetability",
+        "status": "red",
+        "current": "3 clean-proof readiness issue(s); current lane count 4.",
+        "proof": "cockpit Clean Proof Readiness section",
+        "nextAction": "Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command."
+      },
+      {
+        "gate": "Source promotion bundle",
+        "status": "red",
+        "current": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+        "proof": "cockpit Source Promotion Bundle section",
+        "nextAction": "Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof."
+      },
+      {
+        "gate": "FirstBite operating readout",
+        "status": "yellow",
+        "current": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.",
+        "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+        "nextAction": "Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims."
+      },
+      {
+        "gate": "M4 peer execution boundary",
+        "status": "yellow",
+        "current": "M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.",
+        "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+        "nextAction": "Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready."
+      },
+      {
+        "gate": "Selected local-CI proof",
+        "status": "yellow",
+        "current": "Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.",
+        "proof": "missing MCP execute report",
+        "nextAction": "Rerun all FX lanes from clean current source with commands matching .firstbite/local-ci.json."
+      },
+      {
+        "gate": "Loaded MCP host catalog",
+        "status": "red",
+        "current": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).",
+        "proof": "/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json",
+        "nextAction": "Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes."
+      },
+      {
+        "gate": "Repo-backed MCP package",
+        "status": "green",
+        "current": "Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.",
+        "proof": "/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci",
+        "nextAction": "Treat this as the control-plane source until loaded host catches up."
+      },
+      {
+        "gate": "OTEL/Grafana evidence",
+        "status": "yellow",
+        "current": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.",
+        "proof": "/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json",
+        "nextAction": "After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match."
+      },
+      {
+        "gate": "Release-history strict coverage",
+        "status": "yellow",
+        "current": "Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.",
+        "proof": "npm run validate:release",
+        "nextAction": "Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes."
+      },
+      {
+        "gate": "Agent ledger health",
+        "status": "red",
+        "current": "1 unrecovered failure row(s) found in the last 24h ledger window.",
+        "proof": "/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive",
+        "nextAction": "Resolve unrecovered ledger failure rows before using agent history as trust evidence."
+      }
+    ],
+    "risks": [
+      {
+        "status": "yellow",
+        "label": "Dirty primary checkout",
+        "detail": "67 changed path(s) in the primary checkout; do not treat local proof as clean-main proof."
+      },
+      {
+        "status": "yellow",
+        "label": "Behind origin/main",
+        "detail": "Local HEAD is 53 commit(s) behind origin/main."
+      },
+      {
+        "status": "yellow",
+        "label": "Local-CI proof gap",
+        "detail": "Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally."
+      },
+      {
+        "status": "yellow",
+        "label": "MCP proof freshness gap",
+        "detail": "No execute report was found for this repo."
+      },
+      {
+        "status": "red",
+        "label": "Tracked local-CI source gap",
+        "detail": "3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)"
+      },
+      {
+        "status": "red",
+        "label": "Clean proof targetability gap",
+        "detail": "3 clean-proof readiness issue(s); current lane count 4."
+      },
+      {
+        "status": "red",
+        "label": "Source promotion bundle gap",
+        "detail": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)"
+      },
+      {
+        "status": "yellow",
+        "label": "FirstBite operating readout gap",
+        "detail": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only."
+      },
+      {
+        "status": "yellow",
+        "label": "M4 peer execution boundary",
+        "detail": "M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false."
+      },
+      {
+        "status": "red",
+        "label": "Loaded MCP lane catalog gap",
+        "detail": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s)."
+      },
+      {
+        "status": "yellow",
+        "label": "Loaded MCP probe freshness gap",
+        "detail": "Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary."
+      },
+      {
+        "status": "yellow",
+        "label": "OTEL/Grafana proof gap",
+        "detail": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json."
+      },
+      {
+        "status": "red",
+        "label": "Agent ledger failure history",
+        "detail": "1 unrecovered failure row(s) found in the last 24h ledger window."
+      },
+      {
+        "status": "yellow",
+        "label": "Release-history readiness yellow",
+        "detail": "Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates."
+      }
+    ]
+  }
+}

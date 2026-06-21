@@ -1,0 +1,223 @@
+openapi: 3.1.0
+# DRAFT contract source-of-truth for resplit-currency-api. This is the
+# MIGRATION-INVARIANT contract: the Cloudflare->GCP rebuild MUST preserve it
+# (resplit-ios + resplit-web depend on these shapes). It is also the AI-driven-dev
+# ("vibe code") source of truth — clients, mocks, MCP server, and contract tests
+# generate from here. Grounded in the Phase 1 map of the live Worker routes.
+# Promote into the repo (e.g. /contract/openapi.yaml) during the build; wire a
+# contract-diff test so no deploy can silently break the shape.
+info:
+  title: Resplit Currency API
+  version: 1.0.0
+  description: >
+    Daily FX rates for 160+ fiat currencies + an App Attest-gated OCR proxy and
+    photo sideload. Host-agnostic contract: primary https://fx.resplit.app,
+    mirrors www/staging.resplit.app/api/fx/*.
+servers:
+  - url: https://fx.resplit.app
+    description: Primary (Cloudflare today; Cloud Run + CDN after migration)
+  - url: https://www.resplit.app/api/fx
+    description: Production mirror
+  - url: https://staging.resplit.app/api/fx
+    description: Staging mirror
+
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, timestamp]
+                properties:
+                  ok: { type: boolean }
+                  service: { type: string }
+                  environment: { type: string }
+                  release: { type: string, nullable: true }
+                  timestamp: { type: string, format: date-time }
+
+  /quote:
+    get:
+      summary: Single FX rate for a pair on a date (exact or prior-day fallback)
+      operationId: getQuote
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 4 }, description: ISO-4217 base }
+        - { name: to, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 4 }, description: ISO-4217 quote }
+        - { name: date, in: query, required: false, schema: { type: string, format: date }, description: defaults to today (UTC) }
+      responses:
+        "200":
+          description: Resolved rate
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+          headers:
+            x-request-id: { schema: { type: string } }
+            Cache-Control: { schema: { type: string }, description: "public, s-maxage=3600, stale-while-revalidate=86400" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+
+  /history:
+    get:
+      summary: FX rate series for a pair over a date range, with coverage metadata
+      operationId: getHistory
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string } }
+        - { name: to, in: query, required: true, schema: { type: string } }
+        - { name: start, in: query, required: true, schema: { type: string, format: date } }
+        - { name: end, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Series + coverage
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [points, coverage]
+                properties:
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      required: [date, rate]
+                      properties:
+                        date: { type: string, format: date }
+                        rate: { type: number }
+                  coverage: { $ref: "#/components/schemas/HistoryCoverage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+
+  /coverage:
+    get:
+      summary: Diagnostic — runs quote+history and reports freshness/gap mismatch signals
+      operationId: getCoverage
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string } }
+        - { name: to, in: query, required: true, schema: { type: string } }
+        - { name: anchorDate, in: query, required: false, schema: { type: string, format: date } }
+        - { name: days, in: query, required: false, schema: { type: integer, default: 30 } }
+      responses:
+        "200":
+          description: Coverage report (no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CoverageReport" }
+
+  /ocr/challenge:
+    get:
+      summary: Single-use nonce for App Attest attestation
+      operationId: getOcrChallenge
+      responses:
+        "200":
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge]
+                properties: { challenge: { type: string } }
+
+  /ocr/attest:
+    post:
+      summary: Register a device's Secure-Enclave key (App Attest attestation)
+      operationId: postOcrAttest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keyId, attestationObject, challenge]
+              properties:
+                keyId: { type: string }
+                attestationObject: { type: string, description: base64 CBOR attestation }
+                challenge: { type: string }
+      responses:
+        "200": { description: Registered, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/AttestRejected" }
+
+  /ocr/scan:
+    post:
+      summary: Scan a receipt image (App Attest-gated proxy to Azure DI); key never on client
+      operationId: postOcrScan
+      parameters:
+        - { name: X-Resplit-Attest-Key-Id, in: header, schema: { type: string } }
+        - { name: X-Resplit-Attest-Assertion, in: header, schema: { type: string } }
+        - { name: X-Resplit-Attest-Soft-Fail, in: header, schema: { type: string, enum: ["true"] } }
+        - { name: X-Resplit-Client-Version, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+      responses:
+        "200":
+          description: Versioned, mode-discriminated envelope
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OcrScanEnvelope" }
+        "401": { $ref: "#/components/responses/AttestRejected" }
+        "429": { description: Per-device cap exceeded, content: { application/json: { schema: { $ref: "#/components/schemas/OcrScanEnvelope" } } } }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+
+components:
+  schemas:
+    Quote:
+      type: object
+      required: [from, to, date, rate, resolutionKind]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        date: { type: string, format: date }
+        rate: { type: number }
+        resolvedDate: { type: string, format: date }
+        resolutionKind: { type: string, enum: [exact, prior_day_fallback, today_fallback] }
+    HistoryCoverage:
+      type: object
+      properties:
+        requestedDays: { type: integer }
+        availableDays: { type: integer }
+        missingDayCount: { type: integer }
+        returnedRange: { type: object, properties: { start: { type: string }, end: { type: string } } }
+        archiveLatestDate: { type: string, format: date }
+        archiveGapCount: { type: integer }
+    CoverageReport:
+      type: object
+      properties:
+        checkedAt: { type: string, format: date-time }
+        from: { type: string }
+        to: { type: string }
+        anchorDate: { type: string, format: date }
+        mismatchCount: { type: integer }
+        signals:
+          type: array
+          items:
+            type: string
+            enum: [prior_day_fallback_used, today_fallback_used, history_range_incomplete, archive_gap_detected, quote_anchor_stale, archive_anchor_stale]
+        quote: { $ref: "#/components/schemas/Quote" }
+        historyCoverage: { $ref: "#/components/schemas/HistoryCoverage" }
+    OcrScanEnvelope:
+      type: object
+      required: [v, mode, provider, status]
+      properties:
+        v: { type: integer, enum: [1], description: bumps ONLY on ScannedReceipt shape change }
+        mode: { type: string, enum: [raw, scanned], description: raw=Azure body mapped client-side; scanned=server-mapped ScannedReceipt }
+        provider: { type: string, example: azure-di, description: OBSERVABILITY ONLY — clients MUST NOT branch on this }
+        scanId: { type: string }
+        status: { type: string, enum: [ok, partial, provider_error, rate_limited] }
+        raw: { type: object, nullable: true, description: Azure analyzeResults body when mode=raw }
+        scanned: { type: object, nullable: true, description: ScannedReceipt when mode=scanned (dormant) }
+  responses:
+    BadRequest:
+      description: Invalid query
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    UpstreamError:
+      description: Upstream/provider failure
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    AttestRejected:
+      description: App Attest verification failed
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
