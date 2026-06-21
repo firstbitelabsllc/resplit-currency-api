@@ -58,6 +58,7 @@ jobs:
 
   deploy:
     name: build + deploy
+    if: github.event_name == 'workflow_dispatch'
     needs: test
     runs-on: ubuntu-latest
     env:
