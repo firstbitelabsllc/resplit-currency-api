@@ -1,0 +1,223 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+
+const {
+  buildGrafanaSmokeReport,
+  extractLokiMatch,
+  extractTempoMatch,
+  isGeneratedOtelArtifactPath,
+  missingGrafanaConfig,
+  parseArgs,
+  queryWindow,
+  readSourceIdentity,
+} = require('../scripts/verify-grafana-otel-smoke.js')
+
+test('parseArgs reads Grafana verifier env without leaking token into config names', () => {
+  const options = parseArgs(['--skip-trigger', '--since-minutes', '15'], {
+    GRAFANA_BASE_URL: 'https://example.grafana.net/',
+    GRAFANA_API_TOKEN: 'secret-token',
+    GRAFANA_TEMPO_DATASOURCE_UID: 'tempo-uid',
+    GRAFANA_LOKI_DATASOURCE_UID: 'loki-uid',
+  })
+
+  assert.equal(options.baseUrl, 'https://example.grafana.net')
+  assert.equal(options.token, 'secret-token')
+  assert.equal(options.skipTrigger, true)
+  assert.equal(options.sinceMinutes, 15)
+  assert.deepEqual(missingGrafanaConfig(options), [])
+})
+
+test('buildGrafanaSmokeReport stays yellow when read-only Grafana config is missing', async () => {
+  const report = await buildGrafanaSmokeReport({
+    skipTrigger: true,
+    triggerUrl: 'https://fx.resplit.app/health',
+    baseUrl: null,
+    token: null,
+    tempoDatasourceUid: null,
+    lokiDatasourceUid: null,
+    tempoQuery: 'tempo-query',
+    lokiQuery: 'loki-query',
+    sinceMinutes: 60,
+    timeoutMs: 1000,
+    settleMs: 0,
+  }, {
+    now: () => '2026-05-25T05:30:00.000Z',
+    fetch: async () => {
+      throw new Error('should not query Grafana without config')
+    },
+  })
+
+  assert.equal(report.status, 'yellow')
+  assert.deepEqual(report.grafana.missingConfig, [
+    'GRAFANA_BASE_URL',
+    'GRAFANA_API_TOKEN',
+    'GRAFANA_TEMPO_DATASOURCE_UID',
+    'GRAFANA_LOKI_DATASOURCE_UID',
+  ])
+  assert.deepEqual(report.checks.map(check => check.id), [
+    'worker-trigger',
+    'grafana-read-config',
+    'tempo-query',
+    'loki-query',
+  ])
+  assert.equal(report.grafana.config.tokenConfigured, false)
+  assert.equal(report.grafana.queryWindow.sinceMinutes, 60)
+  assert.equal(report.checks.find(check => check.id === 'grafana-read-config').status, 'yellow')
+  assert.match(report.checks.find(check => check.id === 'tempo-query').proof, /GRAFANA_TEMPO_DATASOURCE_UID/)
+  assert.match(report.nextActions.join(' '), /missing Grafana base URL/)
+  assert.match(report.summary, /Missing Grafana config/)
+  assert.equal(JSON.stringify(report).includes('secret-token'), false)
+})
+
+test('buildGrafanaSmokeReport returns green when Tempo and Loki both match', async () => {
+  const calls = []
+  const sourceIdentity = {
+    status: 'ok',
+    repoPath: '/tmp/resplit-currency-api',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head: 'abc123def456',
+    headFull: 'abc123def4567890abc123def4567890abc123de',
+    dirtyCount: 2,
+  }
+  const report = await buildGrafanaSmokeReport({
+    skipTrigger: false,
+    triggerUrl: 'https://fx.resplit.app/health',
+    baseUrl: 'https://example.grafana.net',
+    token: 'secret-token',
+    tempoDatasourceUid: 'tempo-uid',
+    lokiDatasourceUid: 'loki-uid',
+    tempoQuery: '{ resource.service.name =~ ".*resplit.*" }',
+    lokiQuery: '{service_name=~".*resplit.*"}',
+    sinceMinutes: 60,
+    timeoutMs: 1000,
+    settleMs: 0,
+  }, {
+    now: () => '2026-05-25T05:30:00.000Z',
+    sourceIdentity,
+    fetch: async (url, options = {}) => {
+      calls.push({ url, options })
+      if (url === 'https://fx.resplit.app/health') {
+        return jsonResponse({ ok: true }, 200, { 'x-request-id': 'req_123' })
+      }
+      if (String(url).includes('/api/search?')) {
+        return jsonResponse({
+          traces: [{ traceID: '0123456789abcdef0123456789abcdef' }],
+        })
+      }
+      if (String(url).includes('/loki/api/v1/query_range?')) {
+        return jsonResponse({
+          status: 'success',
+          data: { result: [{ values: [['1', 'resplit log line']] }] },
+        })
+      }
+      throw new Error(`unexpected URL: ${url}`)
+    },
+  })
+
+  assert.equal(report.status, 'green')
+  assert.equal(report.trigger.ok, true)
+  assert.equal(report.trigger.requestId, 'req_123')
+  assert.equal(report.grafana.tempo.matched, true)
+  assert.equal(report.grafana.tempo.traceId, '0123456789abcdef0123456789abcdef')
+  assert.equal(report.grafana.loki.matched, true)
+  assert.equal(report.grafana.loki.resultCount, 1)
+  assert.deepEqual(report.checks.map(check => check.status), ['green', 'green', 'green', 'green'])
+  assert.deepEqual(report.nextActions, [])
+  assert.deepEqual(report.sourceIdentity, sourceIdentity)
+  assert.equal(report.grafana.config.tokenConfigured, true)
+  assert.equal(report.grafana.queryWindow.start, '2026-05-25T04:30:00.000Z')
+  assert.equal(report.grafana.queryWindow.end, '2026-05-25T05:30:00.000Z')
+  assert.equal(JSON.stringify(report).includes('secret-token'), false)
+
+  const grafanaCalls = calls.filter(call => {
+    const callUrl = new URL(String(call.url))
+    return callUrl.protocol === 'https:' && callUrl.hostname === 'example.grafana.net'
+  })
+  assert.equal(grafanaCalls.length, 2)
+  assert.equal(grafanaCalls.every(call => call.options.headers.authorization === 'Bearer secret-token'), true)
+})
+
+test('readSourceIdentity records checkout head, repo path, and dirty count', () => {
+  const calls = []
+  const sourceIdentity = readSourceIdentity('/tmp/fx-repo', {
+    execFileSync: (_cmd, args) => {
+      calls.push(args)
+      const key = args.slice(2).join(' ')
+      if (key === 'rev-parse --show-toplevel') return '/tmp/fx-repo\n'
+      if (key === 'status --porcelain=v1 --untracked-files=all') return ' M scripts/verify-grafana-otel-smoke.js\n?? reports/grafana-otel-smoke.json\n?? docs/grafana-otel-smoke-20260525.md\n'
+      if (key === 'rev-parse --abbrev-ref HEAD') return 'codex/fx-otel-grafana-config-20260525\n'
+      if (key === 'rev-parse --short=12 HEAD') return 'b44aee28f379\n'
+      if (key === 'rev-parse HEAD') return 'b44aee28f379111111111111111111111111111111\n'
+      throw new Error(`unexpected git args: ${args.join(' ')}`)
+    },
+  })
+
+  assert.deepEqual(sourceIdentity, {
+    status: 'ok',
+    repoPath: '/tmp/fx-repo',
+    branch: 'codex/fx-otel-grafana-config-20260525',
+    head: 'b44aee28f379',
+    headFull: 'b44aee28f379111111111111111111111111111111',
+    dirtyCount: 3,
+    dirtyPaths: [
+      'scripts/verify-grafana-otel-smoke.js',
+      'reports/grafana-otel-smoke.json',
+      'docs/grafana-otel-smoke-20260525.md',
+    ],
+    sourceDirtyCount: 1,
+    sourceDirtyPaths: ['scripts/verify-grafana-otel-smoke.js'],
+  })
+  assert.equal(calls.every(args => args[0] === '-C' && args[1] === '/tmp/fx-repo'), true)
+})
+
+test('isGeneratedOtelArtifactPath recognizes generated smoke artifacts only', () => {
+  assert.equal(isGeneratedOtelArtifactPath('reports/grafana-otel-smoke.json'), true)
+  assert.equal(isGeneratedOtelArtifactPath('docs/grafana-otel-smoke-20260525.md'), true)
+  assert.equal(isGeneratedOtelArtifactPath('scripts/verify-grafana-otel-smoke.js'), false)
+  assert.equal(isGeneratedOtelArtifactPath('wrangler.jsonc'), false)
+})
+
+test('extractors understand common Tempo and Loki response shapes', () => {
+  assert.deepEqual(extractTempoMatch({
+    data: {
+      traces: [{ traceId: 'abc123' }, { traceID: 'def456' }],
+    },
+  }), {
+    matched: true,
+    resultCount: 2,
+    traceId: 'abc123',
+  })
+
+  assert.deepEqual(extractLokiMatch({
+    data: {
+      result: [
+        { values: [['1', 'line one'], ['2', 'line two']] },
+        { values: [] },
+      ],
+    },
+  }), {
+    matched: true,
+    resultCount: 2,
+  })
+})
+
+test('queryWindow emits Tempo seconds and Loki nanoseconds', () => {
+  const window = queryWindow(new Date('2026-05-25T05:30:00.000Z'), 5)
+
+  assert.equal(window.endSeconds - window.startSeconds, 300)
+  assert.equal(BigInt(window.endNanoseconds) - BigInt(window.startNanoseconds), 300000000000n)
+})
+
+function jsonResponse(json, status = 200, headers = {}) {
+  const normalizedHeaders = Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
+  )
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: key => normalizedHeaders[String(key).toLowerCase()] || null,
+    },
+    text: async () => JSON.stringify(json),
+  }
+}
