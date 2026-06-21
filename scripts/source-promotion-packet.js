@@ -186,7 +186,6 @@ function buildPacket({
     stageablePaths,
     holdByDefault,
     stagingGate,
-    promotionReview,
   })
   const status = bundle?.status || 'yellow'
   const commandCounts = {
@@ -375,22 +374,17 @@ function buildBlockers({ report, bundle, stageCandidates, holdByDefault, dirtyPa
 function buildStagingGate({ stageablePaths = [], stageCandidates = [], promotionReview = null } = {}) {
   const blockedRows = (promotionReview?.rows || []).filter(row => row.status === 'red')
   const blockedPathSet = new Set(blockedRows.map(row => row.path))
-  const indexSourcedPathSet = new Set((promotionReview?.rows || [])
-    .filter(row => row.status !== 'red' && row.comparisonSource === 'index')
-    .map(row => row.path))
   const nonRedStageablePaths = stageCandidates
     .filter(row => row.stageable && !blockedPathSet.has(row.path))
     .map(row => row.path)
-  const commandStageablePaths = nonRedStageablePaths
-    .filter(relPath => !indexSourcedPathSet.has(relPath))
   const fullStageBlocked = blockedRows.length > 0
-  const fullStageCommand = !fullStageBlocked && commandStageablePaths.length > 0
-    ? `git add -- ${shellQuotePaths(commandStageablePaths)}`
+  const fullStageCommand = !fullStageBlocked && stageablePaths.length > 0
+    ? `git add -- ${shellQuotePaths(stageablePaths)}`
     : fullStageBlocked
       ? `BLOCKED: resolve ${blockedRows.length} red candidate(s) before staging the full bundle`
       : ''
-  const nonRedStageCommand = commandStageablePaths.length > 0
-    ? `git add -- ${shellQuotePaths(commandStageablePaths)}`
+  const nonRedStageCommand = nonRedStageablePaths.length > 0
+    ? `git add -- ${shellQuotePaths(nonRedStageablePaths)}`
     : ''
   const summary = fullStageBlocked
     ? `Full bundle staging is blocked by ${blockedRows.length} red upstream-drift candidate(s); ${nonRedStageablePaths.length} non-red candidate(s) remain available for separate review-only staging.`
@@ -416,8 +410,6 @@ function buildStagingGate({ stageablePaths = [], stageCandidates = [], promotion
       lineDeltaVsOrigin: row.lineDeltaVsOrigin,
     })),
     nonRedStageablePaths,
-    commandStageablePaths,
-    indexSourcedPaths: [...indexSourcedPathSet],
   }
 }
 
@@ -426,26 +418,17 @@ function buildStagedBundleAttestation({
   stageablePaths = [],
   holdByDefault = [],
   stagingGate = null,
-  promotionReview = null,
 } = {}) {
   const stageableSet = new Set(stageablePaths)
   const holdByDefaultSet = new Set((holdByDefault || []).map(row => row.path))
-  const indexSourcedPathSet = new Set((promotionReview?.rows || [])
-    .filter(row => row.status !== 'red' && row.comparisonSource === 'index')
-    .map(row => row.path))
   const stagedRows = (gitStatusRows || []).filter(row => isPathStaged(row))
   const stagedPaths = uniqueSorted(stagedRows.map(row => row.path))
   const stagedStageablePaths = stagedPaths.filter(relPath => stageableSet.has(relPath))
   const unstagedStageablePaths = stageablePaths.filter(relPath => !stagedPaths.includes(relPath))
   const unexpectedStagedPaths = stagedPaths.filter(relPath => !stageableSet.has(relPath))
   const stagedHoldByDefaultPaths = stagedPaths.filter(relPath => holdByDefaultSet.has(relPath))
-  const dirtyAfterStagingRows = stagedRows
+  const dirtyAfterStagingPaths = stagedRows
     .filter(row => stageableSet.has(row.path) && isWorktreeDirtyAfterStaging(row))
-  const ignoredDirtyAfterStagingPaths = dirtyAfterStagingRows
-    .filter(row => indexSourcedPathSet.has(row.path))
-    .map(row => row.path)
-  const dirtyAfterStagingPaths = dirtyAfterStagingRows
-    .filter(row => !indexSourcedPathSet.has(row.path))
     .map(row => row.path)
 
   const fullStageBlocked = Boolean(stagingGate?.fullStageBlocked)
@@ -470,7 +453,6 @@ function buildStagedBundleAttestation({
     unstagedStageableCount: unstagedStageablePaths.length,
     unexpectedStagedCount: unexpectedStagedPaths.length,
     dirtyAfterStagingCount: dirtyAfterStagingPaths.length,
-    ignoredDirtyAfterStagingCount: ignoredDirtyAfterStagingPaths.length,
   })
   const nextAction = exactMatch
     ? (stageablePaths.length > 0
@@ -493,14 +475,12 @@ function buildStagedBundleAttestation({
     unstagedStageableCount: unstagedStageablePaths.length,
     unexpectedStagedCount: unexpectedStagedPaths.length,
     dirtyAfterStagingCount: dirtyAfterStagingPaths.length,
-    ignoredDirtyAfterStagingCount: ignoredDirtyAfterStagingPaths.length,
     stagedPaths,
     stagedStageablePaths,
     unstagedStageablePaths,
     unexpectedStagedPaths,
     stagedHoldByDefaultPaths,
     dirtyAfterStagingPaths,
-    ignoredDirtyAfterStagingPaths,
   }
 }
 
@@ -512,7 +492,6 @@ function summarizeStagedBundle({
   unstagedStageableCount,
   unexpectedStagedCount,
   dirtyAfterStagingCount,
-  ignoredDirtyAfterStagingCount = 0,
 }) {
   if (fullStageBlocked) {
     return 'Index attestation is red because the full staging gate is blocked.'
@@ -521,10 +500,7 @@ function summarizeStagedBundle({
     if (stageableCount === 0) {
       return 'No source-promotion stage candidates remain; no unexpected staged paths and no dirty-after-staging files.'
     }
-    const ignored = ignoredDirtyAfterStagingCount > 0
-      ? `; ${ignoredDirtyAfterStagingCount} unstaged path(s) intentionally held outside the staged bundle`
-      : ''
-    return `Exact source-promotion bundle is staged (${stagedStageableCount}/${stageableCount}); no unexpected staged paths and no dirty-after-staging files${ignored}.`
+    return `Exact source-promotion bundle is staged (${stagedStageableCount}/${stageableCount}); no unexpected staged paths and no dirty-after-staging files.`
   }
   return [
     `${stagedStageableCount}/${stageableCount} stage candidate(s) staged`,
@@ -539,9 +515,7 @@ function buildPromotionReview({ repoDir, stageCandidates = [], contentComparison
   const rows = stageCandidates.map(candidate => {
     const comparison = contentComparisons && Object.prototype.hasOwnProperty.call(contentComparisons, candidate.path)
       ? contentComparisons[candidate.path]
-      : compareCandidateContent(repoDir, candidate.path, {
-        source: shouldCompareIndexContent(candidate) ? 'index' : 'worktree',
-      })
+      : compareCandidateContent(repoDir, candidate.path)
     return classifyPromotionCandidate(candidate, comparison, {
       reviewDecision: decisionsByPath.get(candidate.path) || null,
     })
@@ -574,7 +548,6 @@ function classifyPromotionCandidate(candidate, comparison = {}, { reviewDecision
   const currentHash = comparison?.currentHash || null
   const headHash = comparison?.headHash || null
   const originHash = comparison?.originHash || null
-  const comparisonSource = comparison?.source || 'worktree'
   const currentMatchesHead = Boolean(currentHash && headHash && currentHash === headHash)
   const currentMatchesOrigin = Boolean(currentHash && originHash && currentHash === originHash)
   const headMatchesOrigin = Boolean(headHash && originHash && headHash === originHash)
@@ -585,14 +558,6 @@ function classifyPromotionCandidate(candidate, comparison = {}, { reviewDecision
       classification: 'missing-current',
       action: 'Do not stage; recreate the file or remove it from the bundle before clean proof.',
     }), reviewDecision)
-  }
-
-  if (isReviewDecisionManifestPath(candidate.path) && candidate.originExists && !currentMatchesOrigin) {
-    return promotionCandidateRow(candidate, comparison, {
-      status: 'yellow',
-      classification: 'review-decision-manifest-update',
-      action: 'Review decision manifest changed; keep it stageable but do not require a self-referential hash decision.',
-    })
   }
 
   if (!candidate.headExists && candidate.originExists) {
@@ -626,13 +591,6 @@ function classifyPromotionCandidate(candidate, comparison = {}, { reviewDecision
   }
 
   if (candidate.headExists && candidate.originExists) {
-    if (comparisonSource === 'index' && currentMatchesOrigin && candidate.gitStatus) {
-      return applyReviewDecision(promotionCandidateRow(candidate, comparison, {
-        status: 'yellow',
-        classification: 'modified-tracked-index-origin-match',
-        action: 'Staged package contract matches origin/main; keep unstaged worktree drift outside this source-promotion bundle.',
-      }), reviewDecision)
-    }
     if (!headMatchesOrigin && originHash && !currentMatchesOrigin) {
       return applyReviewDecision(promotionCandidateRow(candidate, comparison, {
         status: 'red',
@@ -661,15 +619,6 @@ function classifyPromotionCandidate(candidate, comparison = {}, { reviewDecision
   }), reviewDecision)
 }
 
-function isReviewDecisionManifestPath(relPath) {
-  return relPath === REVIEW_DECISIONS_PATH
-}
-
-function shouldCompareIndexContent(candidate) {
-  return candidate?.path === 'package.json'
-    && String(candidate?.gitStatus || '').startsWith('MM ')
-}
-
 function promotionCandidateRow(candidate, comparison, { status, classification, action }) {
   const currentLines = nullishNumber(comparison?.currentLines)
   const headLines = nullishNumber(comparison?.headLines)
@@ -686,7 +635,6 @@ function promotionCandidateRow(candidate, comparison, { status, classification, 
     currentHash: comparison?.currentHash || null,
     headHash: comparison?.headHash || null,
     originHash: comparison?.originHash || null,
-    comparisonSource: comparison?.source || 'worktree',
     currentLines,
     headLines,
     originLines,
@@ -767,15 +715,12 @@ function normalizedReviewDecisions(reviewDecisions) {
     }))
 }
 
-function compareCandidateContent(repoDir, relPath, { source = 'worktree' } = {}) {
-  const current = source === 'index'
-    ? gitIndexBlobInfo(repoDir, relPath)
-    : currentFileInfo(repoDir, relPath)
+function compareCandidateContent(repoDir, relPath) {
+  const current = currentFileInfo(repoDir, relPath)
   const head = gitBlobInfo(repoDir, 'HEAD', relPath)
   const origin = gitBlobInfo(repoDir, 'origin/main', relPath)
 
   return {
-    source,
     currentHash: current.hash,
     headHash: head.hash,
     originHash: origin.hash,
@@ -803,9 +748,6 @@ function reviewCommandForCandidate(candidate, classification) {
   if (classification === 'modified-tracked-origin-drift') {
     return `git diff -- ${quotedPath} && git diff origin/main -- ${quotedPath}`
   }
-  if (classification === 'modified-tracked-index-origin-match') {
-    return `git diff --cached -- ${quotedPath} && git diff -- ${quotedPath}`
-  }
   if (classification === 'modified-tracked') {
     return `git diff -- ${quotedPath}`
   }
@@ -831,17 +773,6 @@ function gitBlobInfo(repoDir, ref, relPath) {
     }))
   } catch {
     return emptyContentInfo()
-  }
-}
-
-function gitIndexBlobInfo(repoDir, relPath) {
-  try {
-    return contentInfo(execFileSync('git', ['show', `:${relPath}`], {
-      cwd: repoDir,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }))
-  } catch {
-    return currentFileInfo(repoDir, relPath)
   }
 }
 

@@ -1,0 +1,246 @@
+{
+  "generatedAt": "2026-06-20T18:42:25.167Z",
+  "mode": "fast",
+  "status": "red",
+  "repo": {
+    "name": "resplit-currency-api",
+    "path": "/Users/leokwan/Development/resplit-currency-api"
+  },
+  "outputPath": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.json",
+  "markdownPath": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.md",
+  "cockpit": {
+    "path": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-reliability-cockpit.json",
+    "generatedAt": "2026-06-20T18:42:15.131Z",
+    "verdict": {
+      "status": "red",
+      "label": "RED - missing required trust contract"
+    },
+    "contracts": [
+      {
+        "gate": "Primary checkout",
+        "status": "yellow",
+        "current": "dirty 67 / behind 53 on codex/w2-5-fx-manifest-source-custody",
+        "proof": "git status --short --branch",
+        "nextAction": "Separate user changes from cockpit work, then prove the intended launch source from clean current origin/main."
+      },
+      {
+        "gate": "Tracked local-CI contract",
+        "status": "red",
+        "current": "3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)",
+        "proof": "cockpit Tracked Source Contract section",
+        "nextAction": "Land or sync .firstbite/local-ci.json, package scripts, and referenced script files onto tracked source before trusting clean-lane proof."
+      },
+      {
+        "gate": "Clean proof targetability",
+        "status": "red",
+        "current": "3 clean-proof readiness issue(s); current lane count 4.",
+        "proof": "cockpit Clean Proof Readiness section",
+        "nextAction": "Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command."
+      },
+      {
+        "gate": "Source promotion bundle",
+        "status": "red",
+        "current": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+        "proof": "cockpit Source Promotion Bundle section",
+        "nextAction": "Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof."
+      },
+      {
+        "gate": "FirstBite operating readout",
+        "status": "yellow",
+        "current": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.",
+        "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+        "nextAction": "Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims."
+      },
+      {
+        "gate": "M4 peer execution boundary",
+        "status": "yellow",
+        "current": "M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.",
+        "proof": "/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json",
+        "nextAction": "Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready."
+      },
+      {
+        "gate": "Selected local-CI proof",
+        "status": "yellow",
+        "current": "Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.",
+        "proof": "missing MCP execute report",
+        "nextAction": "Rerun all FX lanes from clean current source with commands matching .firstbite/local-ci.json."
+      },
+      {
+        "gate": "Loaded MCP host catalog",
+        "status": "red",
+        "current": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).",
+        "proof": "/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json",
+        "nextAction": "Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes."
+      },
+      {
+        "gate": "Repo-backed MCP package",
+        "status": "green",
+        "current": "Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.",
+        "proof": "/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci",
+        "nextAction": "Treat this as the control-plane source until loaded host catches up."
+      },
+      {
+        "gate": "OTEL/Grafana evidence",
+        "status": "yellow",
+        "current": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.",
+        "proof": "/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json",
+        "nextAction": "After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match."
+      },
+      {
+        "gate": "Release-history strict coverage",
+        "status": "yellow",
+        "current": "Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.",
+        "proof": "npm run validate:release",
+        "nextAction": "Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes."
+      },
+      {
+        "gate": "Agent ledger health",
+        "status": "red",
+        "current": "1 unrecovered failure row(s) found in the last 24h ledger window.",
+        "proof": "/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive",
+        "nextAction": "Resolve unrecovered ledger failure rows before using agent history as trust evidence."
+      }
+    ]
+  },
+  "summary": {
+    "headline": "status=red; commands 7 green, 2 yellow, 0 red; cockpit=RED - missing required trust contract",
+    "commandCounts": {
+      "green": 7,
+      "yellow": 2
+    }
+  },
+  "commands": [
+    {
+      "id": "cockpit-syntax",
+      "label": "Cockpit syntax",
+      "command": "node --check scripts/reliability-cockpit.js",
+      "status": "green",
+      "rc": 0,
+      "expectedExitCodes": [
+        0
+      ],
+      "yellowExitCodes": [],
+      "durationMs": 122,
+      "stdoutTail": "",
+      "stderrTail": ""
+    },
+    {
+      "id": "preflight-syntax",
+      "label": "Preflight syntax",
+      "command": "node --check scripts/trust-preflight.js",
+      "status": "green",
+      "rc": 0,
+      "expectedExitCodes": [
+        0
+      ],
+      "yellowExitCodes": [],
+      "durationMs": 76,
+      "stdoutTail": "",
+      "stderrTail": ""
+    },
+    {
+      "id": "source-promotion-packet-syntax",
+      "label": "Source promotion packet syntax",
+      "command": "node --check scripts/source-promotion-packet.js",
+      "status": "green",
+      "rc": 0,
+      "expectedExitCodes": [
+        0
+      ],
+      "yellowExitCodes": [],
+      "durationMs": 84,
+      "stdoutTail": "",
+      "stderrTail": ""
+    },
+    {
+      "id": "grafana-verifier-syntax",
+      "label": "Grafana verifier syntax",
+      "command": "node --check scripts/verify-grafana-otel-smoke.js",
+      "status": "green",
+      "rc": 0,
+      "expectedExitCodes": [
+        0
+      ],
+      "yellowExitCodes": [],
+      "durationMs": 84,
+      "stdoutTail": "",
+      "stderrTail": ""
+    },
+    {
+      "id": "loaded-mcp-capture-syntax",
+      "label": "Loaded MCP capture syntax",
+      "command": "node --check scripts/capture-loaded-mcp-probe.js",
+      "status": "green",
+      "rc": 0,
+      "expectedExitCodes": [
+        0
+      ],
+      "yellowExitCodes": [],
+      "durationMs": 84,
+      "stdoutTail": "",
+      "stderrTail": ""
+    },
+    {
+      "id": "targeted-tests",
+      "label": "Targeted cockpit tests",
+      "command": "node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/source-promotion-packet.test.js tests/verify-grafana-otel-smoke.test.js tests/trust-preflight.test.js",
+      "status": "green",
+      "rc": 0,
+      "expectedExitCodes": [
+        0
+      ],
+      "yellowExitCodes": [],
+      "durationMs": 7985,
+      "stdoutTail": "on-FX failures (2.900292ms)\n✔ inspectLoadedMcpProbe detects stale in-process lane catalogs (2.563167ms)\n✔ inspectLoadedMcpProbe marks old probe artifacts as stale evidence (1.766875ms)\n✔ inspectLoadedMcpProbe accepts a current repo-manifest catalog (1.987291ms)\n✔ inspectRepoBackedMcpCatalog reports current package catalog and portability (0.30125ms)\n✔ inspectRepoBackedMcpCatalog flags package catalog command failures (0.101416ms)\n✔ buildMcpCatalogDelta explains loaded host drift against repo-backed catalog (0.262ms)\n✔ computeRisks flags loaded MCP catalog drift from probe artifacts (0.075709ms)\n✔ computeRisks flags stale loaded MCP probe artifacts separately from catalog status (0.071583ms)\n✔ findLatestMcpProofForRepo prefers complete manifest proof over newer partial proof (8.518917ms)\n✔ findLatestMcpProofForRepo distinguishes primary checkout from execution worktree (3.745542ms)\n✔ findLatestMcpProofForRepo keeps clean execution proof ahead of newer dirty active proof (4.989208ms)\n✔ inspectTelemetry prefers production observability when present (0.776583ms)\n✔ buildReport joins manifest, nurse, inbox, ledger, and MCP proof (1380.165292ms)\n✔ buildReport surfaces newer current-manifest proof without overriding clean-source selection (1108.44775ms)\n✔ computeRisks only elevates unresolved ledger failures (0.191542ms)\n✔ buildTrustContracts turns cockpit state into explicit proof actions (0.278792ms)\n✔ buildLaunchTrustAudit states allowed and forbidden launch claims per boundary (0.199083ms)\n✔ buildOperatorActionQueue prioritizes proof-producing recovery actions (0.225709ms)\n✔ buildOperatorRecoveryFlow separates runnable work from dependencies (0.090083ms)\n✔ buildEvidenceFreshnessLedger separates artifact age from trust status (2.916667ms)\n✔ renderHtml escapes dynamic values (0.868458ms)\n✔ parseGitStatus captures status, untracked paths, deletes, and renames (1.728791ms)\n✔ buildPacket separates exact stage candidates from dirty hold-by-default rows (18.110667ms)\n✔ buildPacket attests exact staged bundle and rejects staged hold-by-default paths (22.045709ms)\n✔ buildPacket treats a landed source-promotion bundle as exact with zero stage candidates (0.329833ms)\n✔ buildPacket blocks full staging when upstream drift rows are red (0.542667ms)\n✔ buildPacket unblocks full staging for hash-locked reviewed origin drift (0.391ms)\n✔ buildPacket accepts staged package contract while holding unstaged package drift (0.28075ms)\n✔ buildPromotionReview treats the review-decision manifest as non-self-blocking metadata (0.087042ms)\n✔ buildPromotionReview separates upstream-present matches from origin drift (0.176417ms)\n✔ classifyPromotionCandidate blocks staging when origin already has different content (0.135375ms)\n✔ main writes the packet artifacts without touching git state (102.758292ms)\n✔ classifyDirtyPath keeps generated and local state out of the default bundle (0.086542ms)\n✔ parseArgs keeps fast preflight local and read-only by default (0.797459ms)\n✔ buildCommandPlan treats Grafana missing-config smoke as yellow evidence (0.963417ms)\n✔ classifyCommandResult separates expected yellow exits from red failures (0.127541ms)\n✔ buildTrustPreflightReport keeps cockpit red as the overall result (0.294417ms)\n✔ runTrustPreflight writes JSON and Markdown, then refreshes cockpit (31.17375ms)\n✔ parseArgs reads Grafana verifier env without leaking token into config names (2.073792ms)\n✔ buildGrafanaSmokeReport stays yellow when read-only Grafana config is missing (264.98875ms)\n✔ buildGrafanaSmokeReport returns green when Tempo and Loki both match (1.165333ms)\n✔ readSourceIdentity records checkout head, repo path, and dirty count (0.17675ms)\n✔ isGeneratedOtelArtifactPath recognizes generated smoke artifacts only (0.067042ms)\n✔ extractors understand common Tempo and Loki response shapes (0.08325ms)\n✔ queryWindow emits Tempo seconds and Loki nanoseconds (0.0615ms)\nℹ tests 73\nℹ suites 0\nℹ pass 73\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 7890.2135\n",
+      "stderrTail": ""
+    },
+    {
+      "id": "grafana-missing-config-proof",
+      "label": "Grafana missing-config proof",
+      "command": "npm run observability:otel-smoke -- --skip-trigger --output reports/grafana-otel-smoke-missing-config-preflight.json",
+      "status": "yellow",
+      "rc": 2,
+      "expectedExitCodes": [
+        0,
+        2
+      ],
+      "yellowExitCodes": [
+        2
+      ],
+      "durationMs": 765,
+      "stdoutTail": "\n> resplit-currency-api@1.0.0 observability:otel-smoke\n> node scripts/verify-grafana-otel-smoke.js --skip-trigger --output reports/grafana-otel-smoke-missing-config-preflight.json\n\nverify-grafana-otel-smoke: yellow: tempo=missing loki=missing output=reports/grafana-otel-smoke-missing-config-preflight.json\n",
+      "stderrTail": ""
+    },
+    {
+      "id": "cockpit-generate",
+      "label": "Cockpit regenerate",
+      "command": "npm run reliability:cockpit",
+      "status": "green",
+      "rc": 0,
+      "expectedExitCodes": [
+        0
+      ],
+      "yellowExitCodes": [],
+      "durationMs": 6411,
+      "stdoutTail": "\n> resplit-currency-api@1.0.0 reliability:cockpit\n> node scripts/reliability-cockpit.js\n\nreliability-cockpit: wrote /Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-reliability-cockpit.html\n",
+      "stderrTail": ""
+    },
+    {
+      "id": "source-promotion-packet-generate",
+      "label": "Source promotion packet generate",
+      "command": "npm run source:promotion-packet",
+      "status": "yellow",
+      "rc": 1,
+      "expectedExitCodes": [
+        0,
+        1
+      ],
+      "yellowExitCodes": [
+        1
+      ],
+      "durationMs": 4159,
+      "stdoutTail": "\n> resplit-currency-api@1.0.0 source:promotion-packet\n> node scripts/source-promotion-packet.js\n\nsource-promotion-packet: status=red; stage candidates 19; hold by default 56; command drift 4; cockpit=RED - missing required trust contract\nsource-promotion-packet: wrote /Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.json\nsource-promotion-packet: wrote /Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.md\n",
+      "stderrTail": ""
+    }
+  ]
+}

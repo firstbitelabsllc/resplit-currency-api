@@ -21,8 +21,8 @@
   "vars": {
     "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
     "SENTRY_ENVIRONMENT": "production",
-    // OCR proxy: Azure DI endpoint (NOT secret). The key is a wrangler secret:
-    //   npx wrangler secret put AZURE_OCR_KEY          (and --env production)
+    // OCR proxy: Azure DI endpoint (NOT secret). The key is a wrangler secret.
+    // Current deploy uses root --env="", so sync AZURE_OCR_KEY on the root script.
     "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com"
   },
   "kv_namespaces": [

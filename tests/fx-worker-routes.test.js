@@ -70,6 +70,69 @@ function createArchiveFetchStub(availableDates, rates = { eur: 1, usd: 1.2, aed:
   }
 }
 
+test('worker health route returns liveness payload with request id', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      headers: { 'x-request-id': 'req-health' },
+    }),
+    {
+      SENTRY_ENVIRONMENT: 'production',
+      SENTRY_RELEASE: 'release-123',
+    }
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-request-id'), 'req-health')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+
+  const body = await response.json()
+  assert.equal(body.ok, true)
+  assert.equal(body.service, 'resplit-currency-api')
+  assert.equal(body.environment, 'production')
+  assert.equal(body.release, 'release-123')
+  assert.match(body.timestamp, /^\d{4}-\d{2}-\d{2}T/)
+})
+
+test('worker health route supports HEAD without a body', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      method: 'HEAD',
+      headers: { 'x-request-id': 'req-health-head' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-request-id'), 'req-health-head')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(await response.text(), '')
+})
+
+test('worker health route rejects non-probe methods', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      method: 'POST',
+      headers: { 'x-request-id': 'req-health-post' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 405)
+  assert.equal(response.headers.get('x-request-id'), 'req-health-post')
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(response.headers.get('allow'), 'GET, HEAD')
+  assert.deepEqual(await response.json(), {
+    error: 'METHOD_NOT_ALLOWED',
+    message: 'Expected GET or HEAD',
+  })
+})
+
 test('worker quote route returns request id on invalid query', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 
@@ -309,6 +372,30 @@ test('worker coverage route rejects impossible calendar anchor dates', async () 
   assert.deepEqual(await response.json(), {
     error: 'INVALID_QUERY',
     message: 'Invalid anchorDate: 2026-02-31',
+  })
+})
+
+test('worker coverage route defaults an empty days param to the 30-day window', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const availableDates = enumerateDates('2026-02-23', '2026-03-24')
+
+  await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=', {
+        headers: { 'x-request-id': 'req-coverage-empty-days' },
+      }),
+      {
+        ASSET_BASE_URL: 'https://example-assets.dev',
+      }
+    )
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('x-request-id'), 'req-coverage-empty-days')
+
+    const body = await response.json()
+    // Empty `days` must fall back to the documented default (30), not floor to 1.
+    assert.equal(body.requestedDays, 30)
+    assert.equal(body.historyCoverage.availableDays, 30)
   })
 })
 

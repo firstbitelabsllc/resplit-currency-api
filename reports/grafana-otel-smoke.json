@@ -1,0 +1,77 @@
+{
+  "checkedAt": "2026-05-25T19:55:14.698Z",
+  "status": "green",
+  "worker": "resplit-fx",
+  "trigger": {
+    "skipped": false,
+    "url": "https://fx.resplit.app/coverage?from=AED&to=USD&anchorDate=2026-05-25&days=30",
+    "ok": true,
+    "status": 200,
+    "requestId": "acf4e6f3-e2fb-490b-98e1-4ba0f251abb2",
+    "error": null
+  },
+  "grafana": {
+    "baseUrl": "https://firstbitelabs.grafana.net",
+    "missingConfig": [],
+    "config": {
+      "baseUrlConfigured": true,
+      "tokenConfigured": true,
+      "tempoDatasourceUidConfigured": true,
+      "lokiDatasourceUidConfigured": true
+    },
+    "queryWindow": {
+      "sinceMinutes": 360,
+      "start": "2026-05-25T13:55:14.698Z",
+      "end": "2026-05-25T19:55:14.698Z"
+    },
+    "tempo": {
+      "matched": true,
+      "datasourceUid": "grafanacloud-traces",
+      "query": "{ resource.service.name =~ \".*resplit.*\" }",
+      "traceId": "771d342fbcc4b8d4f33989f0605a58aa",
+      "resultCount": 4,
+      "status": 200,
+      "error": null
+    },
+    "loki": {
+      "matched": true,
+      "datasourceUid": "grafanacloud-logs",
+      "query": "{service_name=~\".*resplit.*\"}",
+      "resultCount": 1,
+      "status": 200,
+      "error": null
+    }
+  },
+  "checks": [
+    {
+      "id": "worker-trigger",
+      "label": "Worker request trigger",
+      "status": "green",
+      "proof": "Worker trigger returned HTTP 200 with request id acf4e6f3-e2fb-490b-98e1-4ba0f251abb2.",
+      "nextAction": "Keep triggering the same Worker route before Grafana queries when you need fresh-request proof."
+    },
+    {
+      "id": "grafana-read-config",
+      "label": "Grafana read configuration",
+      "status": "green",
+      "proof": "Grafana base URL, read token, Tempo UID, and Loki UID are configured; token is redacted.",
+      "nextAction": "Keep using read-only Grafana credentials; never commit tokens into git."
+    },
+    {
+      "id": "tempo-query",
+      "label": "Tempo trace query",
+      "status": "green",
+      "proof": "Tempo matched 4 trace result(s); trace id 771d342fbcc4b8d4f33989f0605a58aa.",
+      "nextAction": "Keep the trace id attached to the evidence artifact."
+    },
+    {
+      "id": "loki-query",
+      "label": "Loki log query",
+      "status": "green",
+      "proof": "Loki matched 1 log line(s).",
+      "nextAction": "Keep the Loki result count attached to the evidence artifact."
+    }
+  ],
+  "nextActions": [],
+  "summary": "Grafana Tempo and Loki both matched Resplit FX Worker telemetry in the last 360 minute(s)."
+}

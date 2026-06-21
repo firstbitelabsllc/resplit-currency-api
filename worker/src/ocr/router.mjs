@@ -3,18 +3,23 @@
 // requestId -> log -> OPTIONS -> App Attest gate -> handler -> Sentry-catch.
 //
 // Contract: /ocr/scan returns the versioned envelope
-//   { v:1, mode:"raw", provider:"azure-di-v4", scanId, status, raw:{…AnalyzeResultV4} }
+//   { v:1, mode:"raw", provider:"azure-di-v4", scanId, status, kv_extras, raw:{…AnalyzeResultV4} }
 // The `mode` discriminator lets a future Worker deploy flip to mode:"scanned"
 // (server-side ScannedReceipt) with no app update.
+// `kv_extras` makes the opt-in second layout analyze diagnosable from the envelope:
+//   "off" (flag disabled) | "merged" (pairs merged) | "empty" (layout succeeded, no pairs)
+//   | "failed" (layout submit/poll failed; base receipt result still returned).
 
 import { errorResponse, jsonResponse } from '../http.mjs'
 import { resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
 import { CORS_HEADERS, handlePreflight } from '../sideload/cors.mjs'
-import { logOcrMonitoringEvent } from './monitoring.mjs'
+import { logOcrMonitoringEvent, captureOcrProviderFailure } from './monitoring.mjs'
 import {
   submitReceiptAnalyze,
   getReceiptAnalyzeResult,
+  submitLayoutKeyValueAnalyze,
+  getLayoutKeyValueAnalyzeResult,
   OCR_PROVIDER,
 } from './azure.mjs'
 import { verifyAssertion, AttestError } from './attest.mjs'
@@ -29,6 +34,7 @@ const SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
+const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 
 const sha256Hex = async (bytes) => {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
@@ -49,6 +55,9 @@ export async function handleOcr(request, env) {
   if (method === 'OPTIONS') return handlePreflight(request, requestId)
 
   if (!env.ATTEST_KV) {
+    // A missing binding takes the whole OCR surface down, so it must be visible on
+    // the same dashboard as scan traffic — not just a silent 503 in CF analytics.
+    logOcrMonitoringEvent('error', { signal: 'ocr_misconfigured', reason: 'attest_kv_unbound', requestId }, env)
     return errorResponse('OCR_MISCONFIGURED', 'attest store not bound', 503, requestId, RESPONSE_HEADERS)
   }
 
@@ -107,24 +116,32 @@ async function handleScan(request, env, requestId) {
   const assertionB64 = request.headers.get('x-resplit-attest-assertion') || ''
   const contentType = request.headers.get('content-type') || 'image/jpeg'
 
+  if (scanKillSwitchEnabled(env)) {
+    return scanDisabled(env, { scanId, requestId, clientVersion })
+  }
+
   const imageBytes = new Uint8Array(await request.arrayBuffer())
   if (imageBytes.length === 0) {
     return errorResponse('BAD_REQUEST', 'empty image body', 400, requestId, RESPONSE_HEADERS)
   }
 
   // --- Auth gate ---
+  // The daily caps bound Azure ANALYZE CALLS, not HTTP requests: with the opt-in
+  // key-value add-on enabled every scan fires a second layout analyze, so each
+  // request charges the counter for the Azure work it can trigger.
+  const azureUnits = keyValueExtrasEnabled(env) ? 2 : 1
   let attest = 'reject'
   let deviceKey = keyId
   if (softFail || !keyId || !assertionB64) {
     // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
     attest = 'soft_fail'
     deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
-    const ok = await underCap(env, deviceKey, SOFT_FAIL_DAILY_CAP)
+    const ok = await underCap(env, deviceKey, SOFT_FAIL_DAILY_CAP, azureUnits)
     if (!ok) return rateLimited(env, { scanId, attest, requestId, clientVersion })
   } else {
     await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
     attest = 'pass'
-    const ok = await underCap(env, deviceKey, PER_DEVICE_DAILY_CAP)
+    const ok = await underCap(env, deviceKey, PER_DEVICE_DAILY_CAP, azureUnits)
     if (!ok) return rateLimited(env, { scanId, attest, requestId, clientVersion })
   }
 
@@ -158,29 +175,104 @@ async function handleScan(request, env, requestId) {
     await sleep(POLL_INTERVAL_MS)
   }
 
+  let kvExtras = 'off'
+  if (result && keyValueExtrasEnabled(env)) {
+    const merge = await mergeLayoutKeyValuePairs({
+      imageBytes, contentType, env, baseResult: result, scanId, requestId,
+    })
+    result = merge.result
+    kvExtras = merge.kvExtras
+  }
+
   const status = result ? 'ok' : 'provider_error'
   return finishScan(env, {
     scanId, attest, status, raw: result, requestId, clientVersion, start, azureStart,
-    azureStatus: azureHttp, cache: 'miss', cacheKey,
+    azureStatus: azureHttp, cache: 'miss', cacheKey, kvExtras,
   })
 }
 
-function envelope({ status, raw, scanId }) {
-  return { v: ENVELOPE_VERSION, mode: 'raw', provider: OCR_PROVIDER, scanId, status, raw: raw ?? null }
+function envelope({ status, raw, scanId, kvExtras }) {
+  return { v: ENVELOPE_VERSION, mode: 'raw', provider: OCR_PROVIDER, scanId, status, kv_extras: kvExtras ?? 'off', raw: raw ?? null }
+}
+
+function keyValueExtrasEnabled(env) {
+  return enabledEnvFlag(env.AZURE_OCR_KV_EXTRAS)
+}
+
+function scanKillSwitchEnabled(env) {
+  return enabledEnvFlag(env.OCR_SCAN_KILL_SWITCH)
+}
+
+function enabledEnvFlag(value) {
+  return ENABLED_ENV_VALUES.has(String(value || '').trim().toLowerCase())
+}
+
+// Returns { result, kvExtras } so the envelope can distinguish "no adjustments on
+// this receipt" (empty) from "the layout call broke" (failed) — without this the
+// add-on degrades silently and field reports are undiagnosable.
+async function mergeLayoutKeyValuePairs({ imageBytes, contentType, env, baseResult, scanId, requestId }) {
+  const failed = () => {
+    logOcrMonitoringEvent('warn', { signal: 'kv_extras_failed', phase: 'scan', scanId, requestId }, env)
+    return { result: baseResult, kvExtras: 'failed' }
+  }
+
+  const submit = await submitLayoutKeyValueAnalyze(imageBytes, contentType, env)
+  if (!submit.ok || !submit.operationId) return failed()
+
+  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    const poll = await getLayoutKeyValueAnalyzeResult(submit.operationId, env)
+    if (!poll.ok) break
+    if (poll.status === 'succeeded') {
+      return mergeKeyValuePairs(baseResult, poll.body)
+    }
+    if (poll.status === 'failed') break
+    await sleep(POLL_INTERVAL_MS)
+  }
+
+  return failed()
+}
+
+function mergeKeyValuePairs(baseResult, layoutResult) {
+  const keyValuePairs = layoutResult?.analyzeResult?.keyValuePairs
+  if (!Array.isArray(keyValuePairs) || keyValuePairs.length === 0) {
+    return { result: baseResult, kvExtras: 'empty' }
+  }
+
+  return {
+    result: {
+      ...baseResult,
+      analyzeResult: {
+        ...(baseResult?.analyzeResult || {}),
+        keyValuePairs,
+      },
+    },
+    kvExtras: 'merged',
+  }
 }
 
 async function finishScan(env, ctx) {
   const env_ = env
-  const body = JSON.stringify(envelope({ status: ctx.status, raw: ctx.raw, scanId: ctx.scanId }))
+  const body = JSON.stringify(envelope({ status: ctx.status, raw: ctx.raw, scanId: ctx.scanId, kvExtras: ctx.kvExtras }))
   if (ctx.status === 'ok' && ctx.cacheKey) {
     await env_.ATTEST_KV.put(ctx.cacheKey, body, { expirationTtl: CACHE_TTL_SECONDS })
   }
+  const totalMs = Date.now() - ctx.start
   logOcrMonitoringEvent(ctx.status === 'ok' ? 'info' : 'warn', {
     signal: 'scan', phase: 'scan', mode: 'raw', provider: OCR_PROVIDER, status: ctx.status,
+    kv_extras: ctx.kvExtras ?? 'off',
     attest: ctx.attest, cache: ctx.cache, azure_status: ctx.azureStatus,
-    azure_ms: Date.now() - ctx.azureStart, total_ms: Date.now() - ctx.start,
+    azure_ms: Date.now() - ctx.azureStart, total_ms: totalMs,
     scanId: ctx.scanId, requestId: ctx.requestId, client_version: ctx.clientVersion,
   }, env_)
+  // A provider_error 502 is the user-facing "scan failed" outcome on the money/scan
+  // path. The Loki line above is not a Sentry issue — without this leg a prod scan
+  // failure is un-trendable/un-alertable the way the FX path's 502 already is.
+  if (ctx.status === 'provider_error') {
+    await captureOcrProviderFailure({
+      scanId: ctx.scanId, requestId: ctx.requestId, azureStatus: ctx.azureStatus,
+      attest: ctx.attest, clientVersion: ctx.clientVersion, kvExtras: ctx.kvExtras, totalMs,
+    }, env_)
+  }
   const httpStatus = ctx.status === 'ok' ? 200 : 502
   return new Response(body, { status: httpStatus, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', 'x-request-id': ctx.requestId } })
 }
@@ -198,12 +290,25 @@ async function rateLimited(env, { scanId, attest, requestId, clientVersion }) {
   return new Response(body, { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', 'x-request-id': requestId } })
 }
 
-// Sliding daily counter in KV. Returns true if still under cap (and increments).
-async function underCap(env, deviceKey, cap) {
+function scanDisabled(env, { scanId, requestId, clientVersion }) {
+  logOcrMonitoringEvent('warn', {
+    signal: 'scan', phase: 'scan', status: 'disabled', scanId, requestId, client_version: clientVersion,
+  }, env)
+  return errorResponse('OCR_DISABLED', 'OCR scan temporarily disabled', 503, requestId, {
+    ...RESPONSE_HEADERS,
+    'Retry-After': '300',
+  })
+}
+
+// Sliding daily counter in KV, denominated in Azure analyze calls. Returns true
+// if the request's `units` still fit under the cap (and charges them). A request
+// that would overshoot is rejected whole — the cap is a billing ceiling, so
+// partial admission would defeat it.
+async function underCap(env, deviceKey, cap, units = 1) {
   const day = new Date().toISOString().slice(0, 10)
   const key = `count:${deviceKey}:${day}`
   const current = parseInt((await env.ATTEST_KV.get(key)) || '0', 10)
-  if (current >= cap) return false
-  await env.ATTEST_KV.put(key, String(current + 1), { expirationTtl: 172800 })
+  if (current + units > cap) return false
+  await env.ATTEST_KV.put(key, String(current + units), { expirationTtl: 172800 })
   return true
 }

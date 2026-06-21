@@ -170,6 +170,7 @@ Current coverage:
 - grouped issue capture for Worker route and coverage failures
 - structured Sentry logs for monitoring signals
 - release and environment tagging
+- dependency-free Worker liveness at `/health` for GET/HEAD probes
 - cron monitor check-ins for the daily publish job, plus Worker canary check-ins when `/cron/fx-canary` is invoked by an external scheduler or manual probe
 
 This is not identical to `resplit-web` in implementation because this repo is a Node cron publisher, not a browser/server app. It is equivalent in intent: release/environment tagging, error capture, structured logs, and runtime health monitoring.
@@ -178,26 +179,14 @@ This is not identical to `resplit-web` in implementation because this repo is a 
 
 ```bash
 npm ci
-npm run check:publish
-# Generates package/, validates publish-shape integrity, and runs unit tests
-
 npm run check
-# Strict release gate: also requires full 30-calendar-day history coverage
+# Generates package/, validates unversioned artifact integrity, and runs unit tests
 
 npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23
 # Read-only: verifies whether any complete single historical source can safely backfill archive gaps
 
-npm run reliability:cockpit
-# Read-only: writes reports/resplit-fx-reliability-cockpit.{html,json} with local CI,
-# nurse-log, git, gate, and OTEL/Grafana readiness in one internal launch surface
-
-npm run mcp:loaded-probe
-# Read-only: pipe live mcp__firstbite_local_ci.list_lanes JSON into this to refresh
-# reports/firstbite-loaded-mcp-lanes.json before regenerating the cockpit
-
-npm run observability:otel-smoke -- --skip-trigger
-# Read-only: writes reports/grafana-otel-smoke.json as a yellow contract artifact
-# until Grafana base URL, API token, Tempo UID, and Loki UID are supplied
+npm run backfill:history -- --from 2026-05-12 --to 2026-05-23 --reference snapshot-archive/2026-05-24.json
+# Dry-run: builds complete missing snapshots from the approved source/derivation contract
 ```
 
 If you want to deploy locally with wrangler, copy `.env.example` to `.env.local` and fill values.
@@ -205,8 +194,14 @@ If you want local Sentry events while running scripts manually, set `SENTRY_CURR
 `npm run smoke:deploy` now defaults its Worker probe to `https://fx.resplit.app`; set
 `FX_WORKER_BASE_URL` to point at an alternate host or `SKIP_WORKER_SMOKE_CHECK=1` only when you
 intentionally need to bypass the canonical Worker check.
+Worker smoke also probes `/health` so liveness regressions fail the deploy gate before release
+automation treats the Worker as watchable.
 By default, deploy smoke expects the current UTC publish date. Set `EXPECTED_DATE=yyyy-mm-dd` for
 workflow-pinned checks, or `ALLOW_STALE_DEPLOY_SMOKE=1` only when diagnosing an intentionally stale
 deployment.
+During recovery from archive gaps, deploy smoke warns through `history_range_incomplete` /
+`archive_gap_detected` only when latest data and Worker quote resolution are current and exact.
 
-The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over. The generated `history/30d` files represent the actual latest 30-calendar-day window; `npm run validate` warns on missing days so recovery publishes can proceed, while `npm run validate:release` and `npm run check` fail until the 30-day window is complete. Before backfilling an archive gap, run `npm run audit:backfill-sources` and require at least one complete single-source candidate for every missing date; do not merge partial providers just to clear canary pairs.
+The committed snapshot archive now retains a rolling 365-day span. Small archive gaps are tolerated and surfaced through `archive-manifest.json` / the coverage route rather than silently papered over. Before backfilling an archive gap, run `npm run audit:backfill-sources` and require at least one complete single-source candidate for every missing date; do not merge partial providers just to clear canary pairs.
+
+The current safe backfill contract is `fxapi-pair-history` plus explicit one-to-one derivations for `fok<-dkk`, `kid<-aud`, and `tvd<-aud`. The derivations are only applied when the source omits the local currency code and the anchor currency is present; they never synthesize independent market rates such as `ssp` or `zwg`.

@@ -8,6 +8,31 @@
 > dev velocity on learning outside work)." Master plan; subplans → `subplans/`,
 > research → `research/`. Skills: /vidux, /pilot-leo, /auto.
 
+## Progress
+
+- 2026-06-20: Studio installed a local-only Eve cockpit on clean branch
+  `codex/eve-studio-resplit-currency-api-20260620` from `origin/main@5947eafb`.
+  Added `agent/`, Eve wrapper skills, read-only `fx-readiness` subagent,
+  `npm run eve:*` scripts, and `scripts/eve-capability-check.mjs`. Proof passed:
+  `npm ci --dry-run`, `npm run eve:capabilities -- --json`,
+  `npm run eve:info -- --json`, `npm run eve:build`, `node --check
+  scripts/eve-capability-check.mjs`, `git diff --check`, `npm run check`
+  (`248/248` tests), and `npm run smoke:deploy` (`2026-06-20`, 30 history
+  points). Receipt:
+  `vidux/pre-launch-architecture/evidence/2026-06-20-eve-studio-currency-receiver-receipt.md`.
+  No Cloudflare/GCP deploy, infrastructure mutation, workflow dispatch,
+  credential handling, model/API call, production publish, or remote-machine
+  mutation happened.
+- 2026-06-20: Studio re-proved the same Eve receiver branch as a true-integration
+  candidate for PR `#24`. Hardened `scripts/eve-capability-check.mjs` so it now
+  verifies installed `node_modules` packages plus `node_modules/.bin/eve`, then
+  re-ran install, lockfile dry-run, Eve capability/info/build, `npm run check`
+  (`248/248`), `npm run smoke:deploy`, GitHub run list, and live
+  `fx.resplit.app` quote/coverage probes. Moussey handoff
+  `d4e3f5c5-0717-4e2d-9329-6460b84bb0f8` is staged for verifier pickup.
+  Non-claim: `origin/main` is still not Eve-powered until PR `#24` is reviewed,
+  merged or replayed, and re-proved from trunk.
+
 ## Purpose
 
 **Migrate resplit-currency-api off Cloudflare Workers/Wrangler to a GCP-native

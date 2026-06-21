@@ -1,0 +1,159 @@
+{
+  "checkedAt": "2026-05-25T08:09:51.376Z",
+  "source": "previous-loaded-mcp-artifact:reports/firstbite-loaded-mcp-lanes.json",
+  "note": "Reused the previous loaded-host probe payload to refresh artifact freshness only. This does not prove a Codex/Cursor MCP host restart, reload, or new live list_lanes result; capture live MCP output for catalog trust.",
+  "payload": {
+    "repos": {
+      "resplit_web": {
+        "display": "Resplit Web",
+        "path": "/Users/leokwan/Development/resplit-web"
+      },
+      "resplit_ios": {
+        "display": "Resplit iOS",
+        "path": "/Users/leokwan/Development/resplit-ios"
+      },
+      "strongyes_web": {
+        "display": "StrongYes Web",
+        "path": "/Users/leokwan/Development/strongyes-web"
+      },
+      "moussey": {
+        "display": "Moussey",
+        "path": "/Users/leokwan/Development/moussey"
+      }
+    },
+    "groups": {
+      "critical_fast": [
+        "resplit_web_unit",
+        "resplit_ios_integration",
+        "strongyes_web_unit",
+        "moussey_unit"
+      ],
+      "resplit_web_all": [
+        "resplit_web_unit",
+        "resplit_web_integration",
+        "resplit_web_ui"
+      ],
+      "resplit_ios_all": [
+        "resplit_ios_unit",
+        "resplit_ios_integration",
+        "resplit_ios_ui"
+      ],
+      "strongyes_web_all": [
+        "strongyes_web_unit",
+        "strongyes_web_integration",
+        "strongyes_web_ui"
+      ],
+      "moussey_all": [
+        "moussey_unit",
+        "moussey_integration",
+        "moussey_ui"
+      ],
+      "all_unit": [
+        "resplit_web_unit",
+        "resplit_ios_unit",
+        "strongyes_web_unit",
+        "moussey_unit"
+      ],
+      "all_integration": [
+        "resplit_web_integration",
+        "resplit_ios_integration",
+        "strongyes_web_integration",
+        "moussey_integration"
+      ],
+      "all_ui": [
+        "resplit_web_ui",
+        "resplit_ios_ui",
+        "strongyes_web_ui",
+        "moussey_ui"
+      ],
+      "all_critical": [
+        "resplit_web_unit",
+        "resplit_web_integration",
+        "resplit_web_ui",
+        "resplit_ios_unit",
+        "resplit_ios_integration",
+        "resplit_ios_ui",
+        "strongyes_web_unit",
+        "strongyes_web_integration",
+        "strongyes_web_ui",
+        "moussey_unit",
+        "moussey_integration",
+        "moussey_ui"
+      ]
+    },
+    "lanes": {
+      "resplit_web_unit": {
+        "repo": "resplit_web",
+        "kind": "unit",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/resplit-web/.firstbite/local-ci.json"
+      },
+      "resplit_web_integration": {
+        "repo": "resplit_web",
+        "kind": "integration",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/resplit-web/.firstbite/local-ci.json"
+      },
+      "resplit_web_ui": {
+        "repo": "resplit_web",
+        "kind": "ui",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/resplit-web/.firstbite/local-ci.json"
+      },
+      "resplit_ios_unit": {
+        "repo": "resplit_ios",
+        "kind": "unit",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/resplit-ios/.firstbite/local-ci.json"
+      },
+      "resplit_ios_integration": {
+        "repo": "resplit_ios",
+        "kind": "integration",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/resplit-ios/.firstbite/local-ci.json"
+      },
+      "resplit_ios_ui": {
+        "repo": "resplit_ios",
+        "kind": "ui",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/resplit-ios/.firstbite/local-ci.json"
+      },
+      "strongyes_web_unit": {
+        "repo": "strongyes_web",
+        "kind": "unit",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/strongyes-web/.firstbite/local-ci.json"
+      },
+      "strongyes_web_integration": {
+        "repo": "strongyes_web",
+        "kind": "integration",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/strongyes-web/.firstbite/local-ci.json"
+      },
+      "strongyes_web_ui": {
+        "repo": "strongyes_web",
+        "kind": "ui",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/strongyes-web/.firstbite/local-ci.json"
+      },
+      "moussey_unit": {
+        "repo": "moussey",
+        "kind": "unit",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/moussey/.firstbite/local-ci.json"
+      },
+      "moussey_integration": {
+        "repo": "moussey",
+        "kind": "integration",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/moussey/.firstbite/local-ci.json"
+      },
+      "moussey_ui": {
+        "repo": "moussey",
+        "kind": "ui",
+        "declared": true,
+        "declaration_path": "/Users/leokwan/Development/moussey/.firstbite/local-ci.json"
+      }
+    }
+  }
+}

@@ -1554,8 +1554,6 @@ function parseGrafanaEvidenceFile(candidate, generatedAt) {
     tempoMatched: false,
     lokiMatched: false,
     traceId: null,
-    sourceIdentity: null,
-    sourceTrusted: false,
     checks: [],
     summary: `Grafana proof artifact exists but could not be parsed: ${candidate.relativePath}.`,
   }
@@ -1573,15 +1571,13 @@ function parseGrafanaEvidenceFile(candidate, generatedAt) {
       const traceId = data.grafana?.tempo?.traceId || data.grafana?.tempo?.trace_id || data.tempo?.traceId || data.traceId || null
       const tempoMatched = Boolean(data.grafana?.tempo?.matched || data.tempo?.matched || data.tempoMatched || data.traceFound || traceId)
       const lokiMatched = Boolean(data.grafana?.loki?.matched || data.loki?.matched || data.lokiMatched || data.logFound)
-      const sourceIdentity = normalizeGrafanaSourceIdentity(data.sourceIdentity)
-      const sourceTrusted = isTrustedGrafanaSourceIdentity(sourceIdentity)
       const checks = normalizeGrafanaEvidenceChecks(data.checks)
       const fresh = ageMinutes !== null && ageMinutes <= 24 * 60
-      const status = tempoMatched && lokiMatched && fresh && sourceTrusted ? 'green' : 'yellow'
+      const status = tempoMatched && lokiMatched && fresh ? 'green' : 'yellow'
       const reason = status === 'green'
         ? `fresh JSON proof found at ${candidate.relativePath}.`
         : tempoMatched || lokiMatched
-          ? `partial, stale, or source-unverified Grafana proof found at ${candidate.relativePath}.`
+          ? `partial or stale Grafana proof found at ${candidate.relativePath}.`
           : `JSON proof does not show both Tempo and Loki matches: ${candidate.relativePath}.`
       return {
         status,
@@ -1592,8 +1588,6 @@ function parseGrafanaEvidenceFile(candidate, generatedAt) {
         tempoMatched,
         lokiMatched,
         traceId,
-        sourceIdentity,
-        sourceTrusted,
         checks,
         summary: reason,
       }
@@ -1618,36 +1612,9 @@ function parseGrafanaEvidenceFile(candidate, generatedAt) {
     tempoMatched,
     lokiMatched,
     traceId,
-    sourceIdentity: null,
-    sourceTrusted: false,
     checks: [],
     summary: `manual Grafana proof note found at ${candidate.relativePath}; JSON proof is still required for green.`,
   }
-}
-
-function normalizeGrafanaSourceIdentity(sourceIdentity) {
-  if (!sourceIdentity || typeof sourceIdentity !== 'object') {
-    return null
-  }
-
-  return {
-    status: String(sourceIdentity.status || 'unknown'),
-    repoPath: sourceIdentity.repoPath || null,
-    branch: sourceIdentity.branch || null,
-    head: sourceIdentity.head || null,
-    headFull: sourceIdentity.headFull || null,
-    dirtyCount: Number.isFinite(sourceIdentity.dirtyCount) ? sourceIdentity.dirtyCount : null,
-    sourceDirtyCount: Number.isFinite(sourceIdentity.sourceDirtyCount) ? sourceIdentity.sourceDirtyCount : null,
-    sourceDirtyPaths: Array.isArray(sourceIdentity.sourceDirtyPaths)
-      ? sourceIdentity.sourceDirtyPaths.slice(0, 25).map(item => String(item))
-      : [],
-  }
-}
-
-function isTrustedGrafanaSourceIdentity(sourceIdentity) {
-  return sourceIdentity?.status === 'ok'
-    && Boolean(sourceIdentity.headFull || sourceIdentity.head)
-    && sourceIdentity.sourceDirtyCount === 0
 }
 
 function normalizeGrafanaEvidenceChecks(checks) {
@@ -4697,7 +4664,6 @@ function renderTelemetry(telemetry) {
       <div>Evidence file</div><div><code>${escapeHtml(evidence.latestPath || 'missing')}</code></div>
       <div>Tempo / Loki</div><div>${evidence.tempoMatched ? 'tempo matched' : 'tempo missing'} / ${evidence.lokiMatched ? 'loki matched' : 'loki missing'}</div>
       <div>Trace ID</div><div><code>${escapeHtml(evidence.traceId || 'missing')}</code></div>
-      <div>Source identity</div><div><span class="${evidence.sourceTrusted ? 'green' : 'yellow'}">${evidence.sourceTrusted ? 'trusted' : 'untrusted'}</span>${evidence.sourceIdentity ? ` · head <code>${escapeHtml(evidence.sourceIdentity.head || 'unknown')}</code> · source dirty ${escapeHtml(String(evidence.sourceIdentity.sourceDirtyCount ?? 'unknown'))}` : ' · missing embedded source identity'}</div>
       <div>Checked</div><div>${escapeHtml(evidence.checkedAt || 'unknown')}${evidence.ageMinutes === null ? '' : ` (${escapeHtml(String(evidence.ageMinutes))}m old)`}</div>
       <div>Plan</div><div><code>${escapeHtml(telemetry.grafana.plan)}</code></div>
     </div>

@@ -80,17 +80,36 @@ export async function handleRequest(request, env) {
 }
 
 function handleHealth(request, env) {
+  const requestId = resolveRequestId(request)
+  const headers = {
+    'Cache-Control': 'no-store',
+  }
+
+  if (request.method === 'HEAD') {
+    const response = new Response(null, {
+      status: 200,
+      headers,
+    })
+    response.headers.set('x-request-id', requestId)
+    return response
+  }
+
+  if (request.method !== 'GET') {
+    return errorResponse('METHOD_NOT_ALLOWED', 'Expected GET or HEAD', 405, requestId, {
+      ...headers,
+      Allow: 'GET, HEAD',
+    })
+  }
+
   return jsonResponse({
     ok: true,
     service: 'resplit-currency-api',
-    environment: env.SENTRY_ENVIRONMENT || 'production',
+    environment: env.SENTRY_ENVIRONMENT || 'unknown',
     release: env.SENTRY_RELEASE || 'resplit-fx',
     timestamp: new Date().toISOString(),
   }, {
-    requestId: resolveRequestId(request),
-    headers: {
-      'Cache-Control': 'no-store',
-    },
+    requestId,
+    headers,
   })
 }
 
@@ -226,7 +245,12 @@ async function handleCoverage(request, env) {
   const rawFrom = url.searchParams.get('from') ?? 'AED'
   const rawTo = url.searchParams.get('to') ?? 'USD'
   const rawAnchorDate = url.searchParams.get('anchorDate') ?? undefined
-  const rawDays = Number(url.searchParams.get('days') ?? 30)
+  const daysParam = url.searchParams.get('days')
+  // Treat a missing OR empty `days` param as the default window. Without this,
+  // `?days=` (empty string) coerces to 0 and clampDays silently floors it to a
+  // 1-day window instead of the documented 30-day default. Non-empty invalid
+  // values (e.g. `abc`, `5.5`) still flow through to clampDays, which 400s them.
+  const rawDays = daysParam ? Number(daysParam) : 30
 
   logFxMonitoringEvent('info', {
     signal: 'coverage_entry',

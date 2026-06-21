@@ -16,6 +16,10 @@
     "reliability:cockpit": "node scripts/reliability-cockpit.js",
     "source:promotion-packet": "node scripts/source-promotion-packet.js",
     "trust:preflight": "node scripts/trust-preflight.js",
+    "eve:info": "eve info",
+    "eve:build": "rm -rf .eve/compile .eve/discovery && eve build",
+    "eve:dev:local": "eve dev --host 127.0.0.1 --no-ui --name Resplit-Currency-API-Eve",
+    "eve:capabilities": "node scripts/eve-capability-check.mjs",
     "check:publish": "npm run generate && npm run validate && npm run test",
     "check": "npm run generate && npm run validate:release && npm run test"
   },
@@ -27,7 +31,10 @@
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
-    "wrangler": "^4.75.0"
+    "ai": "7.0.0-beta.178",
+    "eve": "0.11.5",
+    "wrangler": "^4.75.0",
+    "zod": "4.4.3"
   },
   "overrides": {
     "brace-expansion": "5.0.5"

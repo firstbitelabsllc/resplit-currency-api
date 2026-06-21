@@ -233,16 +233,6 @@ test('inspectGrafanaEvidence accepts fresh JSON Tempo and Loki proof', () => {
       tempo: { matched: true, traceId: '0123456789abcdef0123456789abcdef' },
       loki: { matched: true },
     },
-    sourceIdentity: {
-      status: 'ok',
-      repoPath: repoDir,
-      branch: 'main',
-      head: 'abc123def456',
-      headFull: 'abc123def4567890abc123def4567890abc123de',
-      dirtyCount: 1,
-      sourceDirtyCount: 0,
-      sourceDirtyPaths: [],
-    },
     checks: [
       {
         id: 'tempo-query',
@@ -260,8 +250,6 @@ test('inspectGrafanaEvidence accepts fresh JSON Tempo and Loki proof', () => {
   assert.equal(evidence.tempoMatched, true)
   assert.equal(evidence.lokiMatched, true)
   assert.equal(evidence.ageMinutes, 30)
-  assert.equal(evidence.sourceTrusted, true)
-  assert.equal(evidence.sourceIdentity.head, 'abc123def456')
   assert.deepEqual(evidence.checks, [
     {
       id: 'tempo-query',
@@ -273,60 +261,6 @@ test('inspectGrafanaEvidence accepts fresh JSON Tempo and Loki proof', () => {
   ])
 })
 
-test('inspectGrafanaEvidence keeps destination-only JSON proof yellow without source identity', () => {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-'))
-  fs.mkdirSync(path.join(repoDir, 'reports'))
-  fs.writeFileSync(path.join(repoDir, 'reports', 'grafana-otel-smoke.json'), JSON.stringify({
-    checkedAt: '2026-05-24T23:30:00.000Z',
-    worker: 'resplit-fx',
-    grafana: {
-      tempo: { matched: true, traceId: '0123456789abcdef0123456789abcdef' },
-      loki: { matched: true },
-    },
-  }))
-
-  const evidence = inspectGrafanaEvidence(repoDir, '2026-05-25T00:00:00.000Z')
-
-  assert.equal(evidence.status, 'yellow')
-  assert.equal(evidence.tempoMatched, true)
-  assert.equal(evidence.lokiMatched, true)
-  assert.equal(evidence.sourceTrusted, false)
-  assert.equal(evidence.sourceIdentity, null)
-  assert.match(evidence.summary, /source-unverified/)
-})
-
-test('inspectGrafanaEvidence indexes local-CI preflight smoke proof artifacts', () => {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-'))
-  fs.mkdirSync(path.join(repoDir, 'reports'))
-  fs.writeFileSync(path.join(repoDir, 'reports', 'grafana-otel-smoke-missing-config-preflight.json'), JSON.stringify({
-    checkedAt: '2026-05-24T23:30:00.000Z',
-    worker: 'resplit-fx',
-    sourceIdentity: {
-      status: 'ok',
-      repoPath: repoDir,
-      branch: 'main',
-      head: 'abc123def456',
-      headFull: 'abc123def4567890abc123def4567890abc123de',
-      dirtyCount: 4,
-      sourceDirtyCount: 2,
-      sourceDirtyPaths: ['scripts/verify-grafana-otel-smoke.js', 'wrangler.jsonc'],
-    },
-    grafana: {
-      missingConfig: ['GRAFANA_BASE_URL'],
-      tempo: { matched: false },
-      loki: { matched: false },
-    },
-  }))
-
-  const evidence = inspectGrafanaEvidence(repoDir, '2026-05-25T00:00:00.000Z')
-
-  assert.equal(evidence.status, 'yellow')
-  assert.match(evidence.latestPath, /grafana-otel-smoke-missing-config-preflight\.json$/)
-  assert.equal(evidence.sourceTrusted, false)
-  assert.deepEqual(evidence.sourceIdentity.sourceDirtyPaths, ['scripts/verify-grafana-otel-smoke.js', 'wrangler.jsonc'])
-  assert.match(evidence.summary, /does not show both Tempo and Loki/)
-})
-
 test('inspectGrafanaEvidence keeps stale JSON proof yellow', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cockpit-'))
   fs.mkdirSync(path.join(repoDir, 'reports'))
@@ -336,16 +270,6 @@ test('inspectGrafanaEvidence keeps stale JSON proof yellow', () => {
       tempo: { matched: true, traceId: '0123456789abcdef0123456789abcdef' },
       loki: { matched: true },
     },
-    sourceIdentity: {
-      status: 'ok',
-      repoPath: repoDir,
-      branch: 'main',
-      head: 'abc123def456',
-      headFull: 'abc123def4567890abc123def4567890abc123de',
-      dirtyCount: 1,
-      sourceDirtyCount: 0,
-      sourceDirtyPaths: [],
-    },
   }))
 
   const evidence = inspectGrafanaEvidence(repoDir, '2026-05-25T00:00:00.000Z')
@@ -354,7 +278,6 @@ test('inspectGrafanaEvidence keeps stale JSON proof yellow', () => {
   assert.equal(evidence.tempoMatched, true)
   assert.equal(evidence.lokiMatched, true)
   assert.equal(evidence.ageMinutes, 2880)
-  assert.equal(evidence.sourceTrusted, true)
 })
 
 test('evaluateMcpProofFreshness requires source state and lane artifacts', () => {

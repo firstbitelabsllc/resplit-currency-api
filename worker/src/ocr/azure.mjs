@@ -5,14 +5,13 @@
 // ScannedReceipt) is the router's job, decided separately. Mirrors the exact model
 // + api-version the iOS client used: prebuilt-receipt / 2024-11-30.
 
-const MODEL_ID = 'prebuilt-receipt'
+const RECEIPT_MODEL_ID = 'prebuilt-receipt'
+const LAYOUT_MODEL_ID = 'prebuilt-layout'
 const API_VERSION = '2024-11-30'
 
-export const OCR_SCHEMA_VERSION = 'azure.v4.2024-11-30'
 export const OCR_PROVIDER = 'azure-di'
-export const OCR_PROVIDER_VERSION = 'v4-2024-11-30'
 
-export class AzureConfigError extends Error {
+class AzureConfigError extends Error {
   constructor(message) {
     super(message)
     this.name = 'AzureConfigError'
@@ -32,11 +31,14 @@ function readConfig(env) {
   return { endpoint, key }
 }
 
-const analyzeUrl = (endpoint) =>
-  `${endpoint}/documentintelligence/documentModels/${MODEL_ID}:analyze?api-version=${API_VERSION}&locale=en`
+const analyzeUrl = (endpoint, { modelId = RECEIPT_MODEL_ID, features = [] } = {}) => {
+  const params = new URLSearchParams({ 'api-version': API_VERSION, locale: 'en' })
+  if (features.length > 0) params.set('features', features.join(','))
+  return `${endpoint}/documentintelligence/documentModels/${modelId}:analyze?${params}`
+}
 
-const resultUrl = (endpoint, operationId) =>
-  `${endpoint}/documentintelligence/documentModels/${MODEL_ID}/analyzeResults/${encodeURIComponent(operationId)}?api-version=${API_VERSION}`
+const resultUrl = (endpoint, operationId, { modelId = RECEIPT_MODEL_ID } = {}) =>
+  `${endpoint}/documentintelligence/documentModels/${modelId}/analyzeResults/${encodeURIComponent(operationId)}?api-version=${API_VERSION}`
 
 /**
  * Pull the analyze-result id out of the Azure response. Azure returns the poll
@@ -69,9 +71,9 @@ function extractOperationId(headers) {
  * @param {{ AZURE_OCR_ENDPOINT?: string, AZURE_OCR_KEY?: string }} env
  * @returns {Promise<{ ok: boolean, httpStatus: number, operationId: string | null, errorBody: string | null }>}
  */
-export async function submitReceiptAnalyze(imageBytes, contentType, env) {
+async function submitAnalyze(imageBytes, contentType, env, options = {}) {
   const { endpoint, key } = readConfig(env)
-  const res = await fetch(analyzeUrl(endpoint), {
+  const res = await fetch(analyzeUrl(endpoint, options), {
     method: 'POST',
     headers: {
       'Ocp-Apim-Subscription-Key': key,
@@ -87,6 +89,17 @@ export async function submitReceiptAnalyze(imageBytes, contentType, env) {
   return { ok: false, httpStatus: res.status, operationId: null, errorBody: errorBody.slice(0, 500) }
 }
 
+export async function submitReceiptAnalyze(imageBytes, contentType, env) {
+  return submitAnalyze(imageBytes, contentType, env, { modelId: RECEIPT_MODEL_ID })
+}
+
+export async function submitLayoutKeyValueAnalyze(imageBytes, contentType, env) {
+  return submitAnalyze(imageBytes, contentType, env, {
+    modelId: LAYOUT_MODEL_ID,
+    features: ['keyValuePairs'],
+  })
+}
+
 /**
  * Fetch the analyze result for a previously-submitted operation. Returns Azure's
  * raw JSON body + its `status` (notStarted | running | succeeded | failed).
@@ -95,9 +108,9 @@ export async function submitReceiptAnalyze(imageBytes, contentType, env) {
  * @param {{ AZURE_OCR_ENDPOINT?: string, AZURE_OCR_KEY?: string }} env
  * @returns {Promise<{ ok: boolean, httpStatus: number, status: string | null, body: unknown, errorBody: string | null }>}
  */
-export async function getReceiptAnalyzeResult(operationId, env) {
+async function getAnalyzeResult(operationId, env, options = {}) {
   const { endpoint, key } = readConfig(env)
-  const res = await fetch(resultUrl(endpoint, operationId), {
+  const res = await fetch(resultUrl(endpoint, operationId, options), {
     method: 'GET',
     headers: { 'Ocp-Apim-Subscription-Key': key },
   })
@@ -110,4 +123,12 @@ export async function getReceiptAnalyzeResult(operationId, env) {
   const body = await res.json().catch(() => null)
   const status = body && typeof body === 'object' ? (body.status ?? null) : null
   return { ok: true, httpStatus: 200, status, body, errorBody: null }
+}
+
+export async function getReceiptAnalyzeResult(operationId, env) {
+  return getAnalyzeResult(operationId, env, { modelId: RECEIPT_MODEL_ID })
+}
+
+export async function getLayoutKeyValueAnalyzeResult(operationId, env) {
+  return getAnalyzeResult(operationId, env, { modelId: LAYOUT_MODEL_ID })
 }

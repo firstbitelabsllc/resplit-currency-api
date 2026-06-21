@@ -1,0 +1,1463 @@
+{
+  "generatedAt": "2026-06-20T18:42:21.446Z",
+  "outputPath": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.json",
+  "markdownPath": "/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.md",
+  "status": "red",
+  "repo": {
+    "name": "resplit-currency-api",
+    "path": "/Users/leokwan/Development/resplit-currency-api",
+    "git": {
+      "status": "dirty",
+      "branch": "codex/w2-5-fx-manifest-source-custody",
+      "head": "46c8f62fbf94",
+      "originMain": "5947eafbf009",
+      "shortStatus": "## codex/w2-5-fx-manifest-source-custody...origin/codex/w2-5-fx-manifest-source-custody\n M .cursor/plans/resplit-nurse.log.md\nA  .firstbite/source-promotion-decisions.json\n M .gitignore\n M INBOX.md\n M README.md\n M RUNBOOK.md\nM  currscript.js\n M package-lock.json\nMM package.json\nA  scripts/audit-history-backfill-sources.js\nA  scripts/capture-loaded-mcp-probe.js\nA  scripts/reliability-cockpit.js\nM  scripts/smoke-check-deploy.js\nA  scripts/source-promotion-packet.js\nA  scripts/trust-preflight.js\nM  scripts/validate-package.js\nA  scripts/verify-grafana-otel-smoke.js\n D snapshot-archive/2025-05-12.json\n D snapshot-archive/2025-05-13.json\n D snapshot-archive/2025-05-14.json\n D snapshot-archive/2025-05-15.json\n D snapshot-archive/2025-05-16.json\n D snapshot-archive/2025-05-17.json\n D snapshot-archive/2025-05-18.json\n D snapshot-archive/2025-05-19.json\n D snapshot-archive/2025-05-20.json\n D snapshot-archive/2025-05-21.json\n D snapshot-archive/2025-05-22.json\n D snapshot-archive/2025-05-23.json\n D snapshot-archive/2025-05-24.json\n D snapshot-archive/2025-05-25.json\n D snapshot-archive/2025-05-26.json\nA  tests/audit-history-backfill-sources.test.js\nA  tests/capture-loaded-mcp-probe.test.js\n M tests/fx-worker-routes.test.js\nA  tests/reliability-cockpit.test.js\nM  tests/smoke-check-deploy.test.js\nA  tests/source-promotion-packet.test.js\nA  tests/trust-preflight.test.js\nM  tests/validate-package.test.js\nA  tests/verify-grafana-otel-smoke.test.js\n M worker/src/index.mjs\n M wrangler.jsonc\n?? .agents/\n?? docs/\n?? scripts/backfill-history-snapshots.js\n?? snapshot-archive/2026-05-12.json\n?? snapshot-archive/2026-05-13.json\n?? snapshot-archive/2026-05-14.json\n?? snapshot-archive/2026-05-15.json\n?? snapshot-archive/2026-05-16.json\n?? snapshot-archive/2026-05-17.json\n?? snapshot-archive/2026-05-18.json\n?? snapshot-archive/2026-05-19.json\n?? snapshot-archive/2026-05-20.json\n?? snapshot-archive/2026-05-21.json\n?? snapshot-archive/2026-05-22.json\n?? snapshot-archive/2026-05-23.json\n?? snapshot-archive/2026-05-24.json\n?? snapshot-archive/2026-05-25.json\n?? snapshot-archive/2026-05-26.json\n?? tests/backfill-history-snapshots.test.js\n?? tests/ocr-attest.test.js\n?? tests/ocr-monitoring.test.js\n?? tests/ocr-router.test.js\n?? vidux/pre-launch-architecture/\n?? worker/src/ocr/",
+      "dirtyCount": 67,
+      "behindOriginMain": 53
+    }
+  },
+  "summary": {
+    "headline": "status=red; stage candidates 19; hold by default 56; command drift 4; cockpit=RED - missing required trust contract",
+    "nextAction": "Review only the stage candidates, keep hold-by-default rows unstaged, then rerun clean worktree FirstBite proof after the bundle lands.",
+    "counts": {
+      "commandDrift": 4,
+      "stageCandidates": 19,
+      "stageablePaths": 19,
+      "stageBlockedPaths": 1,
+      "stageNonRedPaths": 18,
+      "stagedPaths": 19,
+      "stagedStageablePaths": 19,
+      "unstagedStageablePaths": 0,
+      "unexpectedStagedPaths": 0,
+      "dirtyAfterStagingPaths": 1,
+      "holdByDefault": 56,
+      "dirtyFiles": 75,
+      "reconciliationRed": 1,
+      "reconciliationYellow": 18,
+      "upstreamPresent": 12
+    }
+  },
+  "sourcePromotionBundle": {
+    "status": "red",
+    "summary": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+    "nextAction": "Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof.",
+    "counts": {
+      "currentOnlyFiles": 13,
+      "modifiedFiles": 19,
+      "missingCurrentFiles": 0,
+      "missingHeadFiles": 13,
+      "missingOriginFiles": 0,
+      "commandDrift": 4
+    }
+  },
+  "stageCandidates": [
+    {
+      "path": "package.json",
+      "role": "local-CI contract",
+      "action": "include modified current source",
+      "currentExists": true,
+      "headExists": true,
+      "originExists": true,
+      "gitStatus": "MM package.json",
+      "stageable": true,
+      "stageReason": "update tracked source"
+    },
+    {
+      "path": "currscript.js",
+      "role": "local-CI contract",
+      "action": "include modified current source",
+      "currentExists": true,
+      "headExists": true,
+      "originExists": true,
+      "gitStatus": "M  currscript.js",
+      "stageable": true,
+      "stageReason": "update tracked source"
+    },
+    {
+      "path": "scripts/reliability-cockpit.js",
+      "role": "local-CI contract",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  scripts/reliability-cockpit.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "scripts/smoke-check-deploy.js",
+      "role": "local-CI contract",
+      "action": "include modified current source",
+      "currentExists": true,
+      "headExists": true,
+      "originExists": true,
+      "gitStatus": "M  scripts/smoke-check-deploy.js",
+      "stageable": true,
+      "stageReason": "update tracked source"
+    },
+    {
+      "path": "scripts/source-promotion-packet.js",
+      "role": "local-CI contract",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  scripts/source-promotion-packet.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "scripts/trust-preflight.js",
+      "role": "local-CI contract",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  scripts/trust-preflight.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "scripts/validate-package.js",
+      "role": "local-CI contract",
+      "action": "include modified current source",
+      "currentExists": true,
+      "headExists": true,
+      "originExists": true,
+      "gitStatus": "M  scripts/validate-package.js",
+      "stageable": true,
+      "stageReason": "update tracked source"
+    },
+    {
+      "path": ".firstbite/source-promotion-decisions.json",
+      "role": "source-promotion review",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  .firstbite/source-promotion-decisions.json",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "tests/reliability-cockpit.test.js",
+      "role": "verification",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  tests/reliability-cockpit.test.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "tests/source-promotion-packet.test.js",
+      "role": "verification",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  tests/source-promotion-packet.test.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "tests/trust-preflight.test.js",
+      "role": "verification",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  tests/trust-preflight.test.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "scripts/capture-loaded-mcp-probe.js",
+      "role": "MCP host probe",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  scripts/capture-loaded-mcp-probe.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "tests/capture-loaded-mcp-probe.test.js",
+      "role": "verification",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  tests/capture-loaded-mcp-probe.test.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "scripts/verify-grafana-otel-smoke.js",
+      "role": "telemetry proof",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  scripts/verify-grafana-otel-smoke.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "tests/verify-grafana-otel-smoke.test.js",
+      "role": "verification",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  tests/verify-grafana-otel-smoke.test.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "scripts/audit-history-backfill-sources.js",
+      "role": "release-history audit",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  scripts/audit-history-backfill-sources.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "tests/audit-history-backfill-sources.test.js",
+      "role": "verification",
+      "action": "add to HEAD before clean proof",
+      "currentExists": true,
+      "headExists": false,
+      "originExists": true,
+      "gitStatus": "A  tests/audit-history-backfill-sources.test.js",
+      "stageable": true,
+      "stageReason": "add current source"
+    },
+    {
+      "path": "tests/smoke-check-deploy.test.js",
+      "role": "verification",
+      "action": "include modified current source",
+      "currentExists": true,
+      "headExists": true,
+      "originExists": true,
+      "gitStatus": "M  tests/smoke-check-deploy.test.js",
+      "stageable": true,
+      "stageReason": "update tracked source"
+    },
+    {
+      "path": "tests/validate-package.test.js",
+      "role": "verification",
+      "action": "include modified current source",
+      "currentExists": true,
+      "headExists": true,
+      "originExists": true,
+      "gitStatus": "M  tests/validate-package.test.js",
+      "stageable": true,
+      "stageReason": "update tracked source"
+    }
+  ],
+  "promotionReview": {
+    "status": "red",
+    "summary": "19 candidate(s) reviewed; 12 already present on origin/main; 10 origin drift row(s); 0 new local-only file(s); 6 modified tracked file(s)",
+    "counts": {
+      "total": 19,
+      "red": 1,
+      "yellow": 18,
+      "green": 0,
+      "upstreamPresent": 12,
+      "upstreamDrift": 10,
+      "newLocalOnly": 0,
+      "modifiedTracked": 6
+    },
+    "rows": [
+      {
+        "path": "package.json",
+        "status": "red",
+        "classification": "modified-tracked-origin-drift",
+        "gitStatus": "MM package.json",
+        "currentExists": true,
+        "headExists": true,
+        "originExists": true,
+        "currentHash": "295faa8f2f11",
+        "headHash": "a0e3e6a8e15d",
+        "originHash": "ffb5de2b1cf4",
+        "comparisonSource": "index",
+        "currentLines": 33,
+        "headLines": 24,
+        "originLines": 35,
+        "lineDeltaVsHead": 9,
+        "lineDeltaVsOrigin": -2,
+        "reviewCommand": "git diff -- 'package.json' && git diff origin/main -- 'package.json'",
+        "reviewDecision": null,
+        "action": "Diff against both HEAD and origin/main before staging; branch drift and local edits overlap."
+      },
+      {
+        "path": "currscript.js",
+        "status": "yellow",
+        "classification": "modified-tracked",
+        "gitStatus": "M  currscript.js",
+        "currentExists": true,
+        "headExists": true,
+        "originExists": true,
+        "currentHash": "c15af4ace2d6",
+        "headHash": "e9029b11ec70",
+        "originHash": "c15af4ace2d6",
+        "comparisonSource": "worktree",
+        "currentLines": 628,
+        "headLines": 624,
+        "originLines": 628,
+        "lineDeltaVsHead": 4,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "git diff -- 'currscript.js'",
+        "reviewDecision": null,
+        "action": "Review the working-tree diff before staging this tracked file."
+      },
+      {
+        "path": "scripts/reliability-cockpit.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  scripts/reliability-cockpit.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "6f5e9b171353",
+        "headHash": null,
+        "originHash": "a8fb476b07b4",
+        "comparisonSource": "worktree",
+        "currentLines": 4919,
+        "headLines": null,
+        "originLines": 4885,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 34,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/reliability-cockpit.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/reliability-cockpit.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current cockpit preserves explicit origin-main source_ref clean proof semantics while adding Grafana source-identity trust and keeping source-promotion truth separate from clean-proof readiness.",
+          "evidence": [
+            "git diff origin/main -- scripts/reliability-cockpit.js reviewed",
+            "node --check scripts/reliability-cockpit.js",
+            "node --test tests/reliability-cockpit.test.js"
+          ],
+          "currentHash": "6f5e9b171353",
+          "originHash": "a8fb476b07b4"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current cockpit preserves explicit origin-main source_ref clean proof semantics while adding Grafana source-identity trust and keeping source-promotion truth separate from clean-proof readiness."
+      },
+      {
+        "path": "scripts/smoke-check-deploy.js",
+        "status": "yellow",
+        "classification": "modified-tracked",
+        "gitStatus": "M  scripts/smoke-check-deploy.js",
+        "currentExists": true,
+        "headExists": true,
+        "originExists": true,
+        "currentHash": "3021f4fc2f95",
+        "headHash": "4f6c021ea796",
+        "originHash": "3021f4fc2f95",
+        "comparisonSource": "worktree",
+        "currentLines": 435,
+        "headLines": 233,
+        "originLines": 435,
+        "lineDeltaVsHead": 202,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "git diff -- 'scripts/smoke-check-deploy.js'",
+        "reviewDecision": null,
+        "action": "Review the working-tree diff before staging this tracked file."
+      },
+      {
+        "path": "scripts/source-promotion-packet.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  scripts/source-promotion-packet.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "68648860a0e2",
+        "headHash": null,
+        "originHash": "015418faae18",
+        "comparisonSource": "worktree",
+        "currentLines": 1158,
+        "headLines": null,
+        "originLines": 1089,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 69,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/source-promotion-packet.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/source-promotion-packet.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current packet keeps landed zero-candidate bundles green, keeps review-decision metadata non-self-blocking, compares the staged package contract when package.json also has unrelated unstaged OCR dependency drift, and excludes that index-sourced package row from generated git-add commands.",
+          "evidence": [
+            "git diff origin/main -- scripts/source-promotion-packet.js reviewed",
+            "node --check scripts/source-promotion-packet.js",
+            "node --test tests/source-promotion-packet.test.js"
+          ],
+          "currentHash": "68648860a0e2",
+          "originHash": "015418faae18"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current packet keeps landed zero-candidate bundles green, keeps review-decision metadata non-self-blocking, compares the staged package contract when package.json also has unrelated unstaged OCR dependency drift, and excludes that index-sourced package row from generated git-add commands."
+      },
+      {
+        "path": "scripts/trust-preflight.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  scripts/trust-preflight.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "5ebfd6c46195",
+        "headHash": null,
+        "originHash": "dc4bc63a57af",
+        "comparisonSource": "worktree",
+        "currentLines": 372,
+        "headLines": null,
+        "originLines": 372,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/trust-preflight.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/trust-preflight.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current preflight writes the Grafana missing-config proof to the cockpit-consumed grafana-otel-smoke-missing-config-preflight.json path.",
+          "evidence": [
+            "git diff origin/main -- scripts/trust-preflight.js reviewed",
+            "node --check scripts/trust-preflight.js",
+            "node --test tests/source-promotion-packet.test.js"
+          ],
+          "currentHash": "5ebfd6c46195",
+          "originHash": "dc4bc63a57af"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current preflight writes the Grafana missing-config proof to the cockpit-consumed grafana-otel-smoke-missing-config-preflight.json path."
+      },
+      {
+        "path": "scripts/validate-package.js",
+        "status": "yellow",
+        "classification": "modified-tracked",
+        "gitStatus": "M  scripts/validate-package.js",
+        "currentExists": true,
+        "headExists": true,
+        "originExists": true,
+        "currentHash": "99ee426ff2dd",
+        "headHash": "d843ba715acd",
+        "originHash": "99ee426ff2dd",
+        "comparisonSource": "worktree",
+        "currentLines": 274,
+        "headLines": 207,
+        "originLines": 274,
+        "lineDeltaVsHead": 67,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "git diff -- 'scripts/validate-package.js'",
+        "reviewDecision": null,
+        "action": "Review the working-tree diff before staging this tracked file."
+      },
+      {
+        "path": ".firstbite/source-promotion-decisions.json",
+        "status": "yellow",
+        "classification": "review-decision-manifest-update",
+        "gitStatus": "A  .firstbite/source-promotion-decisions.json",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "62de1e11196f",
+        "headHash": null,
+        "originHash": "2cae36b2395b",
+        "comparisonSource": "worktree",
+        "currentLines": 120,
+        "headLines": null,
+        "originLines": 50,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 70,
+        "reviewCommand": "git status --short -- '.firstbite/source-promotion-decisions.json'",
+        "reviewDecision": null,
+        "action": "Review decision manifest changed; keep it stageable but do not require a self-referential hash decision."
+      },
+      {
+        "path": "tests/reliability-cockpit.test.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  tests/reliability-cockpit.test.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "241093c717c7",
+        "headHash": null,
+        "originHash": "80542a682a39",
+        "comparisonSource": "worktree",
+        "currentLines": 2608,
+        "headLines": null,
+        "originLines": 2531,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 77,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/reliability-cockpit.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/reliability-cockpit.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current tests lock source_ref=refs/remotes/origin/main proof, Grafana source-identity trust, and source-promotion/clean-proof gate separation.",
+          "evidence": [
+            "git diff origin/main -- tests/reliability-cockpit.test.js reviewed",
+            "node --test tests/reliability-cockpit.test.js"
+          ],
+          "currentHash": "241093c717c7",
+          "originHash": "80542a682a39"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current tests lock source_ref=refs/remotes/origin/main proof, Grafana source-identity trust, and source-promotion/clean-proof gate separation."
+      },
+      {
+        "path": "tests/source-promotion-packet.test.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  tests/source-promotion-packet.test.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "c013bf41d115",
+        "headHash": null,
+        "originHash": "d8fb20d3c470",
+        "comparisonSource": "worktree",
+        "currentLines": 547,
+        "headLines": null,
+        "originLines": 473,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 74,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/source-promotion-packet.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/source-promotion-packet.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current tests preserve zero-candidate green attestation, cover the decision-manifest non-self-blocking metadata row, and lock the staged-package/unstaged-drift split including safe git-add command generation.",
+          "evidence": [
+            "git diff origin/main -- tests/source-promotion-packet.test.js reviewed",
+            "node --test tests/source-promotion-packet.test.js"
+          ],
+          "currentHash": "c013bf41d115",
+          "originHash": "d8fb20d3c470"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current tests preserve zero-candidate green attestation, cover the decision-manifest non-self-blocking metadata row, and lock the staged-package/unstaged-drift split including safe git-add command generation."
+      },
+      {
+        "path": "tests/trust-preflight.test.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  tests/trust-preflight.test.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "2c4a9d21e1ce",
+        "headHash": null,
+        "originHash": "bd6500043935",
+        "comparisonSource": "worktree",
+        "currentLines": 122,
+        "headLines": null,
+        "originLines": 122,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/trust-preflight.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/trust-preflight.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current test locks the renamed Grafana missing-config preflight artifact path.",
+          "evidence": [
+            "git diff origin/main -- tests/trust-preflight.test.js reviewed",
+            "node --test tests/source-promotion-packet.test.js"
+          ],
+          "currentHash": "2c4a9d21e1ce",
+          "originHash": "bd6500043935"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current test locks the renamed Grafana missing-config preflight artifact path."
+      },
+      {
+        "path": "scripts/capture-loaded-mcp-probe.js",
+        "status": "yellow",
+        "classification": "origin-present-match",
+        "gitStatus": "A  scripts/capture-loaded-mcp-probe.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "70c380a12d76",
+        "headHash": null,
+        "originHash": "70c380a12d76",
+        "comparisonSource": "worktree",
+        "currentLines": 258,
+        "headLines": null,
+        "originLines": 258,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/capture-loaded-mcp-probe.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/capture-loaded-mcp-probe.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": null,
+        "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+      },
+      {
+        "path": "tests/capture-loaded-mcp-probe.test.js",
+        "status": "yellow",
+        "classification": "origin-present-match",
+        "gitStatus": "A  tests/capture-loaded-mcp-probe.test.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "1b9b63cd7611",
+        "headHash": null,
+        "originHash": "1b9b63cd7611",
+        "comparisonSource": "worktree",
+        "currentLines": 94,
+        "headLines": null,
+        "originLines": 94,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/capture-loaded-mcp-probe.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/capture-loaded-mcp-probe.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": null,
+        "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+      },
+      {
+        "path": "scripts/verify-grafana-otel-smoke.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  scripts/verify-grafana-otel-smoke.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "9a2cd523eb61",
+        "headHash": null,
+        "originHash": "dad7b3b6f716",
+        "comparisonSource": "worktree",
+        "currentLines": 613,
+        "headLines": null,
+        "originLines": 551,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 62,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/verify-grafana-otel-smoke.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/verify-grafana-otel-smoke.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current Grafana proof records source identity so telemetry evidence carries checkout head, branch, dirty path, and generated-artifact context.",
+          "evidence": [
+            "git diff origin/main -- scripts/verify-grafana-otel-smoke.js reviewed",
+            "node --check scripts/verify-grafana-otel-smoke.js",
+            "node --test tests/source-promotion-packet.test.js"
+          ],
+          "currentHash": "9a2cd523eb61",
+          "originHash": "dad7b3b6f716"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current Grafana proof records source identity so telemetry evidence carries checkout head, branch, dirty path, and generated-artifact context."
+      },
+      {
+        "path": "tests/verify-grafana-otel-smoke.test.js",
+        "status": "yellow",
+        "classification": "origin-present-origin-drift-reviewed",
+        "gitStatus": "A  tests/verify-grafana-otel-smoke.test.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "5f1a6594c30f",
+        "headHash": null,
+        "originHash": "2fa56a14cc75",
+        "comparisonSource": "worktree",
+        "currentLines": 223,
+        "headLines": null,
+        "originLines": 171,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 52,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/verify-grafana-otel-smoke.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/verify-grafana-otel-smoke.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current tests cover the source-identity provenance added to Grafana telemetry proof.",
+          "evidence": [
+            "git diff origin/main -- tests/verify-grafana-otel-smoke.test.js reviewed",
+            "node --test tests/source-promotion-packet.test.js"
+          ],
+          "currentHash": "5f1a6594c30f",
+          "originHash": "2fa56a14cc75"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current tests cover the source-identity provenance added to Grafana telemetry proof."
+      },
+      {
+        "path": "scripts/audit-history-backfill-sources.js",
+        "status": "yellow",
+        "classification": "origin-present-match",
+        "gitStatus": "A  scripts/audit-history-backfill-sources.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "1d25c3ba3d4c",
+        "headHash": null,
+        "originHash": "1d25c3ba3d4c",
+        "comparisonSource": "worktree",
+        "currentLines": 532,
+        "headLines": null,
+        "originLines": 532,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:scripts/audit-history-backfill-sources.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'scripts/audit-history-backfill-sources.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": null,
+        "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+      },
+      {
+        "path": "tests/audit-history-backfill-sources.test.js",
+        "status": "yellow",
+        "classification": "origin-present-match",
+        "gitStatus": "A  tests/audit-history-backfill-sources.test.js",
+        "currentExists": true,
+        "headExists": false,
+        "originExists": true,
+        "currentHash": "3b4ecb521790",
+        "headHash": null,
+        "originHash": "3b4ecb521790",
+        "comparisonSource": "worktree",
+        "currentLines": 236,
+        "headLines": null,
+        "originLines": 236,
+        "lineDeltaVsHead": null,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "tmp=$(mktemp); git show 'origin/main:tests/audit-history-backfill-sources.test.js' > \"$tmp\" && git diff --no-index \"$tmp\" 'tests/audit-history-backfill-sources.test.js'; rc=$?; rm -f \"$tmp\"; exit $rc",
+        "reviewDecision": null,
+        "action": "Prefer reconciling the behind checkout with origin/main; current content matches upstream."
+      },
+      {
+        "path": "tests/smoke-check-deploy.test.js",
+        "status": "yellow",
+        "classification": "modified-tracked-origin-drift-reviewed",
+        "gitStatus": "M  tests/smoke-check-deploy.test.js",
+        "currentExists": true,
+        "headExists": true,
+        "originExists": true,
+        "currentHash": "01d4d89c8a52",
+        "headHash": "8b8294fde2f7",
+        "originHash": "b61212349834",
+        "comparisonSource": "worktree",
+        "currentLines": 416,
+        "headLines": 189,
+        "originLines": 531,
+        "lineDeltaVsHead": 227,
+        "lineDeltaVsOrigin": -115,
+        "reviewCommand": "git diff -- 'tests/smoke-check-deploy.test.js' && git diff origin/main -- 'tests/smoke-check-deploy.test.js'",
+        "reviewDecision": {
+          "status": "accepted",
+          "decision": "accept-current",
+          "reason": "Current tests keep the GitHub Pages propagation-grace coverage while avoiding the duplicated recovery-gap test block present on origin/main.",
+          "evidence": [
+            "git diff origin/main -- tests/smoke-check-deploy.test.js reviewed",
+            "node --check scripts/smoke-check-deploy.js",
+            "node --test tests/smoke-check-deploy.test.js"
+          ],
+          "currentHash": "01d4d89c8a52",
+          "originHash": "b61212349834"
+        },
+        "action": "Hash-locked review accepts current over origin/main: Current tests keep the GitHub Pages propagation-grace coverage while avoiding the duplicated recovery-gap test block present on origin/main."
+      },
+      {
+        "path": "tests/validate-package.test.js",
+        "status": "yellow",
+        "classification": "modified-tracked",
+        "gitStatus": "M  tests/validate-package.test.js",
+        "currentExists": true,
+        "headExists": true,
+        "originExists": true,
+        "currentHash": "a22bcaad51f5",
+        "headHash": "1304acf4b498",
+        "originHash": "a22bcaad51f5",
+        "comparisonSource": "worktree",
+        "currentLines": 125,
+        "headLines": 83,
+        "originLines": 125,
+        "lineDeltaVsHead": 42,
+        "lineDeltaVsOrigin": 0,
+        "reviewCommand": "git diff -- 'tests/validate-package.test.js'",
+        "reviewDecision": null,
+        "action": "Review the working-tree diff before staging this tracked file."
+      }
+    ]
+  },
+  "reviewDecisions": {
+    "path": ".firstbite/source-promotion-decisions.json",
+    "version": 1,
+    "count": 10
+  },
+  "stagingGate": {
+    "status": "red",
+    "fullStageBlocked": true,
+    "summary": "Full bundle staging is blocked by 1 red upstream-drift candidate(s); 18 non-red candidate(s) remain available for separate review-only staging.",
+    "nextAction": "Run the red-row review commands, decide current-vs-origin content, then regenerate this packet before staging the full bundle.",
+    "fullStageCommand": "BLOCKED: resolve 1 red candidate(s) before staging the full bundle",
+    "nonRedStageCommand": "git add -- 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+    "blockedPaths": [
+      "package.json"
+    ],
+    "blockedRows": [
+      {
+        "path": "package.json",
+        "classification": "modified-tracked-origin-drift",
+        "reviewCommand": "git diff -- 'package.json' && git diff origin/main -- 'package.json'",
+        "action": "Diff against both HEAD and origin/main before staging; branch drift and local edits overlap.",
+        "lineDeltaVsOrigin": -2
+      }
+    ],
+    "nonRedStageablePaths": [
+      "currscript.js",
+      "scripts/reliability-cockpit.js",
+      "scripts/smoke-check-deploy.js",
+      "scripts/source-promotion-packet.js",
+      "scripts/trust-preflight.js",
+      "scripts/validate-package.js",
+      ".firstbite/source-promotion-decisions.json",
+      "tests/reliability-cockpit.test.js",
+      "tests/source-promotion-packet.test.js",
+      "tests/trust-preflight.test.js",
+      "scripts/capture-loaded-mcp-probe.js",
+      "tests/capture-loaded-mcp-probe.test.js",
+      "scripts/verify-grafana-otel-smoke.js",
+      "tests/verify-grafana-otel-smoke.test.js",
+      "scripts/audit-history-backfill-sources.js",
+      "tests/audit-history-backfill-sources.test.js",
+      "tests/smoke-check-deploy.test.js",
+      "tests/validate-package.test.js"
+    ],
+    "commandStageablePaths": [
+      "currscript.js",
+      "scripts/reliability-cockpit.js",
+      "scripts/smoke-check-deploy.js",
+      "scripts/source-promotion-packet.js",
+      "scripts/trust-preflight.js",
+      "scripts/validate-package.js",
+      ".firstbite/source-promotion-decisions.json",
+      "tests/reliability-cockpit.test.js",
+      "tests/source-promotion-packet.test.js",
+      "tests/trust-preflight.test.js",
+      "scripts/capture-loaded-mcp-probe.js",
+      "tests/capture-loaded-mcp-probe.test.js",
+      "scripts/verify-grafana-otel-smoke.js",
+      "tests/verify-grafana-otel-smoke.test.js",
+      "scripts/audit-history-backfill-sources.js",
+      "tests/audit-history-backfill-sources.test.js",
+      "tests/smoke-check-deploy.test.js",
+      "tests/validate-package.test.js"
+    ],
+    "indexSourcedPaths": []
+  },
+  "stagedBundle": {
+    "status": "red",
+    "exactMatch": false,
+    "summary": "Index attestation is red because the full staging gate is blocked.",
+    "nextAction": "Resolve red staging-gate rows before trusting anything currently staged.",
+    "stageableCount": 19,
+    "stagedCount": 19,
+    "stagedStageableCount": 19,
+    "unstagedStageableCount": 0,
+    "unexpectedStagedCount": 0,
+    "dirtyAfterStagingCount": 1,
+    "ignoredDirtyAfterStagingCount": 0,
+    "stagedPaths": [
+      ".firstbite/source-promotion-decisions.json",
+      "currscript.js",
+      "package.json",
+      "scripts/audit-history-backfill-sources.js",
+      "scripts/capture-loaded-mcp-probe.js",
+      "scripts/reliability-cockpit.js",
+      "scripts/smoke-check-deploy.js",
+      "scripts/source-promotion-packet.js",
+      "scripts/trust-preflight.js",
+      "scripts/validate-package.js",
+      "scripts/verify-grafana-otel-smoke.js",
+      "tests/audit-history-backfill-sources.test.js",
+      "tests/capture-loaded-mcp-probe.test.js",
+      "tests/reliability-cockpit.test.js",
+      "tests/smoke-check-deploy.test.js",
+      "tests/source-promotion-packet.test.js",
+      "tests/trust-preflight.test.js",
+      "tests/validate-package.test.js",
+      "tests/verify-grafana-otel-smoke.test.js"
+    ],
+    "stagedStageablePaths": [
+      ".firstbite/source-promotion-decisions.json",
+      "currscript.js",
+      "package.json",
+      "scripts/audit-history-backfill-sources.js",
+      "scripts/capture-loaded-mcp-probe.js",
+      "scripts/reliability-cockpit.js",
+      "scripts/smoke-check-deploy.js",
+      "scripts/source-promotion-packet.js",
+      "scripts/trust-preflight.js",
+      "scripts/validate-package.js",
+      "scripts/verify-grafana-otel-smoke.js",
+      "tests/audit-history-backfill-sources.test.js",
+      "tests/capture-loaded-mcp-probe.test.js",
+      "tests/reliability-cockpit.test.js",
+      "tests/smoke-check-deploy.test.js",
+      "tests/source-promotion-packet.test.js",
+      "tests/trust-preflight.test.js",
+      "tests/validate-package.test.js",
+      "tests/verify-grafana-otel-smoke.test.js"
+    ],
+    "unstagedStageablePaths": [],
+    "unexpectedStagedPaths": [],
+    "stagedHoldByDefaultPaths": [],
+    "dirtyAfterStagingPaths": [
+      "package.json"
+    ],
+    "ignoredDirtyAfterStagingPaths": []
+  },
+  "holdByDefault": [
+    {
+      "path": ".cursor/plans/resplit-nurse.log.md",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "plan checkpoint; review separately"
+    },
+    {
+      "path": ".gitignore",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "ignore-rule change; review separately"
+    },
+    {
+      "path": "INBOX.md",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "operator doc or queue file; review separately"
+    },
+    {
+      "path": "README.md",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "operator doc or queue file; review separately"
+    },
+    {
+      "path": "RUNBOOK.md",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "operator doc or queue file; review separately"
+    },
+    {
+      "path": "package-lock.json",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-12.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-13.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-14.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-15.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-16.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-17.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-18.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-19.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-20.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-21.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-22.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-23.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-24.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-25.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2025-05-26.json",
+      "status": "D",
+      "index": ".",
+      "worktree": "D",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "tests/fx-worker-routes.test.js",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "worker/src/index.mjs",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "wrangler.jsonc",
+      "status": "M",
+      "index": ".",
+      "worktree": "M",
+      "disposition": "Cloudflare config; review separately"
+    },
+    {
+      "path": ".agents/skills/hooks/SKILL.md",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "agent local state; hold by default"
+    },
+    {
+      "path": ".agents/skills/release-train/SKILL.md",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "agent local state; hold by default"
+    },
+    {
+      "path": "docs/grafana-otel-smoke-20260525.md",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "scripts/backfill-history-snapshots.js",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-12.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-13.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-14.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-15.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-16.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-17.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-18.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-19.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-20.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-21.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-22.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-23.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-24.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-25.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "snapshot-archive/2026-05-26.json",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "snapshot archive data; hold by default"
+    },
+    {
+      "path": "tests/backfill-history-snapshots.test.js",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "tests/ocr-attest.test.js",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "tests/ocr-monitoring.test.js",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "tests/ocr-router.test.js",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "vidux/pre-launch-architecture/PLAN.md",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "vidux/pre-launch-architecture/research/01-current-architecture.md",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "vidux/pre-launch-architecture/research/02-gcp-target-architecture.md",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "vidux/pre-launch-architecture/research/contract-openapi-draft.yaml",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "worker/src/ocr/attest.mjs",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "worker/src/ocr/attestation.mjs",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "worker/src/ocr/azure.mjs",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "worker/src/ocr/monitoring.mjs",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    },
+    {
+      "path": "worker/src/ocr/router.mjs",
+      "status": "??",
+      "index": "?",
+      "worktree": "?",
+      "disposition": "outside source-promotion packet; hold by default"
+    }
+  ],
+  "commandDrift": [
+    {
+      "kind": "package script",
+      "name": "check:publish",
+      "status": "red",
+      "current": "npm run generate && npm run validate && npm run test",
+      "head": null,
+      "origin": "npm run generate && npm run validate && npm run test"
+    },
+    {
+      "kind": "package script",
+      "name": "reliability:cockpit",
+      "status": "red",
+      "current": "node scripts/reliability-cockpit.js",
+      "head": null,
+      "origin": "node scripts/reliability-cockpit.js"
+    },
+    {
+      "kind": "package script",
+      "name": "source:promotion-packet",
+      "status": "red",
+      "current": "node scripts/source-promotion-packet.js",
+      "head": null,
+      "origin": "node scripts/source-promotion-packet.js"
+    },
+    {
+      "kind": "package script",
+      "name": "trust:preflight",
+      "status": "red",
+      "current": "node scripts/trust-preflight.js",
+      "head": null,
+      "origin": "node scripts/trust-preflight.js"
+    }
+  ],
+  "commands": {
+    "inspectStatus": "git status --short -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+    "inspectDiff": "git diff -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+    "inspectOriginDiff": "git diff origin/main -- 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+    "inspectUntracked": "git ls-files --others --exclude-standard -- '.firstbite/local-ci.json' 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+    "stageExactBundle": "BLOCKED: resolve 1 red candidate(s) before staging the full bundle",
+    "stageNonRedCandidates": "git add -- 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+    "reviewStaged": "git diff --cached --stat && git diff --cached --check",
+    "verifyStagedExactBundle": "npm run source:promotion-packet && git diff --cached --name-status && git diff --cached --check",
+    "unstageExactBundle": "git restore --staged -- 'package.json' 'currscript.js' 'scripts/reliability-cockpit.js' 'scripts/smoke-check-deploy.js' 'scripts/source-promotion-packet.js' 'scripts/trust-preflight.js' 'scripts/validate-package.js' '.firstbite/source-promotion-decisions.json' 'tests/reliability-cockpit.test.js' 'tests/source-promotion-packet.test.js' 'tests/trust-preflight.test.js' 'scripts/capture-loaded-mcp-probe.js' 'tests/capture-loaded-mcp-probe.test.js' 'scripts/verify-grafana-otel-smoke.js' 'tests/verify-grafana-otel-smoke.test.js' 'scripts/audit-history-backfill-sources.js' 'tests/audit-history-backfill-sources.test.js' 'tests/smoke-check-deploy.test.js' 'tests/validate-package.test.js'",
+    "cleanProofAfterPromotion": "cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- run_lanes '{\"mode\":\"execute\",\"group\":\"resplit_currency_api_all\",\"worktree\":true,\"source_ref\":\"refs/remotes/origin/main\",\"run_id\":\"verify-resplit-fx-clean-origin-main-YYYYMMDD\"}'"
+  },
+  "blockers": [
+    {
+      "status": "red",
+      "area": "source promotion bundle",
+      "detail": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)"
+    },
+    {
+      "status": "yellow",
+      "area": "hold-by-default files",
+      "detail": "56 dirty file(s) are outside the source-promotion bundle and should stay out unless separately reviewed."
+    },
+    {
+      "status": "yellow",
+      "area": "checkout freshness",
+      "detail": "Primary checkout is behind origin/main by 53 commit(s)."
+    },
+    {
+      "status": "yellow",
+      "area": "OTEL/Grafana",
+      "detail": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json."
+    },
+    {
+      "status": "yellow",
+      "area": "release history",
+      "detail": "Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates."
+    },
+    {
+      "status": "yellow",
+      "area": "gitignore review",
+      "detail": ".gitignore is dirty and is not part of the default source-promotion bundle."
+    },
+    {
+      "status": "red",
+      "area": "candidate reconciliation",
+      "detail": "19 candidate(s) reviewed; 12 already present on origin/main; 10 origin drift row(s); 0 new local-only file(s); 6 modified tracked file(s)"
+    },
+    {
+      "status": "red",
+      "area": "staging gate",
+      "detail": "Full bundle staging is blocked by 1 red upstream-drift candidate(s); 18 non-red candidate(s) remain available for separate review-only staging."
+    },
+    {
+      "status": "red",
+      "area": "staged bundle attestation",
+      "detail": "Index attestation is red because the full staging gate is blocked."
+    }
+  ],
+  "trustContracts": [
+    {
+      "gate": "Primary checkout",
+      "status": "yellow",
+      "current": "dirty 67 / behind 53 on codex/w2-5-fx-manifest-source-custody",
+      "nextAction": "Separate user changes from cockpit work, then prove the intended launch source from clean current origin/main."
+    },
+    {
+      "gate": "Tracked local-CI contract",
+      "status": "red",
+      "current": "3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)",
+      "nextAction": "Land or sync .firstbite/local-ci.json, package scripts, and referenced script files onto tracked source before trusting clean-lane proof."
+    },
+    {
+      "gate": "Clean proof targetability",
+      "status": "red",
+      "current": "3 clean-proof readiness issue(s); current lane count 4.",
+      "nextAction": "Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command."
+    },
+    {
+      "gate": "Source promotion bundle",
+      "status": "red",
+      "current": "13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)",
+      "nextAction": "Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof."
+    },
+    {
+      "gate": "FirstBite operating readout",
+      "status": "yellow",
+      "current": "FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.",
+      "nextAction": "Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims."
+    },
+    {
+      "gate": "M4 peer execution boundary",
+      "status": "yellow",
+      "current": "M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.",
+      "nextAction": "Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready."
+    },
+    {
+      "gate": "Selected local-CI proof",
+      "status": "yellow",
+      "current": "Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.",
+      "nextAction": "Rerun all FX lanes from clean current source with commands matching .firstbite/local-ci.json."
+    },
+    {
+      "gate": "Loaded MCP host catalog",
+      "status": "red",
+      "current": "Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).",
+      "nextAction": "Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes."
+    },
+    {
+      "gate": "Repo-backed MCP package",
+      "status": "missing",
+      "current": "Repo-backed FirstBite MCP catalog probe was not run.",
+      "nextAction": "Run the repo-backed FirstBite list_lanes call and fix manifest parsing before executing lanes."
+    },
+    {
+      "gate": "OTEL/Grafana evidence",
+      "status": "yellow",
+      "current": "Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.",
+      "nextAction": "After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match."
+    },
+    {
+      "gate": "Release-history strict coverage",
+      "status": "yellow",
+      "current": "Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.",
+      "nextAction": "Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes."
+    },
+    {
+      "gate": "Agent ledger health",
+      "status": "red",
+      "current": "1 unrecovered failure row(s) found in the last 24h ledger window.",
+      "nextAction": "Resolve unrecovered ledger failure rows before using agent history as trust evidence."
+    }
+  ]
+}

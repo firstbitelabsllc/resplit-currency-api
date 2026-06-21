@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resplit FX Reliability Cockpit</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f2;
+      --ink: #1e2019;
+      --muted: #686b61;
+      --line: #d8d6ca;
+      --panel: #fffef7;
+      --green: #2f7d57;
+      --yellow: #a86f16;
+      --red: #b33a2c;
+      --blue: #2f5f8f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 40px;
+    }
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: end;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    h1, h2 {
+      margin: 0;
+      letter-spacing: 0;
+    }
+    h1 { font-size: 28px; line-height: 1.1; }
+    h2 { font-size: 16px; margin-bottom: 10px; }
+    h3 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; }
+    .meta { color: var(--muted); font-size: 13px; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid currentColor;
+      font-weight: 700;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .green { color: var(--green); }
+    .yellow { color: var(--yellow); }
+    .red { color: var(--red); }
+    .blue { color: var(--blue); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+      margin-top: 18px;
+    }
+    section {
+      grid-column: span 12;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      min-width: 0;
+    }
+    .half { grid-column: span 6; }
+    .third { grid-column: span 4; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th, td {
+      padding: 9px 8px;
+      border-top: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #ece9db;
+      border-radius: 5px;
+      padding: 2px 4px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    li + li { margin-top: 6px; }
+    .kv {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 8px 12px;
+    }
+    .kv div:nth-child(odd) {
+      color: var(--muted);
+    }
+    @media (max-width: 760px) {
+      header { grid-template-columns: 1fr; }
+      .half, .third { grid-column: span 12; }
+      h1 { font-size: 24px; }
+      .kv { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+  <div>
+    <h1>Resplit FX Reliability Cockpit</h1>
+    <div class="meta">/Users/leokwan/Development/resplit-currency-api · generated 2026-06-20T18:42:25.174Z</div>
+  </div>
+  <div class="status red">RED - missing required trust contract</div>
+</header>
+<div class="grid">
+  <section class="third">
+    <h2>Repo State</h2>
+    <div class="kv">
+      <div>Branch</div><div><code>codex/w2-5-fx-manifest-source-custody</code></div>
+      <div>HEAD</div><div><code>46c8f62fbf94</code></div>
+      <div>origin/main</div><div><code>5947eafbf009</code></div>
+      <div>Dirty paths</div><div>67</div>
+      <div>Behind</div><div>53</div>
+    </div>
+  </section>
+  <section class="third">
+    <h2>Local CI</h2>
+    <div class="status yellow">Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.</div>
+  </section>
+  <section class="third">
+    <h2>Telemetry</h2>
+    <div class="status yellow">Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.</div>
+  </section>
+<section>
+    <h2>Local Trust Preflight</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> status=red; commands 7 green, 2 yellow, 0 red; cockpit=RED - missing required trust contract</div>
+      <div>Generated</div><div>2026-06-20T18:42:25.167Z (0m old)</div>
+      <div>Mode</div><div>fast</div>
+      <div>JSON</div><div><code>/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.json</code></div>
+      <div>Markdown</div><div><code>/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.md</code></div>
+      <div>Cockpit verdict at run</div><div><span class="red">RED - missing required trust contract</span></div>
+    </div>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Exit</th><th>Expected</th><th>Duration</th><th>Command</th></tr></thead>
+      <tbody>
+        <tr><td>Cockpit syntax</td><td><span class="green">green</span></td><td>0</td><td>0</td><td>122ms</td><td><code>node --check scripts/reliability-cockpit.js</code></td></tr>
+<tr><td>Preflight syntax</td><td><span class="green">green</span></td><td>0</td><td>0</td><td>76ms</td><td><code>node --check scripts/trust-preflight.js</code></td></tr>
+<tr><td>Source promotion packet syntax</td><td><span class="green">green</span></td><td>0</td><td>0</td><td>84ms</td><td><code>node --check scripts/source-promotion-packet.js</code></td></tr>
+<tr><td>Grafana verifier syntax</td><td><span class="green">green</span></td><td>0</td><td>0</td><td>84ms</td><td><code>node --check scripts/verify-grafana-otel-smoke.js</code></td></tr>
+<tr><td>Loaded MCP capture syntax</td><td><span class="green">green</span></td><td>0</td><td>0</td><td>84ms</td><td><code>node --check scripts/capture-loaded-mcp-probe.js</code></td></tr>
+<tr><td>Targeted cockpit tests</td><td><span class="green">green</span></td><td>0</td><td>0</td><td>7985ms</td><td><code>node --test tests/capture-loaded-mcp-probe.test.js tests/reliability-cockpit.test.js tests/source-promotion-packet.test.js tests/verify-grafana-otel-smoke.test.js tests/trust-preflight.test.js</code></td></tr>
+<tr><td>Grafana missing-config proof</td><td><span class="yellow">yellow</span></td><td>2</td><td>0, 2</td><td>765ms</td><td><code>npm run observability:otel-smoke -- --skip-trigger --output reports/grafana-otel-smoke-missing-config-preflight.json</code></td></tr>
+<tr><td>Cockpit regenerate</td><td><span class="green">green</span></td><td>0</td><td>0</td><td>6411ms</td><td><code>npm run reliability:cockpit</code></td></tr>
+<tr><td>Source promotion packet generate</td><td><span class="yellow">yellow</span></td><td>1</td><td>0, 1</td><td>4159ms</td><td><code>npm run source:promotion-packet</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+    <h2>Launch Trust Audit</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> 1 allowed, 3 caution, 5 forbidden claim boundary(s) across 9 launch-trust surfaces.</div>
+      <div>Rule</div><div>Each row states the strongest allowed claim for this surface; red/yellow rows name the overclaim that remains forbidden.</div>
+    </div>
+    <table>
+      <thead><tr><th>Surface</th><th>Status</th><th>Boundary</th><th>Claim allowed?</th><th>Allowed claim</th><th>Forbidden until green</th><th>Evidence</th><th>Gap / next action</th></tr></thead>
+      <tbody>
+        <tr><td><code>overall-launch-trust</code><div class="meta">Overall Resplit FX launch trust · Release operator</div></td><td><span class="red">red</span></td><td><code>release</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not call Resplit FX launch-ready while any trust contract below is red or yellow.</td><td><code>12 trust contract(s) in this cockpit</code></td><td>Primary checkout: yellow; Tracked local-CI contract: red; Clean proof targetability: red; Source promotion bundle: red; FirstBite operating readout: yellow; M4 peer execution boundary: yellow; Selected local-CI proof: yellow; Loaded MCP host catalog: red; OTEL/Grafana evidence: yellow; Release-history strict coverage: yellow; Agent ledger health: red<div class="meta">Work the Operator Action Queue top-down until every launch-critical row turns green.</div></td></tr>
+<tr><td><code>source-contract</code><div class="meta">Tracked source and source promotion · Local source</div></td><td><span class="red">red</span></td><td><code>local</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not treat dirty/current-only control-plane files as launch source.</td><td><code>git status --short --branch | cockpit Tracked Source Contract section | cockpit Source Promotion Bundle section</code></td><td>dirty 67 / behind 53 on codex/w2-5-fx-manifest-source-custody | 3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s) | 13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)<div class="meta">Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof.</div></td></tr>
+<tr><td><code>clean-firstbite-local-ci</code><div class="meta">Clean FirstBite local-CI execution · FirstBite local CI</div></td><td><span class="red">red</span></td><td><code>local-ci</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not claim local CI validates the current launch source.</td><td><code>missing MCP execute report</code></td><td>3 clean-proof readiness issue(s); current lane count 4. | Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.<div class="meta">Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command.</div></td></tr>
+<tr><td><code>loaded-agent-mcp</code><div class="meta">Loaded Codex/Cursor MCP host · Codex/Cursor MCP host</div></td><td><span class="red">red</span></td><td><code>local-agent-host</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not claim Codex/Cursor loaded MCP can execute or even see FX lanes from the current host process.</td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json</code></td><td>Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s). | Loaded MCP host differs from repo-backed catalog: missing 2 repo(s), 4/4 expected FX lane(s), 5 group(s), and 22 total lane(s).<div class="meta">Restart or reload the Codex/Cursor MCP host, capture mcp__firstbite_local_ci.list_lanes again, and require this delta to clear before trusting loaded-host execution.</div></td></tr>
+<tr><td><code>repo-backed-mcp-source</code><div class="meta">Repo-backed FirstBite MCP package · FirstBite MCP package</div></td><td><span class="green">green</span></td><td><code>control-plane</code></td><td><span class="green">yes</span></td><td>The repo-backed package is the current control-plane source of truth for lane catalog comparison.</td><td>none</td><td><code>/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci</code></td><td>Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.<div class="meta">Treat this as the control-plane source until loaded host catches up.</div></td></tr>
+<tr><td><code>peer-execution</code><div class="meta">M4 peer execution · M4 local agent peer</div></td><td><span class="yellow">yellow</span></td><td><code>peer-execution</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not treat LAN pings, dashboard health, or Studio-side handoffs as M4 execute proof.</td><td><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></td><td>M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.<div class="meta">Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready.</div></td></tr>
+<tr><td><code>otel-grafana-proof</code><div class="meta">OTEL/Grafana observability · Cloudflare/Grafana</div></td><td><span class="yellow">yellow</span></td><td><code>external-observability</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not claim telemetry is launch-trusted from config alone or an old nurse-log note.</td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json</code></td><td>Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.<div class="meta">After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match.</div></td></tr>
+<tr><td><code>release-history-quality</code><div class="meta">Release-history data quality · FX data</div></td><td><span class="yellow">yellow</span></td><td><code>data-quality</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not claim release readiness while the May 12-23 history hole or strict validation gap remains.</td><td><code>npm run validate:release</code></td><td>Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.<div class="meta">Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes.</div></td></tr>
+<tr><td><code>agent-ledger-fleet</code><div class="meta">Agent ledger and fleet handoff · Ledger / local agent fleet</div></td><td><span class="red">red</span></td><td><code>local-agent-fleet</code></td><td><span class="red">no</span></td><td>Only a limited diagnostic claim is allowed for this surface.</td><td>Do not use ledger or fleet rows as proof of execution readiness when they are stale, failed, or support-only.</td><td><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json | /Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive</code></td><td>FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only. | 1 unrecovered failure row(s) found in the last 24h ledger window.<div class="meta">Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.</div></td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+    <h2>Proof Freshness Ledger</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="yellow">yellow</span> 4 fresh, 3 stale/missing across 7 proof artifact(s); trust colors remain separate.</div>
+      <div>Fresh window</div><div>60m default; row-specific windows may differ.</div>
+    </div>
+    <table>
+      <thead><tr><th>Proof</th><th>Freshness</th><th>Trust</th><th>Age</th><th>Artifact</th><th>Summary</th><th>Next action</th></tr></thead>
+      <tbody>
+        <tr><td><code>local-trust-preflight</code><div class="meta">Local trust preflight</div></td><td><span class="green">green</span><div class="meta">Local trust preflight is fresh: 0m old.</div></td><td><span class="red">red</span></td><td>2026-06-20T18:42:25.167Z<div class="meta">0m old · window 60m</div></td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-trust-preflight.json</code></td><td>status=red; commands 7 green, 2 yellow, 0 red; cockpit=RED - missing required trust contract</td><td>npm run trust:preflight</td></tr>
+<tr><td><code>source-promotion-packet</code><div class="meta">Source promotion packet</div></td><td><span class="green">green</span><div class="meta">Source promotion packet is fresh: 0m old.</div></td><td><span class="red">red</span></td><td>2026-06-20T18:42:21.446Z<div class="meta">0m old · window 60m</div></td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.json</code><div class="meta"><code>/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.md</code></div></td><td>status=red; stage candidates 19; hold by default 56; command drift 4; cockpit=RED - missing required trust contract</td><td>npm run source:promotion-packet</td></tr>
+<tr><td><code>selected-firstbite-execute-proof</code><div class="meta">Selected FirstBite execute proof</div></td><td><span class="yellow">yellow</span><div class="meta">No execute report was found for this repo.</div></td><td><span class="yellow">yellow</span></td><td>missing<div class="meta">unknown age · window 360m</div></td><td><code></code></td><td>No execute report was found for this repo.</td><td>cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci &amp;&amp; npm run --silent call -- run_lanes &#39;{&quot;mode&quot;:&quot;execute&quot;,&quot;group&quot;:&quot;resplit_currency_api_all&quot;,&quot;worktree&quot;:true,&quot;source_ref&quot;:&quot;refs/remotes/origin/main&quot;,&quot;run_id&quot;:&quot;verify-resplit-fx-clean-origin-main-YYYYMMDD&quot;}&#39;</td></tr>
+<tr><td><code>loaded-mcp-host-probe</code><div class="meta">Loaded MCP host probe</div></td><td><span class="yellow">yellow</span><div class="meta">Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary.</div></td><td><span class="red">red</span></td><td>2026-05-25T08:09:51.376Z<div class="meta">38073m old · window 60m</div></td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json</code></td><td>Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary.</td><td>npm run mcp:loaded-probe -- --reuse-existing</td></tr>
+<tr><td><code>repo-backed-mcp-catalog</code><div class="meta">Repo-backed MCP catalog</div></td><td><span class="green">green</span><div class="meta">Repo-backed MCP catalog is fresh: 0m old.</div></td><td><span class="green">green</span></td><td>2026-06-20T18:42:25.174Z<div class="meta">0m old · window 60m</div></td><td><code>/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci</code></td><td>Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.</td><td>cd ~/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci &amp;&amp; npm run --silent call -- list_lanes {}</td></tr>
+<tr><td><code>grafana-otel-smoke</code><div class="meta">Grafana OTEL smoke</div></td><td><span class="green">green</span><div class="meta">Grafana OTEL smoke is fresh: 0m old.</div></td><td><span class="yellow">yellow</span></td><td>2026-06-20T18:42:14.410Z<div class="meta">0m old · window 60m</div></td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json</code></td><td>JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.</td><td>npm run observability:otel-smoke -- --since-minutes 60</td></tr>
+<tr><td><code>firstbite-operating-readout</code><div class="meta">FirstBite operating readout</div></td><td><span class="yellow">yellow</span><div class="meta">FirstBite operating readout is stale: 14733m old; refresh before trusting this proof boundary.</div></td><td><span class="yellow">yellow</span></td><td>2026-06-10T13:09:19Z<div class="meta">14733m old · window 60m</div></td><td><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code><div class="meta"><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/summary.md</code></div></td><td>FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.</td><td>bash ~/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh</td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+    <h2>Operator Recovery Flow</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> 5 runnable action(s) now; 3 action(s) waiting on local or external dependencies.</div>
+      <div>Next local action</div><div><code>source-promotion-review</code> · <code>npm run source:promotion-packet</code></div>
+      <div>First dependency</div><div><code>clean-firstbite-proof</code> · Source promotion bundle must land first.</div>
+    </div>
+    <table>
+      <thead><tr><th>Phase</th><th>Priority</th><th>Action</th><th>Status</th><th>Boundary</th><th>Owner</th><th>Unblocks</th><th>Proof</th></tr></thead>
+      <tbody>
+        <tr><td>run now</td><td>1</td><td><code>source-promotion-review</code></td><td><span class="red">red</span></td><td><code>local</code></td><td>Local source</td><td>Clean worktree FirstBite proof</td><td><code>reports/resplit-fx-source-promotion-packet.md</code></td></tr>
+<tr><td>run now</td><td>3</td><td><code>loaded-mcp-refresh</code></td><td><span class="red">red</span></td><td><code>local-agent-host</code></td><td>Codex/Cursor MCP host</td><td>In-app local coding agent trust</td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json</code></td></tr>
+<tr><td>run now</td><td>5</td><td><code>release-history-backfill</code></td><td><span class="yellow">yellow</span></td><td><code>data-quality</code></td><td>FX data</td><td>FX release readiness</td><td><code>npm run validate:release</code></td></tr>
+<tr><td>run now</td><td>6</td><td><code>firstbite-operating-readout</code></td><td><span class="yellow">yellow</span></td><td><code>local-agent-fleet</code></td><td>Local agent fleet</td><td>Fleet-wide local agent confidence</td><td><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></td></tr>
+<tr><td>run now</td><td>7</td><td><code>ledger-health-repair</code></td><td><span class="red">red</span></td><td><code>ledger</code></td><td>Ledger</td><td>Agent history trust</td><td><code>/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive</code></td></tr>
+<tr><td>after dependency</td><td>2</td><td><code>clean-firstbite-proof</code></td><td><span class="red">red</span></td><td><code>local-ci</code></td><td>FirstBite local CI</td><td>Selected local-CI proof</td><td><code>missing MCP execute report</code></td></tr>
+<tr><td>after dependency</td><td>4</td><td><code>grafana-otel-proof</code></td><td><span class="yellow">yellow</span></td><td><code>external-observability</code></td><td>Cloudflare/Grafana</td><td>OTEL/Grafana launch trust</td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json</code></td></tr>
+<tr><td>after dependency</td><td>7</td><td><code>m4-peer-execute-proof</code></td><td><span class="yellow">yellow</span></td><td><code>peer-execution</code></td><td>M4 local agent peer</td><td>Peer execution capacity trust</td><td><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></td></tr>
+      </tbody>
+    </table>
+    <table>
+      <thead><tr><th>Boundary</th><th>Actions</th><th>Red</th><th>Yellow</th><th>Action ids</th></tr></thead>
+      <tbody>
+        <tr><td><code>local</code></td><td>1</td><td>1</td><td>0</td><td><code>source-promotion-review</code></td></tr>
+<tr><td><code>local-ci</code></td><td>1</td><td>1</td><td>0</td><td><code>clean-firstbite-proof</code></td></tr>
+<tr><td><code>local-agent-host</code></td><td>1</td><td>1</td><td>0</td><td><code>loaded-mcp-refresh</code></td></tr>
+<tr><td><code>external-observability</code></td><td>1</td><td>0</td><td>1</td><td><code>grafana-otel-proof</code></td></tr>
+<tr><td><code>data-quality</code></td><td>1</td><td>0</td><td>1</td><td><code>release-history-backfill</code></td></tr>
+<tr><td><code>local-agent-fleet</code></td><td>1</td><td>0</td><td>1</td><td><code>firstbite-operating-readout</code></td></tr>
+<tr><td><code>peer-execution</code></td><td>1</td><td>0</td><td>1</td><td><code>m4-peer-execute-proof</code></td></tr>
+<tr><td><code>ledger</code></td><td>1</td><td>1</td><td>0</td><td><code>ledger-health-repair</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+    <h2>Operator Action Queue</h2>
+    <table>
+      <thead><tr><th>Priority</th><th>Action</th><th>Status</th><th>Owner</th><th>Gate</th><th>Boundary</th><th>Can run now</th><th>Command</th><th>Proof required</th><th>Blocker / dependency</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><code>source-promotion-review</code></td><td><span class="red">red</span></td><td>Local source</td><td>Source promotion bundle<div class="meta">Review the packet, stage only exact candidates, and keep hold-by-default rows out unless separately reviewed.</div></td><td><code>local</code></td><td><span class="green">yes</span></td><td><code>npm run source:promotion-packet</code></td><td>A staged or landed diff whose paths match the packet stage candidates, with hold-by-default rows reviewed separately.<div class="meta"><code>reports/resplit-fx-source-promotion-packet.md</code></div></td><td>13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)</td></tr>
+<tr><td>2</td><td><code>clean-firstbite-proof</code></td><td><span class="red">red</span></td><td>FirstBite local CI</td><td>Clean proof targetability<div class="meta">Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command.</div></td><td><code>local-ci</code></td><td><span class="yellow">after dependency</span></td><td><code>cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci &amp;&amp; npm run --silent call -- run_lanes &#39;{&quot;mode&quot;:&quot;execute&quot;,&quot;group&quot;:&quot;resplit_currency_api_all&quot;,&quot;worktree&quot;:true,&quot;source_ref&quot;:&quot;refs/remotes/origin/main&quot;,&quot;run_id&quot;:&quot;verify-resplit-fx-clean-origin-main-YYYYMMDD&quot;}&#39;</code></td><td>A fresh worktree=true execute report with all resplit_currency_api lanes passing and commands matching .firstbite/local-ci.json.<div class="meta"><code>missing MCP execute report</code></div></td><td>Source promotion bundle must land first.</td></tr>
+<tr><td>3</td><td><code>loaded-mcp-refresh</code></td><td><span class="red">red</span></td><td>Codex/Cursor MCP host</td><td>Loaded MCP host catalog<div class="meta">Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.</div></td><td><code>local-agent-host</code></td><td><span class="green">yes</span></td><td><code>npm run mcp:loaded-probe -- --reuse-existing</code></td><td>Fresh loaded-host list_lanes artifact with repo-manifest-v2, 15 lanes, and all resplit_currency_api lanes present.<div class="meta"><code>/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json</code></div></td><td>Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).</td></tr>
+<tr><td>4</td><td><code>grafana-otel-proof</code></td><td><span class="yellow">yellow</span></td><td>Cloudflare/Grafana</td><td>OTEL/Grafana evidence<div class="meta">After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match.</div></td><td><code>external-observability</code></td><td><span class="yellow">after dependency</span></td><td><code>npm run observability:otel-smoke -- --since-minutes 60</code></td><td>A fresh smoke artifact where Worker trigger, Grafana config, Tempo query, and Loki query are all green.<div class="meta"><code>/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json</code></div></td><td>Requires Cloudflare destination setup, deployment, and Grafana read env.</td></tr>
+<tr><td>5</td><td><code>release-history-backfill</code></td><td><span class="yellow">yellow</span></td><td>FX data</td><td>Release-history strict coverage<div class="meta">Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes.</div></td><td><code>data-quality</code></td><td><span class="green">yes</span></td><td><code>npm run audit:backfill-sources -- --from 2026-05-12 --to 2026-05-23 &amp;&amp; npm run validate:release</code></td><td>Strict validation green, or an audit artifact proving every missing date has complete single-source coverage before backfill.<div class="meta"><code>npm run validate:release</code></div></td><td>[2026-05-24] P1 release-history risk: daily publish and Worker liveness are fresh again, but the May 12-23 history hole remains</td></tr>
+<tr><td>6</td><td><code>firstbite-operating-readout</code></td><td><span class="yellow">yellow</span></td><td>Local agent fleet</td><td>FirstBite operating readout<div class="meta">Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.</div></td><td><code>local-agent-fleet</code></td><td><span class="green">yes</span></td><td><code>bash /Users/leokwan/Development/ai-leo/skills/local-ci/scripts/firstbite-operating-readout.sh</code></td><td>Fresh readout separating FX repo proof from broader fleet warnings.<div class="meta"><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></div></td><td>FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.</td></tr>
+<tr><td>7</td><td><code>m4-peer-execute-proof</code></td><td><span class="yellow">yellow</span></td><td>M4 local agent peer</td><td>M4 peer execution boundary<div class="meta">Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready.</div></td><td><code>peer-execution</code></td><td><span class="yellow">after dependency</span></td><td><code>Run generated fresh-clone-commands.sh on the M4 Pro</code></td><td>M4-local support preflight plus run_lanes execute report from the M4 host; Studio HTTP/LAN/SSH probes are not execution proof.<div class="meta"><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></div></td><td>Requires running the generated packet on the M4 Pro and capturing proof from that host.</td></tr>
+<tr><td>7</td><td><code>ledger-health-repair</code></td><td><span class="red">red</span></td><td>Ledger</td><td>Agent ledger health<div class="meta">Repair stale ledger rows with append-only scoped evidence.</div></td><td><code>ledger</code></td><td><span class="green">yes</span></td><td><code>bash /Users/leokwan/Development/ai-leo/skills/ledger/scripts/audit_ledger_quality.sh</code></td><td>Ledger audit and fleet health return green/yellow with no unrecovered failures.<div class="meta"><code>/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive</code></div></td><td>1 unrecovered failure row(s) found in the last 24h ledger window.</td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+    <h2>Trust Contracts</h2>
+    <table>
+      <thead><tr><th>Gate</th><th>Status</th><th>Current truth</th><th>Proof artifact</th><th>Next action</th></tr></thead>
+      <tbody>
+        <tr><td>Primary checkout</td><td><span class="yellow">yellow</span></td><td>dirty 67 / behind 53 on codex/w2-5-fx-manifest-source-custody</td><td><code>git status --short --branch</code></td><td>Separate user changes from cockpit work, then prove the intended launch source from clean current origin/main.</td></tr>
+<tr><td>Tracked local-CI contract</td><td><span class="red">red</span></td><td>3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)</td><td><code>cockpit Tracked Source Contract section</code></td><td>Land or sync .firstbite/local-ci.json, package scripts, and referenced script files onto tracked source before trusting clean-lane proof.</td></tr>
+<tr><td>Clean proof targetability</td><td><span class="red">red</span></td><td>3 clean-proof readiness issue(s); current lane count 4.</td><td><code>cockpit Clean Proof Readiness section</code></td><td>Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command.</td></tr>
+<tr><td>Source promotion bundle</td><td><span class="red">red</span></td><td>13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)</td><td><code>cockpit Source Promotion Bundle section</code></td><td>Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof.</td></tr>
+<tr><td>FirstBite operating readout</td><td><span class="yellow">yellow</span></td><td>FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.</td><td><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></td><td>Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.</td></tr>
+<tr><td>M4 peer execution boundary</td><td><span class="yellow">yellow</span></td><td>M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.</td><td><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></td><td>Run the generated fresh-clone commands on the M4 Pro and capture an M4-local run_lanes execute report before calling the peer execution-ready.</td></tr>
+<tr><td>Selected local-CI proof</td><td><span class="yellow">yellow</span></td><td>Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.</td><td><code>missing MCP execute report</code></td><td>Rerun all FX lanes from clean current source with commands matching .firstbite/local-ci.json.</td></tr>
+<tr><td>Loaded MCP host catalog</td><td><span class="red">red</span></td><td>Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).</td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json</code></td><td>Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes.</td></tr>
+<tr><td>Repo-backed MCP package</td><td><span class="green">green</span></td><td>Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.</td><td><code>/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci</code></td><td>Treat this as the control-plane source until loaded host catches up.</td></tr>
+<tr><td>OTEL/Grafana evidence</td><td><span class="yellow">yellow</span></td><td>Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.</td><td><code>/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json</code></td><td>After Cloudflare destinations exist, run npm run observability:otel-smoke with Grafana read env until Tempo and Loki both match.</td></tr>
+<tr><td>Release-history strict coverage</td><td><span class="yellow">yellow</span></td><td>Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.</td><td><code>npm run validate:release</code></td><td>Backfill or age out the May 12-23 history gap; keep FX launch readiness yellow until strict validation passes.</td></tr>
+<tr><td>Agent ledger health</td><td><span class="red">red</span></td><td>1 unrecovered failure row(s) found in the last 24h ledger window.</td><td><code>/Users/leokwan/Development/ai/hooks/ledger-fleet-health.sh --repo resplit-currency-api --archive</code></td><td>Resolve unrecovered ledger failure rows before using agent history as trust evidence.</td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+    <h2>Repo-Owned Local CI Lanes</h2>
+    <table>
+      <thead><tr><th>Lane</th><th>Kind</th><th>Command</th><th>Timeout</th></tr></thead>
+      <tbody>
+        <tr><td><code>resplit_currency_api_unit</code></td><td>unit</td><td><code>npm ci &amp;&amp; npm run generate &amp;&amp; npm run test</code></td><td>1200000</td></tr>
+<tr><td><code>resplit_currency_api_integration</code></td><td>integration</td><td><code>npm ci &amp;&amp; npm run check:publish</code></td><td>1500000</td></tr>
+<tr><td><code>resplit_currency_api_trust_preflight</code></td><td>integration</td><td><code>npm ci &amp;&amp; npm run trust:preflight</code><div class="meta">Launch-trust lane: generates local cockpit, Cloudflare destination, Grafana, source-promotion, and local-agent trust artifacts. Exit 1 is expected yellow while proof is incomplete; exit 2 remains red/fail. Do not treat endpoint smoke as launch-green without this lane.</div></td><td>1500000</td></tr>
+<tr><td><code>resplit_currency_api_ui</code></td><td>ui</td><td><code>npm ci &amp;&amp; npm run smoke:deploy</code><div class="meta">Live Worker/CDN smoke; this repo has no browser UI, so the UI lane is the user-facing FX contract smoke. The smoke script keeps strict date checks outside a narrow publish grace window and emits a warning when grace is active.</div></td><td>1500000</td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+      <h2>Latest MCP Proof</h2>
+      <p class="meta">No execute proof found under <code>/Users/leokwan/.agent-ledger/firstbite-local-ci-mcp</code>.</p>
+      <h2>Clean Proof Readiness</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> 3 clean-proof readiness issue(s); current lane count 4.</div>
+      <div>Runner contract</div><div>FirstBite run_lanes with worktree=true creates disposable detached worktrees from source_ref; launch proof must pass source_ref=refs/remotes/origin/main so a dirty registered checkout cannot leak into execution. worktree=false runs the active checkout and is supporting evidence only.</div>
+      <div>Selected proof</div><div>missing</div>
+      <div>Current-manifest proof</div><div>none</div>
+      <div>Next action</div><div>Land or sync the current manifest, package scripts, and cockpit scripts to tracked source, then rerun the clean worktree command.</div>
+      <div>Clean command</div><div><code>cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci &amp;&amp; npm run --silent call -- run_lanes &#39;{&quot;mode&quot;:&quot;execute&quot;,&quot;group&quot;:&quot;resplit_currency_api_all&quot;,&quot;worktree&quot;:true,&quot;source_ref&quot;:&quot;refs/remotes/origin/main&quot;,&quot;run_id&quot;:&quot;verify-resplit-fx-clean-origin-main-YYYYMMDD&quot;}&#39;</code></div>
+      <div>Dirty-support command</div><div><code>cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci &amp;&amp; npm run --silent call -- run_lanes &#39;{&quot;mode&quot;:&quot;execute&quot;,&quot;group&quot;:&quot;resplit_currency_api_all&quot;,&quot;worktree&quot;:false,&quot;run_id&quot;:&quot;verify-resplit-fx-current-manifest-YYYYMMDD&quot;}&#39;</code></div>
+    </div>
+    <table>
+      <thead><tr><th>Area</th><th>Status</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td>tracked contract</td><td><span class="red">red</span></td><td>3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)</td></tr>
+<tr><td>selected proof</td><td><span class="yellow">yellow</span></td><td>No selected MCP execute proof exists for a clean worktree run.</td></tr>
+<tr><td>primary checkout</td><td><span class="yellow">yellow</span></td><td>Primary checkout is dirty 67 and behind 53 on codex/w2-5-fx-manifest-source-custody.</td></tr>
+      </tbody>
+    </table>
+      <h2>Source Promotion Bundle</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> 13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)</div>
+      <div>Recommended paths</div><div><code>scripts/reliability-cockpit.js</code> <code>scripts/source-promotion-packet.js</code> <code>scripts/trust-preflight.js</code> <code>.firstbite/source-promotion-decisions.json</code> <code>tests/reliability-cockpit.test.js</code> <code>tests/source-promotion-packet.test.js</code> <code>tests/trust-preflight.test.js</code> <code>scripts/capture-loaded-mcp-probe.js</code> <code>tests/capture-loaded-mcp-probe.test.js</code> <code>scripts/verify-grafana-otel-smoke.js</code> <code>tests/verify-grafana-otel-smoke.test.js</code> <code>scripts/audit-history-backfill-sources.js</code> <code>tests/audit-history-backfill-sources.test.js</code> <code>package.json</code> <code>currscript.js</code> <code>scripts/reliability-cockpit.js</code> <code>scripts/smoke-check-deploy.js</code> <code>scripts/source-promotion-packet.js</code> <code>scripts/trust-preflight.js</code> <code>scripts/validate-package.js</code> <code>.firstbite/source-promotion-decisions.json</code> <code>tests/reliability-cockpit.test.js</code> <code>tests/source-promotion-packet.test.js</code> <code>tests/trust-preflight.test.js</code> <code>scripts/capture-loaded-mcp-probe.js</code> <code>tests/capture-loaded-mcp-probe.test.js</code> <code>scripts/verify-grafana-otel-smoke.js</code> <code>tests/verify-grafana-otel-smoke.test.js</code> <code>scripts/audit-history-backfill-sources.js</code> <code>tests/audit-history-backfill-sources.test.js</code> <code>tests/smoke-check-deploy.test.js</code> <code>tests/validate-package.test.js</code></div>
+      <div>Next action</div><div>Review this bundle, land the listed current-only and modified control-plane paths onto tracked source, then rerun clean worktree FirstBite proof.</div>
+      <div>Inspect status</div><div><code>git status --short -- &#39;.firstbite/local-ci.json&#39; &#39;package.json&#39; &#39;currscript.js&#39; &#39;scripts/reliability-cockpit.js&#39; &#39;scripts/smoke-check-deploy.js&#39; &#39;scripts/source-promotion-packet.js&#39; &#39;scripts/trust-preflight.js&#39; &#39;scripts/validate-package.js&#39; &#39;.firstbite/source-promotion-decisions.json&#39; &#39;tests/reliability-cockpit.test.js&#39; &#39;tests/source-promotion-packet.test.js&#39; &#39;tests/trust-preflight.test.js&#39; &#39;scripts/capture-loaded-mcp-probe.js&#39; &#39;tests/capture-loaded-mcp-probe.test.js&#39; &#39;scripts/verify-grafana-otel-smoke.js&#39; &#39;tests/verify-grafana-otel-smoke.test.js&#39; &#39;scripts/audit-history-backfill-sources.js&#39; &#39;tests/audit-history-backfill-sources.test.js&#39; &#39;tests/smoke-check-deploy.test.js&#39; &#39;tests/validate-package.test.js&#39;</code></div>
+      <div>Inspect diff</div><div><code>git diff -- &#39;.firstbite/local-ci.json&#39; &#39;package.json&#39; &#39;currscript.js&#39; &#39;scripts/reliability-cockpit.js&#39; &#39;scripts/smoke-check-deploy.js&#39; &#39;scripts/source-promotion-packet.js&#39; &#39;scripts/trust-preflight.js&#39; &#39;scripts/validate-package.js&#39; &#39;.firstbite/source-promotion-decisions.json&#39; &#39;tests/reliability-cockpit.test.js&#39; &#39;tests/source-promotion-packet.test.js&#39; &#39;tests/trust-preflight.test.js&#39; &#39;scripts/capture-loaded-mcp-probe.js&#39; &#39;tests/capture-loaded-mcp-probe.test.js&#39; &#39;scripts/verify-grafana-otel-smoke.js&#39; &#39;tests/verify-grafana-otel-smoke.test.js&#39; &#39;scripts/audit-history-backfill-sources.js&#39; &#39;tests/audit-history-backfill-sources.test.js&#39; &#39;tests/smoke-check-deploy.test.js&#39; &#39;tests/validate-package.test.js&#39;</code></div>
+      <div>Inspect untracked</div><div><code>git ls-files --others --exclude-standard -- &#39;.firstbite/local-ci.json&#39; &#39;package.json&#39; &#39;currscript.js&#39; &#39;scripts/reliability-cockpit.js&#39; &#39;scripts/smoke-check-deploy.js&#39; &#39;scripts/source-promotion-packet.js&#39; &#39;scripts/trust-preflight.js&#39; &#39;scripts/validate-package.js&#39; &#39;.firstbite/source-promotion-decisions.json&#39; &#39;tests/reliability-cockpit.test.js&#39; &#39;tests/source-promotion-packet.test.js&#39; &#39;tests/trust-preflight.test.js&#39; &#39;scripts/capture-loaded-mcp-probe.js&#39; &#39;tests/capture-loaded-mcp-probe.test.js&#39; &#39;scripts/verify-grafana-otel-smoke.js&#39; &#39;tests/verify-grafana-otel-smoke.test.js&#39; &#39;scripts/audit-history-backfill-sources.js&#39; &#39;tests/audit-history-backfill-sources.test.js&#39; &#39;tests/smoke-check-deploy.test.js&#39; &#39;tests/validate-package.test.js&#39;</code></div>
+      <div>Write packet</div><div><code>npm run source:promotion-packet</code></div>
+      <div>Review packet</div><div><code>reports/resplit-fx-source-promotion-packet.md</code></div>
+      <div>Clean proof after promotion</div><div><code>cd /Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci &amp;&amp; npm run --silent call -- run_lanes &#39;{&quot;mode&quot;:&quot;execute&quot;,&quot;group&quot;:&quot;resplit_currency_api_all&quot;,&quot;worktree&quot;:true,&quot;source_ref&quot;:&quot;refs/remotes/origin/main&quot;,&quot;run_id&quot;:&quot;verify-resplit-fx-clean-origin-main-YYYYMMDD&quot;}&#39;</code></div>
+    </div>
+    <table>
+      <thead><tr><th>Path</th><th>Role</th><th>Current</th><th>HEAD</th><th>origin/main</th><th>Git status</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><code>.firstbite/local-ci.json</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>clean</code></td><td>already tracked</td></tr>
+<tr><td><code>package.json</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>MM package.json</code></td><td>include modified current source</td></tr>
+<tr><td><code>currscript.js</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  currscript.js</code></td><td>include modified current source</td></tr>
+<tr><td><code>scripts/reliability-cockpit.js</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/reliability-cockpit.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>scripts/smoke-check-deploy.js</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  scripts/smoke-check-deploy.js</code></td><td>include modified current source</td></tr>
+<tr><td><code>scripts/source-promotion-packet.js</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/source-promotion-packet.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>scripts/trust-preflight.js</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/trust-preflight.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>scripts/validate-package.js</code></td><td>local-CI contract</td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  scripts/validate-package.js</code></td><td>include modified current source</td></tr>
+<tr><td><code>.firstbite/source-promotion-decisions.json</code></td><td>source-promotion review</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  .firstbite/source-promotion-decisions.json</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>tests/reliability-cockpit.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  tests/reliability-cockpit.test.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>tests/source-promotion-packet.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  tests/source-promotion-packet.test.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>tests/trust-preflight.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  tests/trust-preflight.test.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>scripts/capture-loaded-mcp-probe.js</code></td><td>MCP host probe</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/capture-loaded-mcp-probe.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>tests/capture-loaded-mcp-probe.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  tests/capture-loaded-mcp-probe.test.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>scripts/verify-grafana-otel-smoke.js</code></td><td>telemetry proof</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/verify-grafana-otel-smoke.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>tests/verify-grafana-otel-smoke.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  tests/verify-grafana-otel-smoke.test.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>scripts/audit-history-backfill-sources.js</code></td><td>release-history audit</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/audit-history-backfill-sources.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>tests/audit-history-backfill-sources.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  tests/audit-history-backfill-sources.test.js</code></td><td>add to HEAD before clean proof</td></tr>
+<tr><td><code>tests/smoke-check-deploy.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  tests/smoke-check-deploy.test.js</code></td><td>include modified current source</td></tr>
+<tr><td><code>tests/validate-package.test.js</code></td><td>verification</td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  tests/validate-package.test.js</code></td><td>include modified current source</td></tr>
+      </tbody>
+    </table>
+    <table>
+      <thead><tr><th>Command</th><th>Kind</th><th>Status</th><th>Current</th><th>HEAD</th><th>origin/main</th></tr></thead>
+      <tbody>
+        <tr><td><code>check:publish</code></td><td>package script</td><td><span class="red">red</span></td><td><code>npm run generate &amp;&amp; npm run validate &amp;&amp; npm run test</code></td><td><code>missing</code></td><td><code>npm run generate &amp;&amp; npm run validate &amp;&amp; npm run test</code></td></tr>
+<tr><td><code>reliability:cockpit</code></td><td>package script</td><td><span class="red">red</span></td><td><code>node scripts/reliability-cockpit.js</code></td><td><code>missing</code></td><td><code>node scripts/reliability-cockpit.js</code></td></tr>
+<tr><td><code>source:promotion-packet</code></td><td>package script</td><td><span class="red">red</span></td><td><code>node scripts/source-promotion-packet.js</code></td><td><code>missing</code></td><td><code>node scripts/source-promotion-packet.js</code></td></tr>
+<tr><td><code>trust:preflight</code></td><td>package script</td><td><span class="red">red</span></td><td><code>node scripts/trust-preflight.js</code></td><td><code>missing</code></td><td><code>node scripts/trust-preflight.js</code></td></tr>
+      </tbody>
+    </table>
+      <h2>Source Promotion Packet Reconciliation</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> status=red; stage candidates 19; hold by default 56; command drift 4; cockpit=RED - missing required trust contract; reconciliation red (19 candidate(s) reviewed; 12 already present on origin/main; 10 origin drift row(s); 0 new local-only file(s); 6 modified tracked file(s))</div>
+      <div>Generated</div><div>2026-06-20T18:42:21.446Z (0m old)</div>
+      <div>JSON</div><div><code>/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.json</code></div>
+      <div>Markdown</div><div><code>/Users/leokwan/Development/resplit-currency-api/reports/resplit-fx-source-promotion-packet.md</code></div>
+      <div>Write packet</div><div><code>npm run source:promotion-packet</code></div>
+      <div>Inspect origin diff</div><div><code>git diff origin/main -- &#39;package.json&#39; &#39;currscript.js&#39; &#39;scripts/reliability-cockpit.js&#39; &#39;scripts/smoke-check-deploy.js&#39; &#39;scripts/source-promotion-packet.js&#39; &#39;scripts/trust-preflight.js&#39; &#39;scripts/validate-package.js&#39; &#39;.firstbite/source-promotion-decisions.json&#39; &#39;tests/reliability-cockpit.test.js&#39; &#39;tests/source-promotion-packet.test.js&#39; &#39;tests/trust-preflight.test.js&#39; &#39;scripts/capture-loaded-mcp-probe.js&#39; &#39;tests/capture-loaded-mcp-probe.test.js&#39; &#39;scripts/verify-grafana-otel-smoke.js&#39; &#39;tests/verify-grafana-otel-smoke.test.js&#39; &#39;scripts/audit-history-backfill-sources.js&#39; &#39;tests/audit-history-backfill-sources.test.js&#39; &#39;tests/smoke-check-deploy.test.js&#39; &#39;tests/validate-package.test.js&#39;</code></div>
+      <div>Full stage gate</div><div><span class="red">red</span> Full bundle staging is blocked by 1 red upstream-drift candidate(s); 18 non-red candidate(s) remain available for separate review-only staging.</div>
+      <div>Full stage command</div><div><code>BLOCKED: resolve 1 red candidate(s) before staging the full bundle</code></div>
+      <div>Stage non-red candidates</div><div><code>git add -- &#39;currscript.js&#39; &#39;scripts/reliability-cockpit.js&#39; &#39;scripts/smoke-check-deploy.js&#39; &#39;scripts/source-promotion-packet.js&#39; &#39;scripts/trust-preflight.js&#39; &#39;scripts/validate-package.js&#39; &#39;.firstbite/source-promotion-decisions.json&#39; &#39;tests/reliability-cockpit.test.js&#39; &#39;tests/source-promotion-packet.test.js&#39; &#39;tests/trust-preflight.test.js&#39; &#39;scripts/capture-loaded-mcp-probe.js&#39; &#39;tests/capture-loaded-mcp-probe.test.js&#39; &#39;scripts/verify-grafana-otel-smoke.js&#39; &#39;tests/verify-grafana-otel-smoke.test.js&#39; &#39;scripts/audit-history-backfill-sources.js&#39; &#39;tests/audit-history-backfill-sources.test.js&#39; &#39;tests/smoke-check-deploy.test.js&#39; &#39;tests/validate-package.test.js&#39;</code></div>
+      <div>Staged bundle attestation</div><div><span class="red">red</span> Index attestation is red because the full staging gate is blocked.</div>
+      <div>Verify staged exact bundle</div><div><code>npm run source:promotion-packet &amp;&amp; git diff --cached --name-status &amp;&amp; git diff --cached --check</code></div>
+    </div>
+    <table>
+      <thead><tr><th>Blocked path</th><th>Classification</th><th>Δ origin</th><th>Review command</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><code>package.json</code></td><td><code>modified-tracked-origin-drift</code></td><td>-2</td><td><code>git diff -- &#39;package.json&#39; &amp;&amp; git diff origin/main -- &#39;package.json&#39;</code></td><td>Diff against both HEAD and origin/main before staging; branch drift and local edits overlap.</td></tr>
+      </tbody>
+    </table>
+    <table>
+      <thead><tr><th>Index category</th><th>Paths</th></tr></thead>
+      <tbody>
+        <tr><td>Staged candidates</td><td><code>.firstbite/source-promotion-decisions.json</code>, <code>currscript.js</code>, <code>package.json</code>, <code>scripts/audit-history-backfill-sources.js</code>, <code>scripts/capture-loaded-mcp-probe.js</code>, <code>scripts/reliability-cockpit.js</code>, <code>scripts/smoke-check-deploy.js</code>, <code>scripts/source-promotion-packet.js</code>, <code>scripts/trust-preflight.js</code>, <code>scripts/validate-package.js</code>, <code>scripts/verify-grafana-otel-smoke.js</code>, <code>tests/audit-history-backfill-sources.test.js</code>, <code>tests/capture-loaded-mcp-probe.test.js</code>, <code>tests/reliability-cockpit.test.js</code>, <code>tests/smoke-check-deploy.test.js</code>, <code>tests/source-promotion-packet.test.js</code>, <code>tests/trust-preflight.test.js</code>, <code>tests/validate-package.test.js</code>, <code>tests/verify-grafana-otel-smoke.test.js</code></td></tr>
+        <tr><td>Unstaged candidates</td><td>none</td></tr>
+        <tr><td>Unexpected staged</td><td>none</td></tr>
+        <tr><td>Dirty after staging</td><td><code>package.json</code></td></tr>
+        <tr><td>Next action</td><td>Resolve red staging-gate rows before trusting anything currently staged.</td></tr>
+      </tbody>
+    </table>
+    <table>
+      <thead><tr><th>Path</th><th>Status</th><th>Classification</th><th>Current</th><th>HEAD</th><th>origin/main</th><th>Δ HEAD</th><th>Δ origin</th><th>Decision</th><th>Review command</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><code>package.json</code></td><td><span class="red">red</span></td><td><code>modified-tracked-origin-drift</code></td><td><code>295faa8f2f11 / 33l</code></td><td><code>a0e3e6a8e15d / 24l</code></td><td><code>ffb5de2b1cf4 / 35l</code></td><td>+9</td><td>-2</td><td><code>none</code></td><td><code>git diff -- &#39;package.json&#39; &amp;&amp; git diff origin/main -- &#39;package.json&#39;</code></td><td>Diff against both HEAD and origin/main before staging; branch drift and local edits overlap.</td></tr>
+<tr><td><code>currscript.js</code></td><td><span class="yellow">yellow</span></td><td><code>modified-tracked</code></td><td><code>c15af4ace2d6 / 628l</code></td><td><code>e9029b11ec70 / 624l</code></td><td><code>c15af4ace2d6 / 628l</code></td><td>+4</td><td>0</td><td><code>none</code></td><td><code>git diff -- &#39;currscript.js&#39;</code></td><td>Review the working-tree diff before staging this tracked file.</td></tr>
+<tr><td><code>scripts/reliability-cockpit.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>6f5e9b171353 / 4919l</code></td><td><code>missing</code></td><td><code>a8fb476b07b4 / 4885l</code></td><td>n/a</td><td>+34</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:scripts/reliability-cockpit.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;scripts/reliability-cockpit.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current cockpit preserves explicit origin-main source_ref clean proof semantics while adding Grafana source-identity trust and keeping source-promotion truth separate from clean-proof readiness.</td></tr>
+<tr><td><code>scripts/smoke-check-deploy.js</code></td><td><span class="yellow">yellow</span></td><td><code>modified-tracked</code></td><td><code>3021f4fc2f95 / 435l</code></td><td><code>4f6c021ea796 / 233l</code></td><td><code>3021f4fc2f95 / 435l</code></td><td>+202</td><td>0</td><td><code>none</code></td><td><code>git diff -- &#39;scripts/smoke-check-deploy.js&#39;</code></td><td>Review the working-tree diff before staging this tracked file.</td></tr>
+<tr><td><code>scripts/source-promotion-packet.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>68648860a0e2 / 1158l</code></td><td><code>missing</code></td><td><code>015418faae18 / 1089l</code></td><td>n/a</td><td>+69</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:scripts/source-promotion-packet.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;scripts/source-promotion-packet.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current packet keeps landed zero-candidate bundles green, keeps review-decision metadata non-self-blocking, compares the staged package contract when package.json also has unrelated unstaged OCR dependency drift, and excludes that index-sourced package row from generated git-add commands.</td></tr>
+<tr><td><code>scripts/trust-preflight.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>5ebfd6c46195 / 372l</code></td><td><code>missing</code></td><td><code>dc4bc63a57af / 372l</code></td><td>n/a</td><td>0</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:scripts/trust-preflight.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;scripts/trust-preflight.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current preflight writes the Grafana missing-config proof to the cockpit-consumed grafana-otel-smoke-missing-config-preflight.json path.</td></tr>
+<tr><td><code>scripts/validate-package.js</code></td><td><span class="yellow">yellow</span></td><td><code>modified-tracked</code></td><td><code>99ee426ff2dd / 274l</code></td><td><code>d843ba715acd / 207l</code></td><td><code>99ee426ff2dd / 274l</code></td><td>+67</td><td>0</td><td><code>none</code></td><td><code>git diff -- &#39;scripts/validate-package.js&#39;</code></td><td>Review the working-tree diff before staging this tracked file.</td></tr>
+<tr><td><code>.firstbite/source-promotion-decisions.json</code></td><td><span class="yellow">yellow</span></td><td><code>review-decision-manifest-update</code></td><td><code>62de1e11196f / 120l</code></td><td><code>missing</code></td><td><code>2cae36b2395b / 50l</code></td><td>n/a</td><td>+70</td><td><code>none</code></td><td><code>git status --short -- &#39;.firstbite/source-promotion-decisions.json&#39;</code></td><td>Review decision manifest changed; keep it stageable but do not require a self-referential hash decision.</td></tr>
+<tr><td><code>tests/reliability-cockpit.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>241093c717c7 / 2608l</code></td><td><code>missing</code></td><td><code>80542a682a39 / 2531l</code></td><td>n/a</td><td>+77</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:tests/reliability-cockpit.test.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;tests/reliability-cockpit.test.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current tests lock source_ref=refs/remotes/origin/main proof, Grafana source-identity trust, and source-promotion/clean-proof gate separation.</td></tr>
+<tr><td><code>tests/source-promotion-packet.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>c013bf41d115 / 547l</code></td><td><code>missing</code></td><td><code>d8fb20d3c470 / 473l</code></td><td>n/a</td><td>+74</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:tests/source-promotion-packet.test.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;tests/source-promotion-packet.test.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current tests preserve zero-candidate green attestation, cover the decision-manifest non-self-blocking metadata row, and lock the staged-package/unstaged-drift split including safe git-add command generation.</td></tr>
+<tr><td><code>tests/trust-preflight.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>2c4a9d21e1ce / 122l</code></td><td><code>missing</code></td><td><code>bd6500043935 / 122l</code></td><td>n/a</td><td>0</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:tests/trust-preflight.test.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;tests/trust-preflight.test.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current test locks the renamed Grafana missing-config preflight artifact path.</td></tr>
+<tr><td><code>scripts/capture-loaded-mcp-probe.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-match</code></td><td><code>70c380a12d76 / 258l</code></td><td><code>missing</code></td><td><code>70c380a12d76 / 258l</code></td><td>n/a</td><td>0</td><td><code>none</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:scripts/capture-loaded-mcp-probe.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;scripts/capture-loaded-mcp-probe.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Prefer reconciling the behind checkout with origin/main; current content matches upstream.</td></tr>
+<tr><td><code>tests/capture-loaded-mcp-probe.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-match</code></td><td><code>1b9b63cd7611 / 94l</code></td><td><code>missing</code></td><td><code>1b9b63cd7611 / 94l</code></td><td>n/a</td><td>0</td><td><code>none</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:tests/capture-loaded-mcp-probe.test.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;tests/capture-loaded-mcp-probe.test.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Prefer reconciling the behind checkout with origin/main; current content matches upstream.</td></tr>
+<tr><td><code>scripts/verify-grafana-otel-smoke.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>9a2cd523eb61 / 613l</code></td><td><code>missing</code></td><td><code>dad7b3b6f716 / 551l</code></td><td>n/a</td><td>+62</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:scripts/verify-grafana-otel-smoke.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;scripts/verify-grafana-otel-smoke.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current Grafana proof records source identity so telemetry evidence carries checkout head, branch, dirty path, and generated-artifact context.</td></tr>
+<tr><td><code>tests/verify-grafana-otel-smoke.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-origin-drift-reviewed</code></td><td><code>5f1a6594c30f / 223l</code></td><td><code>missing</code></td><td><code>2fa56a14cc75 / 171l</code></td><td>n/a</td><td>+52</td><td><code>accepted:accept-current</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:tests/verify-grafana-otel-smoke.test.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;tests/verify-grafana-otel-smoke.test.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Hash-locked review accepts current over origin/main: Current tests cover the source-identity provenance added to Grafana telemetry proof.</td></tr>
+<tr><td><code>scripts/audit-history-backfill-sources.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-match</code></td><td><code>1d25c3ba3d4c / 532l</code></td><td><code>missing</code></td><td><code>1d25c3ba3d4c / 532l</code></td><td>n/a</td><td>0</td><td><code>none</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:scripts/audit-history-backfill-sources.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;scripts/audit-history-backfill-sources.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Prefer reconciling the behind checkout with origin/main; current content matches upstream.</td></tr>
+<tr><td><code>tests/audit-history-backfill-sources.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>origin-present-match</code></td><td><code>3b4ecb521790 / 236l</code></td><td><code>missing</code></td><td><code>3b4ecb521790 / 236l</code></td><td>n/a</td><td>0</td><td><code>none</code></td><td><code>tmp=$(mktemp); git show &#39;origin/main:tests/audit-history-backfill-sources.test.js&#39; &gt; &quot;$tmp&quot; &amp;&amp; git diff --no-index &quot;$tmp&quot; &#39;tests/audit-history-backfill-sources.test.js&#39;; rc=$?; rm -f &quot;$tmp&quot;; exit $rc</code></td><td>Prefer reconciling the behind checkout with origin/main; current content matches upstream.</td></tr>
+<tr><td><code>tests/smoke-check-deploy.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>modified-tracked-origin-drift-reviewed</code></td><td><code>01d4d89c8a52 / 416l</code></td><td><code>8b8294fde2f7 / 189l</code></td><td><code>b61212349834 / 531l</code></td><td>+227</td><td>-115</td><td><code>accepted:accept-current</code></td><td><code>git diff -- &#39;tests/smoke-check-deploy.test.js&#39; &amp;&amp; git diff origin/main -- &#39;tests/smoke-check-deploy.test.js&#39;</code></td><td>Hash-locked review accepts current over origin/main: Current tests keep the GitHub Pages propagation-grace coverage while avoiding the duplicated recovery-gap test block present on origin/main.</td></tr>
+<tr><td><code>tests/validate-package.test.js</code></td><td><span class="yellow">yellow</span></td><td><code>modified-tracked</code></td><td><code>a22bcaad51f5 / 125l</code></td><td><code>1304acf4b498 / 83l</code></td><td><code>a22bcaad51f5 / 125l</code></td><td>+42</td><td>0</td><td><code>none</code></td><td><code>git diff -- &#39;tests/validate-package.test.js&#39;</code></td><td>Review the working-tree diff before staging this tracked file.</td></tr>
+      </tbody>
+    </table>
+      <h2>FirstBite Operating Readout</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="yellow">yellow</span> FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.</div>
+      <div>Run</div><div><code>codex-goal-20260610T-cycle142-preflight</code></div>
+      <div>Created</div><div>2026-06-10T13:09:19Z (14733m old)</div>
+      <div>Local CI latest proofs</div><div>0/0 pass · 0 fail</div>
+      <div>Catalog</div><div>repo-manifest-v2 · declared 34/34 · expected repo present</div>
+      <div>Manifest portability</div><div>fresh clone true · active checkout true · uncommitted repos 0</div>
+      <div>FX manifest state</div><div>committed · <code>clean</code></div>
+      <div>Moussey /coding</div><div>live_runtime_stale_source_contract_blocked · local CI 0/0 pass · LAN peers 2/3 healthy</div>
+      <div>M4 peer boundary</div><div><span class="yellow">M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.</span></div>
+      <div>M4 peer probe</div><div>moussey_surface_ready_needs_m4_execute_report · execution_ready=false · <code>http://Leos-Macbook-M4-Pro.local:4321</code></div>
+      <div>M4 fresh-clone packet</div><div>available · commands <code>missing</code> · gates 3</div>
+      <div>M4 proof rule</div><div>M4 execution requires an M4-local launch-grade lane report; HTTP health, LAN status, self-refresh, or SSH probes are not lane proof.</div>
+      <div>Report</div><div><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/report.json</code></div>
+      <div>Summary</div><div><code>/Users/leokwan/.agent-ledger/firstbite-operating-readout/codex-goal-20260610T-cycle142-preflight/summary.md</code></div>
+      <div>Next action</div><div>Treat this as a fleet warning: inspect the failed lane(s), active manifest readiness, peer execution boundary, and Moussey status before broad launch claims.</div>
+    </div>
+    <table>
+      <thead><tr><th>Failed lane</th><th>Repo</th><th>Kind</th><th>Status</th><th>Run</th><th>Log</th></tr></thead>
+      <tbody>
+        <tr><td colspan="6">No failed lanes in the latest operating readout.</td></tr>
+      </tbody>
+    </table>
+      <h2>Repo-Backed MCP Catalog</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="green">green</span> Repo-backed FirstBite MCP sees repo-manifest-v2 with 34 lane(s); resplit_currency_api has 4/4 expected lane(s). fresh_clone_ready=true, active_ready=true.</div>
+      <div>Source</div><div>repo-backed package:list_lanes</div>
+      <div>Checked</div><div>2026-06-20T18:42:25.174Z (0m old)</div>
+      <div>Expected repo</div><div><code>resplit_currency_api</code></div>
+      <div>Catalog</div><div>repo-manifest-v2 · 34 loaded lane(s)</div>
+      <div>Loaded FX lanes</div><div><code>resplit_currency_api_integration, resplit_currency_api_trust_preflight, resplit_currency_api_ui, resplit_currency_api_unit</code></div>
+      <div>Missing FX lanes</div><div><code>none</code></div>
+      <div>Manifest portability</div><div>fresh clone true · active checkout true</div>
+      <div>Package dir</div><div><code>/Users/leokwan/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci</code></div>
+      <div>Command</div><div><code>npm run --silent call -- list_lanes {}</code></div>
+    </div>
+      <h2>MCP Catalog Delta</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> Loaded MCP host differs from repo-backed catalog: missing 2 repo(s), 4/4 expected FX lane(s), 5 group(s), and 22 total lane(s).</div>
+      <div>Loaded checked</div><div>2026-05-25T08:09:51.376Z</div>
+      <div>Repo-backed checked</div><div>2026-06-20T18:42:25.174Z</div>
+      <div>Lane counts</div><div>loaded 12 / repo-backed 34</div>
+      <div>Catalog versions</div><div>loaded unknown / repo-backed repo-manifest-v2</div>
+      <div>Missing repos in loaded host</div><div><code>resplit_currency_api, trysnowcubes_web</code></div>
+      <div>Missing expected FX lanes</div><div><code>resplit_currency_api_unit, resplit_currency_api_integration, resplit_currency_api_trust_preflight, resplit_currency_api_ui</code></div>
+      <div>Missing groups in loaded host</div><div><code>all_lint, resplit_currency_api_all, snowcubes_all, snowcubes_critical, trysnowcubes_web_all</code></div>
+      <div>Missing total lanes in loaded host</div><div><code>moussey_coding_console, moussey_scenarios, moussey_snowcubes_invoice, moussey_snowcubes_readiness, resplit_currency_api_integration, resplit_currency_api_trust_preflight, resplit_currency_api_ui, resplit_currency_api_unit, resplit_ios_lint, resplit_ios_receipt_splitter_unit, resplit_ios_ui_full, strongyes_web_dsa_chat, strongyes_web_dsa_code_execution, strongyes_web_dsa_code_suggest, strongyes_web_dsa_journey, strongyes_web_dsa_mcp, strongyes_web_dsa_part2, strongyes_web_dsa_tabs, strongyes_web_launch_guest, trysnowcubes_reviews_worker, trysnowcubes_web_invoice, trysnowcubes_web_reviews</code></div>
+      <div>Next action</div><div>Restart or reload the Codex/Cursor MCP host, capture mcp__firstbite_local_ci.list_lanes again, and require this delta to clear before trusting loaded-host execution.</div>
+    </div>
+      <h2>Loaded MCP Probe</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).</div>
+      <div>Source</div><div>previous-loaded-mcp-artifact:reports/firstbite-loaded-mcp-lanes.json</div>
+      <div>Checked</div><div>2026-05-25T08:09:51.376Z (38073m old)</div>
+      <div>Freshness</div><div><span class="yellow">yellow</span> Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary.</div>
+      <div>Expected repo</div><div><code>resplit_currency_api</code></div>
+      <div>Catalog</div><div>unknown · 12 loaded lane(s)</div>
+      <div>Loaded FX lanes</div><div><code>none</code></div>
+      <div>Missing FX lanes</div><div><code>resplit_currency_api_unit, resplit_currency_api_integration, resplit_currency_api_trust_preflight, resplit_currency_api_ui</code></div>
+      <div>Probe file</div><div><code>/Users/leokwan/Development/resplit-currency-api/reports/firstbite-loaded-mcp-lanes.json</code></div>
+      <div>Restart hint</div><div>MCP clients keep long-lived stdio processes; restart Codex/Cursor if this catalog is missing current repo-manifest lanes.</div>
+    </div>
+      <h2>Tracked Source Contract</h2>
+    <div class="kv">
+      <div>Status</div><div><span class="red">red</span> 3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)</div>
+      <div>Refs</div><div><code>HEAD</code> / <code>origin/main</code></div>
+    </div>
+    <table>
+      <thead><tr><th>Manifest lane</th><th>Status</th><th>Current</th><th>HEAD</th><th>origin/main</th></tr></thead>
+      <tbody>
+        <tr><td><code>resplit_currency_api_integration</code></td><td><span class="green">green</span></td><td><code>npm ci &amp;&amp; npm run check:publish</code></td><td><code>npm ci &amp;&amp; npm run check:publish</code></td><td><code>npm ci &amp;&amp; npm run check:publish</code></td></tr>
+<tr><td><code>resplit_currency_api_trust_preflight</code></td><td><span class="green">green</span></td><td><code>npm ci &amp;&amp; npm run trust:preflight</code></td><td><code>npm ci &amp;&amp; npm run trust:preflight</code></td><td><code>npm ci &amp;&amp; npm run trust:preflight</code></td></tr>
+<tr><td><code>resplit_currency_api_ui</code></td><td><span class="green">green</span></td><td><code>npm ci &amp;&amp; npm run smoke:deploy</code></td><td><code>npm ci &amp;&amp; npm run smoke:deploy</code></td><td><code>npm ci &amp;&amp; npm run smoke:deploy</code></td></tr>
+<tr><td><code>resplit_currency_api_unit</code></td><td><span class="green">green</span></td><td><code>npm ci &amp;&amp; npm run generate &amp;&amp; npm run test</code></td><td><code>npm ci &amp;&amp; npm run generate &amp;&amp; npm run test</code></td><td><code>npm ci &amp;&amp; npm run generate &amp;&amp; npm run test</code></td></tr>
+      </tbody>
+    </table>
+    <table>
+      <thead><tr><th>Contract file</th><th>Current</th><th>HEAD</th><th>origin/main</th><th>Git status</th></tr></thead>
+      <tbody>
+        <tr><td><code>.firstbite/local-ci.json</code></td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>clean</code></td></tr>
+<tr><td><code>package.json</code></td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>MM package.json</code></td></tr>
+<tr><td><code>currscript.js</code></td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  currscript.js</code></td></tr>
+<tr><td><code>scripts/reliability-cockpit.js</code></td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/reliability-cockpit.js</code></td></tr>
+<tr><td><code>scripts/smoke-check-deploy.js</code></td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  scripts/smoke-check-deploy.js</code></td></tr>
+<tr><td><code>scripts/source-promotion-packet.js</code></td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/source-promotion-packet.js</code></td></tr>
+<tr><td><code>scripts/trust-preflight.js</code></td><td><span class="green">present</span></td><td><span class="red">missing</span></td><td><span class="green">tracked</span></td><td><code>A  scripts/trust-preflight.js</code></td></tr>
+<tr><td><code>scripts/validate-package.js</code></td><td><span class="green">present</span></td><td><span class="green">tracked</span></td><td><span class="green">tracked</span></td><td><code>M  scripts/validate-package.js</code></td></tr>
+      </tbody>
+    </table>
+    <table>
+      <thead><tr><th>Package script</th><th>Status</th><th>Current</th><th>HEAD</th><th>origin/main</th></tr></thead>
+      <tbody>
+        <tr><td><code>check:publish</code></td><td><span class="red">red</span></td><td><code>npm run generate &amp;&amp; npm run validate &amp;&amp; npm run test</code></td><td><code>missing</code></td><td><code>npm run generate &amp;&amp; npm run validate &amp;&amp; npm run test</code></td></tr>
+<tr><td><code>generate</code></td><td><span class="green">green</span></td><td><code>node currscript.js</code></td><td><code>node currscript.js</code></td><td><code>node currscript.js</code></td></tr>
+<tr><td><code>reliability:cockpit</code></td><td><span class="red">red</span></td><td><code>node scripts/reliability-cockpit.js</code></td><td><code>missing</code></td><td><code>node scripts/reliability-cockpit.js</code></td></tr>
+<tr><td><code>smoke:deploy</code></td><td><span class="green">green</span></td><td><code>node scripts/smoke-check-deploy.js</code></td><td><code>node scripts/smoke-check-deploy.js</code></td><td><code>node scripts/smoke-check-deploy.js</code></td></tr>
+<tr><td><code>source:promotion-packet</code></td><td><span class="red">red</span></td><td><code>node scripts/source-promotion-packet.js</code></td><td><code>missing</code></td><td><code>node scripts/source-promotion-packet.js</code></td></tr>
+<tr><td><code>test</code></td><td><span class="green">green</span></td><td><code>node --test tests/*.test.js</code></td><td><code>node --test tests/*.test.js</code></td><td><code>node --test tests/*.test.js</code></td></tr>
+<tr><td><code>trust:preflight</code></td><td><span class="red">red</span></td><td><code>node scripts/trust-preflight.js</code></td><td><code>missing</code></td><td><code>node scripts/trust-preflight.js</code></td></tr>
+<tr><td><code>validate</code></td><td><span class="green">green</span></td><td><code>node scripts/validate-package.js</code></td><td><code>node scripts/validate-package.js</code></td><td><code>node scripts/validate-package.js</code></td></tr>
+      </tbody>
+    </table>
+    </section>
+<section class="half">
+    <h2>Repo Gates</h2>
+    <table>
+      <thead><tr><th>Script</th><th>Command</th></tr></thead>
+      <tbody>
+        <tr><td><span class="green">test</span></td><td><code>node --test tests/*.test.js</code></td></tr>
+<tr><td><span class="green">check:publish</span></td><td><code>npm run generate &amp;&amp; npm run validate &amp;&amp; npm run test</code></td></tr>
+<tr><td><span class="green">check</span></td><td><code>npm run generate &amp;&amp; npm run validate:release &amp;&amp; npm run test</code></td></tr>
+<tr><td><span class="green">smoke:deploy</span></td><td><code>node scripts/smoke-check-deploy.js</code></td></tr>
+<tr><td><span class="green">audit:backfill-sources</span></td><td><code>node scripts/audit-history-backfill-sources.js</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+<section class="half">
+    <h2>OTEL / Grafana Readiness</h2>
+    <div class="kv">
+      <div>Worker</div><div><code>resplit-fx</code></div>
+      <div>Scope</div><div>env.production</div>
+      <div>Observability</div><div>enabled</div>
+      <div>Logs</div><div>enabled</div>
+      <div>Traces</div><div>enabled</div>
+      <div>Sampling</div><div>logs 0.1 / traces 0.1</div>
+      <div>Destinations</div><div><code>grafana-traces-prod</code> <code>grafana-logs-prod</code></div>
+      <div>Verifier</div><div>present <code>scripts/verify-grafana-otel-smoke.js</code></div>
+      <div>Grafana evidence</div><div><span class="yellow">yellow</span> JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.</div>
+      <div>Evidence file</div><div><code>/Users/leokwan/Development/resplit-currency-api/reports/grafana-otel-smoke-missing-config-preflight.json</code></div>
+      <div>Tempo / Loki</div><div>tempo missing / loki missing</div>
+      <div>Trace ID</div><div><code>missing</code></div>
+      <div>Source identity</div><div><span class="yellow">untrusted</span> · head <code>46c8f62fbf94</code> · source dirty 74</div>
+      <div>Checked</div><div>2026-06-20T18:42:14.410Z (0m old)</div>
+      <div>Plan</div><div><code>/Users/leokwan/Development/vidux/projects/fleet-otel-observability/PLAN.md#F-C1</code></div>
+    </div>
+    <h3>OTEL Evidence Checklist</h3>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Proof</th><th>Next</th></tr></thead>
+      <tbody>
+        <tr><td>Worker request trigger</td><td><span class="yellow">yellow</span></td><td>Worker trigger skipped by --skip-trigger.</td><td>Run without --skip-trigger after Cloudflare destinations exist so the smoke creates fresh trace and log candidates.</td></tr>
+<tr><td>Grafana read configuration</td><td><span class="yellow">yellow</span></td><td>Missing GRAFANA_BASE_URL, GRAFANA_TEMPO_DATASOURCE_UID, GRAFANA_LOKI_DATASOURCE_UID.</td><td>Set the missing Grafana base URL and datasource UID env vars locally, with the read token kept out of reports and git.</td></tr>
+<tr><td>Tempo trace query</td><td><span class="yellow">yellow</span></td><td>Tempo query blocked by missing config: GRAFANA_BASE_URL, GRAFANA_TEMPO_DATASOURCE_UID.</td><td>Verify the Cloudflare traces destination and query window, then rerun until Tempo returns at least one trace.</td></tr>
+<tr><td>Loki log query</td><td><span class="yellow">yellow</span></td><td>Loki query blocked by missing config: GRAFANA_BASE_URL, GRAFANA_LOKI_DATASOURCE_UID.</td><td>Verify the Cloudflare logs destination and LogQL selector, then rerun until Loki returns at least one log line.</td></tr>
+      </tbody>
+    </table>
+  </section>
+<section class="half">
+    <h2>Nurse Log</h2>
+    <div class="kv">
+      <div>Latest</div><div>2026-05-25 05:08 EDT</div>
+      <div>Readiness</div><div>yellow</div>
+      <div>Blocker</div><div>source-promotion is now index-attested, PR-open, and GitHub-check-clean, but not landed. The primary checkout is still behind `origin/main` by 10 and carries unrelated hold-by-default dirt outside the staged bundle; loaded Codex/Cursor MCP still exposes the stale 12-lane catalog without `resplit_currency_api`; M4 remains support-only until M4-local execute proof exists; Grafana Tempo/Loki evidence is absent; and clean FirstBite proof still needs to run from the landed tracked source.</div>
+      <div>Next slice</div><div>merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.</div>
+    </div>
+  </section>
+  <section class="half">
+    <h2>INBOX / Ledger</h2>
+    <div class="kv">
+      <div>Active INBOX</div><div>2</div>
+      <div>Grafana row</div><div>present</div>
+      <div>Legacy Grafana row</div><div>absent</div>
+      <div>Release row</div><div>present</div>
+      <div>Repo ledger</div><div>empty (0)</div>
+      <div>Shared ledger</div><div>parsed (4)</div>
+      <div>Ledger health</div><div><span class="red">red</span> 1 unrecovered failure row(s) found in the last 24h ledger window.</div>
+      <div>Latest failure</div><div>2026-06-20T06:52:15Z · Currency API Eve receiver PR #24 open draft with local proof; commit 44373510; no deploy/model/secret/remote mutation</div>
+      <div>Latest recovery</div><div>2026-06-20T13:45:52Z · Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged.</div>
+      <div>Latest shared</div><div>Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged.</div>
+    </div>
+  </section>
+  <section>
+    <h2>Agent Activity Matrix</h2>
+    <table>
+      <thead><tr><th>Status</th><th>When</th><th>Agent</th><th>Lane / Handoff</th><th>Proof</th><th>Summary</th></tr></thead>
+      <tbody>
+        <tr><td><span class="green">green</span></td><td>2026-06-20T13:45:52Z (297m old)</td><td><code>codex</code></td><td>eve-true-integration<br><code>needs_review</code></td><td><code>/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md</code></td><td>Resplit Currency API Eve PR #24 is ready for review with pushed proof head 21ef089c; local Eve/repo/RUNBOOK gates passed; refreshed PR checks green except GitHub CodeQL summary neutral/skipped; Moussey verifier handoff staged.</td></tr>
+<tr><td><span class="red">red</span></td><td>2026-06-20T13:45:23Z (297m old)</td><td><code>codex</code></td><td>eve-true-integration<br><code>needs_review</code></td><td><code>/Users/leokwan/Development/resplit-currency-api-worktrees/eve-studio-20260620/vidux/pre-launch-architecture/PLAN.md</code></td><td>no summary</td></tr>
+<tr><td><span class="yellow">yellow</span></td><td>2026-06-20T13:38:05Z (304m old)</td><td><code>codex</code></td><td>eve-true-integration<br><code>in_progress</code></td><td><code>none recorded</code></td><td>Claiming Resplit Currency API Eve PR #24 reproof/readiness. Worktree is current against origin/main, PR is open draft/mergeable with CodeQL and Graphite AI Reviews green; primary checkout is dirty and will not be touched.</td></tr>
+<tr><td><span class="red">red</span></td><td>2026-06-20T06:52:15Z (710m old)</td><td><code>codex</code></td><td>eve-resplit-handoff<br><code>needs_review</code></td><td><code>vidux/pre-launch-architecture/PLAN.md</code></td><td>Currency API Eve receiver PR #24 open draft with local proof; commit 44373510; no deploy/model/secret/remote mutation</td></tr>
+      </tbody>
+    </table>
+  </section>
+<section>
+    <h2>Trust Gaps</h2>
+    <ul><li><strong class="yellow">Dirty primary checkout</strong>: 67 changed path(s) in the primary checkout; do not treat local proof as clean-main proof.</li>
+<li><strong class="yellow">Behind origin/main</strong>: Local HEAD is 53 commit(s) behind origin/main.</li>
+<li><strong class="yellow">Local-CI proof gap</strong>: Manifest has 4 lane(s), but no MCP execute proof for resplit_currency_api was found locally.</li>
+<li><strong class="yellow">MCP proof freshness gap</strong>: No execute report was found for this repo.</li>
+<li><strong class="red">Tracked local-CI source gap</strong>: 3 file(s) missing from HEAD; 0 file(s) missing from origin/main; 0 manifest lane command drift(s); 4 script contract issue(s); 3 untracked/current-only contract file(s)</li>
+<li><strong class="red">Clean proof targetability gap</strong>: 3 clean-proof readiness issue(s); current lane count 4.</li>
+<li><strong class="red">Source promotion bundle gap</strong>: 13 current-only file(s); 19 modified tracked file(s); 0 missing current file(s); 13 file(s) absent from HEAD; 0 file(s) absent from origin/main; 4 command drift row(s)</li>
+<li><strong class="yellow">FirstBite operating readout gap</strong>: FirstBite operating readout: 0/0 lane proof(s) pass, catalog repo-manifest-v2 has 34/34 declared lane(s), Moussey live_runtime_stale_source_contract_blocked; fresh_clone_ready=true, active_ready=true; M4 peer support-only.</li>
+<li><strong class="yellow">M4 peer execution boundary</strong>: M4 peer is support-only: moussey_surface_ready_needs_m4_execute_report; fresh-clone packet codex-goal-20260610T-cycle131-m4-fresh-clone-runtime-request; execution_ready=false.</li>
+<li><strong class="red">Loaded MCP lane catalog gap</strong>: Loaded MCP host catalog is missing current lanes for resplit_currency_api: repo missing; missing 4/4 expected lane(s).</li>
+<li><strong class="yellow">Loaded MCP probe freshness gap</strong>: Loaded MCP probe artifact is stale: 38073m old; recapture live mcp__firstbite_local_ci.list_lanes output before trusting this boundary.</li>
+<li><strong class="yellow">OTEL/Grafana proof gap</strong>: Worker observability config exists; JSON proof does not show both Tempo and Loki matches: reports/grafana-otel-smoke-missing-config-preflight.json.</li>
+<li><strong class="red">Agent ledger failure history</strong>: 1 unrecovered failure row(s) found in the last 24h ledger window.</li>
+<li><strong class="yellow">Release-history readiness yellow</strong>: Exact next slice: merge PR #7, then run `worktree=true` FirstBite proof from the landed tracked source. Keep loaded MCP restart, M4 peer execution, Grafana proof, and release-history as separate trust gates.</li></ul>
+  </section>
+</div>
+  </main>
+</body>
+</html>

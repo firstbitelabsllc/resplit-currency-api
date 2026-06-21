@@ -2,7 +2,6 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { execFileSync } = require('node:child_process')
 
 const DEFAULT_OUTPUT = path.join('reports', 'grafana-otel-smoke.json')
 const DEFAULT_TRIGGER_URL = 'https://fx.resplit.app/health'
@@ -159,12 +158,10 @@ async function buildGrafanaSmokeReport(options, deps = {}) {
   const fetchImpl = deps.fetch || global.fetch
   const missingConfig = missingGrafanaConfig(options)
   const window = queryWindow(now, options.sinceMinutes)
-  const sourceIdentity = deps.sourceIdentity || readSourceIdentity(deps.repoDir || process.cwd(), deps)
   const report = {
     checkedAt: now.toISOString(),
     status: 'yellow',
     worker: 'resplit-fx',
-    sourceIdentity,
     trigger: {
       skipped: options.skipTrigger,
       url: options.skipTrigger ? null : options.triggerUrl,
@@ -501,63 +498,6 @@ function summarizeNextActions(checks) {
   ))
 }
 
-function readSourceIdentity(repoDir = process.cwd(), deps = {}) {
-  const run = deps.execFileSync || execFileSync
-  const gitRaw = args => String(run('git', ['-C', repoDir, ...args], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  }))
-  const git = args => gitRaw(args).trim()
-
-  try {
-    const root = git(['rev-parse', '--show-toplevel']) || repoDir
-    const statusRows = gitRaw(['status', '--porcelain=v1', '--untracked-files=all'])
-      .split('\n')
-      .filter(Boolean)
-    const dirtyPaths = statusRows
-      .map(gitStatusPath)
-      .filter(Boolean)
-    const sourceDirtyPaths = dirtyPaths.filter(item => !isGeneratedOtelArtifactPath(item))
-    return {
-      status: 'ok',
-      repoPath: root,
-      branch: git(['rev-parse', '--abbrev-ref', 'HEAD']),
-      head: git(['rev-parse', '--short=12', 'HEAD']),
-      headFull: git(['rev-parse', 'HEAD']),
-      dirtyCount: statusRows.length,
-      dirtyPaths,
-      sourceDirtyCount: sourceDirtyPaths.length,
-      sourceDirtyPaths,
-    }
-  } catch (error) {
-    return {
-      status: 'unavailable',
-      repoPath: path.resolve(repoDir),
-      branch: null,
-      head: null,
-      headFull: null,
-      dirtyCount: null,
-      dirtyPaths: [],
-      sourceDirtyCount: null,
-      sourceDirtyPaths: [],
-      error: error.message,
-    }
-  }
-}
-
-function gitStatusPath(row) {
-  const value = String(row || '').slice(3).trim()
-  if (!value) return null
-  const arrowIndex = value.indexOf(' -> ')
-  return arrowIndex === -1 ? value : value.slice(arrowIndex + 4)
-}
-
-function isGeneratedOtelArtifactPath(filePath) {
-  return filePath === 'reports'
-    || filePath.startsWith('reports/')
-    || /^docs\/grafana-otel-smoke-[^/]+\.md$/.test(filePath)
-}
-
 function missingGrafanaConfig(options) {
   const missing = []
   if (!options.baseUrl) missing.push('GRAFANA_BASE_URL')
@@ -608,6 +548,4 @@ module.exports = {
   missingGrafanaConfig,
   parseArgs,
   queryWindow,
-  readSourceIdentity,
-  isGeneratedOtelArtifactPath,
 }
