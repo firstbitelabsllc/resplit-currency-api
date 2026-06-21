@@ -32,4 +32,3 @@ May-2026 incident this whole rewrite responds to was exactly this class.
 checks via `Recorder.SetFXSnapshotAge`). The publisher runs daily, so a healthy
 value sawtooths under ~24h. 26h gives a 2h grace past the daily cadence before
 paging.
-

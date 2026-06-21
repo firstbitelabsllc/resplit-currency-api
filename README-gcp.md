@@ -72,4 +72,3 @@ cost-spike in one path cannot touch the others:
 - **Observability** — Cloud Logging + Cloud Trace + Google Managed Prometheus,
   visualized in Grafana. Services emit structured `log/slog` JSON to stdout and
   OpenTelemetry spans via `go.opentelemetry.io/otel`.
-
