@@ -1,0 +1,8 @@
+# Local Terraform provider cache + state — never commit (binaries are 100MB+)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+override.tf
+override.tf.json

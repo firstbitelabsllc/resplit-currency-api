@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+
+# ---- build stage ----------------------------------------------------------
+# Pinned to the module's go directive (go 1.26). CGO is disabled so the binary
+# is fully static and runs on the distroless/static base with no libc.
+FROM golang:1.26 AS build
+
+WORKDIR /src
+
+# Cache module downloads independently of source changes.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Build the sideload command only (cmd/sideload). It imports internal/{fx,httpx}.
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath \
+    go build -ldflags="-s -w" -o /out/sideload ./cmd/sideload
+
+# ---- runtime stage --------------------------------------------------------
+# distroless/static:nonroot — no shell, no package manager, non-root UID 65532.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# Cloud Run sets $PORT (default 8080); the binary reads it and falls back to 8080.
+ENV PORT=8080
+EXPOSE 8080
+
+COPY --from=build /out/sideload /sideload
+
+USER 65532:65532
+ENTRYPOINT ["/sideload"]

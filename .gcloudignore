@@ -1,0 +1,11 @@
+.git
+.terraform
+**/.terraform
+*.tfstate*
+worker
+node_modules
+ocr-lab
+snapshot-archive
+package
+reports
+vidux
