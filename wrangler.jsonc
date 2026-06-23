@@ -23,7 +23,11 @@
     "SENTRY_ENVIRONMENT": "production",
     // OCR proxy: Azure DI endpoint (NOT secret). The key is a wrangler secret.
     // Current deploy uses root --env="", so sync AZURE_OCR_KEY on the root script.
-    "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com"
+    "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com",
+    // Discount/credit/fee capture via a 2nd prebuilt-layout keyValuePairs Azure call
+    // (router.mjs keyValueExtrasEnabled). 2x cost/scan — APPROVED by Leo 2026-06-22 (low
+    // traffic). Revertible: set "false" + redeploy.
+    "AZURE_OCR_KV_EXTRAS": "true"
   },
   "kv_namespaces": [
     {
@@ -56,7 +60,9 @@
       "vars": {
         "ASSET_BASE_URL": "https://resplit-currency-api.pages.dev",
         "SENTRY_ENVIRONMENT": "production",
-        "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com"
+        "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com",
+        // Discount/credit/fee capture (2x cost/scan) — APPROVED Leo 2026-06-22. Revert: "false".
+        "AZURE_OCR_KV_EXTRAS": "true"
       },
       "kv_namespaces": [
         {
