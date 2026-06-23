@@ -226,11 +226,19 @@ The gap between "proxy live" and "truly up on prod" (ordered, blocking-first):
   (plist `SubscriptionKey` at tag v2.1.2) → compromised by definition. Rotate the
   Azure DI key, update Secret Manager, leave NO valid key in any client build.
   [Source: git show v2.1.2:ReceiptSplitter/OCRConfiguration.swift]
-- [pending] G3 — **Wire rate-limit + hard kill-switch into handleScan.** Endpoint is
+- [in_progress] G3 — **Wire rate-limit + hard kill-switch into handleScan.** Endpoint is
   public (`allUsers`) + soft-fail bypass + AllowRate/ReserveOCR called **0 times** =
   open wallet for Azure spend. This is SP3's "budget kill-switch" + the deferred
   soft-fail cap. Must land before any client points at the public endpoint.
-  [Source: grep cmd/ocr/main.go = 0 rate calls; gcloud run get-iam-policy = allUsers]
+  2026-06-22 source fix is on branch
+  `codex/ocr-g3-rate-kill-switch-20260622-2211`: `handleScan` now checks an
+  OCR spend gate before provider billing, with `OCR_SCAN_KILL_SWITCH`,
+  `OCR_SCAN_DAILY_LIMIT`, `OCR_SOFT_FAIL_DAILY_LIMIT`,
+  `OCR_SCAN_RATE_WINDOW`, and `OCR_IDEMPOTENCY_TTL`. Local proof:
+  `go test ./cmd/ocr`, `go test ./...`, `npm test`, `npm run smoke:deploy`;
+  `npm run check` still fails only on the pre-existing FX strict-history gap
+  (missing 2026-06-21/2026-06-22). Still not complete until PR is merged and
+  deploy proof observes the guard on the live OCR surface.
 - [pending] G4 — **Device-validate App Attest (TestFlight).** Attest is device-only
   (DCAppAttestService.isSupported=false on sim) → the attest→scan round-trip can only
   be proven on a real device build. Blocks confident merge of #802.

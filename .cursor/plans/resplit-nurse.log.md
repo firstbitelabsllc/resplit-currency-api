@@ -1,5 +1,30 @@
 # Resplit Nurse Log
 
+## 2026-06-22 22:21 EDT / 2026-06-23 02:21 UTC
+
+- `GO/code-proven-pr-pending` for OCR G3 spend guard on branch
+  `codex/ocr-g3-rate-kill-switch-20260622-2211`; `NO-GO/live-proven` until the PR
+  is merged and the deployed OCR path proves the guard before Azure billing.
+- Shipped delta: added an OCR spend gate in front of `handleScan`'s provider call.
+  It supports a hard env kill switch (`OCR_SCAN_KILL_SWITCH`), attested daily cap
+  (`OCR_SCAN_DAILY_LIMIT`, default 100), tighter soft-fail/IP cap
+  (`OCR_SOFT_FAIL_DAILY_LIMIT`, default 10), window control
+  (`OCR_SCAN_RATE_WINDOW`, default 24h), and duplicate-image reservation TTL
+  (`OCR_IDEMPOTENCY_TTL`, default 24h). Firestore-backed stores use
+  `AllowRate`/`ReserveOCR`; local/test fallback uses an in-memory store.
+- Fresh proof:
+  - `go test ./cmd/ocr` -> green.
+  - `go test ./...` -> green.
+  - `PATH=/opt/homebrew/opt/node@22/bin:$PATH npm test` -> `251/251` green.
+  - `PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run smoke:deploy` -> `OK (date=2026-06-23, historyPoints=28, cf=https://resplit-currency-api.pages.dev)` with known archive/history warnings.
+  - `grep -R "SubscriptionKey|Ocp-Apim-Subscription-Key|AZURE_OCR_KEY|cognitiveservices.azure.com" ...` -> expected env/docs/test references only; no raw Azure client key found in the currency repo source scan.
+  - `git diff --check` -> clean.
+- Known / unknown / forgotten work surfaced:
+  - known: `npm run check` still fails strict package validation because the FX history package is missing 2026-06-21 and 2026-06-22, matching the row #27 warning debt; not caused by this OCR guard.
+  - known: G2 key rotation remains a credential/prod-secret gate; this branch does not rotate Azure or prove old TestFlight binaries cannot call a valid direct client key.
+  - unknown: live OCR deploy proof after merge; no production mutation happened in this slice.
+- Exact next slice: push/open the PR, wait for non-GitHub local proof/Graphite review state, merge when eligible, then deploy/prove the live OCR guard without starting duplicate release lanes.
+
 ## 2026-06-20 09:42 EDT / 2026-06-20 13:42 UTC
 
 - `GO/pr-ready-local-proof` for Eve receiver PR `#24`; `NO-GO/trunk-powered`

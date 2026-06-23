@@ -46,9 +46,13 @@ import (
 )
 
 const (
-	defaultPort      = "8080"
-	maxScanBytes     = 12 << 20 // 12 MiB cap on uploaded image bytes
-	maxCBORBodyBytes = 64 << 10 // 64 KiB cap on attest/assertion CBOR payloads
+	defaultPort              = "8080"
+	maxScanBytes             = 12 << 20 // 12 MiB cap on uploaded image bytes
+	maxCBORBodyBytes         = 64 << 10 // 64 KiB cap on attest/assertion CBOR payloads
+	defaultScanWindow        = 24 * time.Hour
+	defaultIdempotencyTTL    = 24 * time.Hour
+	defaultAttestedScanLimit = int64(100)
+	defaultSoftFailScanLimit = int64(10)
 
 	// Header names match what the iOS client (ResplitFXScanProvider) sends.
 	headerKeyID     = "X-Resplit-Attest-Key-Id"
@@ -202,15 +206,23 @@ type server struct {
 	provider    OCRProvider
 	logger      *slog.Logger
 	scanCounter metric.Int64Counter
+	spendGate   *ocrSpendGate
 }
 
 func newServer(store attest.Store, provider OCRProvider, logger *slog.Logger, scanCounter metric.Int64Counter) *server {
+	return newServerWithGate(store, provider, logger, scanCounter, newOCRSpendGate(store))
+}
+
+func newServerWithGate(store attest.Store, provider OCRProvider, logger *slog.Logger, scanCounter metric.Int64Counter, spendGate *ocrSpendGate) *server {
 	if scanCounter == nil {
 		// A nil counter would panic on Add; fall back to a no-op meter so tests
 		// and telemetry-disabled runs stay safe.
 		scanCounter, _ = noop.NewMeterProvider().Meter(meterScope).Int64Counter("ocr_scans_total")
 	}
-	return &server{store: store, provider: provider, logger: logger, scanCounter: scanCounter}
+	if spendGate == nil {
+		spendGate = newOCRSpendGate(store)
+	}
+	return &server{store: store, provider: provider, logger: logger, scanCounter: scanCounter, spendGate: spendGate}
 }
 
 func (s *server) routes() http.Handler {
@@ -304,12 +316,13 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	attestResult := "pass"
+	keyID := ""
 	if softFail {
 		// Sim / edge device that can't attest. Proceed without a device assertion;
-		// the Worker-side per-IP tighter cap is a follow-up. Logged for telemetry.
+		// the per-IP cap below is intentionally tighter than attested devices.
 		attestResult = "soft_fail"
 	} else {
-		keyID := r.Header.Get(headerKeyID)
+		keyID = r.Header.Get(headerKeyID)
 		assertionB64 := r.Header.Get(headerAssertion)
 		if keyID == "" || assertionB64 == "" {
 			httpx.WriteError(w, http.StatusBadRequest, "missing key id or assertion")
@@ -323,12 +336,38 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	identity := scanGateIdentity(r, softFail, keyID)
+	allowed, reason, count, err := s.spendGate.Allow(r.Context(), identity, image, softFail)
+	if err != nil {
+		s.recordScan(r.Context(), "rate_limited", attestResult)
+		log.Error("ocr spend gate failed closed", slog.Any("error", err), slog.String("scan_id", scanID), slog.String("reason", reason))
+		writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
+			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
+		})
+		return
+	}
+	if !allowed {
+		s.recordScan(r.Context(), "rate_limited", attestResult)
+		log.Warn("[OCR_MONITORING] scan blocked",
+			slog.String("signal", "scan"), slog.String("status", "rate_limited"),
+			slog.String("attest", attestResult), slog.String("reason", reason),
+			slog.Int64("count", count), slog.String("scan_id", scanID))
+		writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
+			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
+		})
+		return
+	}
+
 	result, err := s.provider.Scan(r.Context(), image)
 	if err != nil {
 		status := scanErrorStatus(err)
+		code := http.StatusBadGateway
+		if status == "rate_limited" {
+			code = http.StatusTooManyRequests
+		}
 		s.recordScan(r.Context(), status, attestResult)
 		log.Error("ocr provider failed", slog.Any("error", err), slog.String("scan_id", scanID), slog.String("status", status))
-		writeEnvelope(w, http.StatusBadGateway, scanEnvelope{
+		writeEnvelope(w, code, scanEnvelope{
 			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: status,
 		})
 		return
