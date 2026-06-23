@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 const {
   defaultWorkerBase,
   isRecoveryCoverageGap,
+  isStaticRecoveryHistoryGap,
   resolveFreshnessContract,
   resolveExpectedDate,
   resolveGithubFallbackAcceptance,
@@ -155,6 +156,80 @@ test('resolveGithubFallbackAcceptance rejects a >1 day stale fallback even insid
 
   assert.equal(result.accepted, false)
   assert.equal(result.reason, 'not_one_day_stale')
+})
+
+test('isStaticRecoveryHistoryGap accepts fresh static history with known archive gaps', () => {
+  const availableHistoryDates = [
+    '2026-05-25',
+    '2026-05-26',
+    '2026-05-27',
+    '2026-05-28',
+    '2026-05-29',
+    '2026-05-30',
+    '2026-05-31',
+    '2026-06-01',
+    '2026-06-02',
+    '2026-06-03',
+    '2026-06-04',
+    '2026-06-05',
+    '2026-06-06',
+    '2026-06-07',
+    '2026-06-08',
+    '2026-06-09',
+    '2026-06-10',
+    '2026-06-11',
+    '2026-06-12',
+    '2026-06-13',
+    '2026-06-14',
+    '2026-06-15',
+    '2026-06-16',
+    '2026-06-17',
+    '2026-06-18',
+    '2026-06-19',
+    '2026-06-20',
+    '2026-06-23',
+  ]
+
+  assert.equal(
+    isStaticRecoveryHistoryGap({
+      dateToday: '2026-06-23',
+      expectedDays: 30,
+      history: {
+        points: availableHistoryDates.map(date => ({
+          date,
+          rates: { usd: 1 },
+        })),
+      },
+      meta: {
+        latestDate: '2026-06-23',
+        archiveLatestDate: '2026-06-23',
+        archiveGapCount: 4,
+        availableHistoryDates,
+      },
+    }),
+    true
+  )
+})
+
+test('isStaticRecoveryHistoryGap rejects stale static history gaps', () => {
+  assert.equal(
+    isStaticRecoveryHistoryGap({
+      dateToday: '2026-06-23',
+      expectedDays: 30,
+      history: {
+        points: [
+          { date: '2026-06-20', rates: { usd: 1 } },
+        ],
+      },
+      meta: {
+        latestDate: '2026-06-20',
+        archiveLatestDate: '2026-06-20',
+        archiveGapCount: 4,
+        availableHistoryDates: ['2026-06-20'],
+      },
+    }),
+    false
+  )
 })
 
 test('smokeCheckWorker rejects degraded coverage payloads', async () => {

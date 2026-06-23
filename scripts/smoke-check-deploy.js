@@ -92,12 +92,29 @@ async function main() {
   assertPositive(ghFallbackLatest?.rates?.usd, 'github fallback latest usd->usd')
   assertPositive(datedSnapshot?.rates?.usd, 'dated snapshot usd base rate')
 
-  if (!Array.isArray(history.points) || history.points.length !== 30) {
-    throw new Error(
-      `cloudflare history points expected 30, got ${
-        Array.isArray(history.points) ? history.points.length : typeof history.points
-      }`
-    )
+  if (!Array.isArray(history.points)) {
+    throw new Error(`cloudflare history points expected 30, got ${typeof history.points}`)
+  }
+  if (history.points.length !== 30) {
+    const staticHistoryRecoveryGap = isStaticRecoveryHistoryGap({
+      history,
+      meta,
+      dateToday,
+      expectedDays: 30,
+    })
+    if (staticHistoryRecoveryGap) {
+      console.warn(
+        `smoke-check-deploy: WARNING cloudflare static history has recovery archive gaps ` +
+        `(historyPoints=${history.points.length}/30, ` +
+        `archiveGapCount=${meta.archiveGapCount}, latestDate=${meta.latestDate})`
+      )
+    } else {
+      throw new Error(
+        `cloudflare history points expected 30, got ${
+          Array.isArray(history.points) ? history.points.length : typeof history.points
+        }`
+      )
+    }
   }
   for (const point of history.points) {
     assertISODate(point.date, 'cloudflare history point date')
@@ -364,6 +381,43 @@ function isRecoveryCoverageGap(coverage, dateToday) {
   return coverage.quote?.resolutionKind === 'exact'
 }
 
+function isStaticRecoveryHistoryGap({ history, meta, dateToday, expectedDays = 30 } = {}) {
+  if (!Array.isArray(history?.points) || history.points.length < 1 || history.points.length >= expectedDays) {
+    return false
+  }
+  if (meta?.latestDate !== dateToday || meta?.archiveLatestDate !== dateToday) {
+    return false
+  }
+  if (!Number.isInteger(meta?.archiveGapCount) || meta.archiveGapCount <= 0) {
+    return false
+  }
+  if (!Array.isArray(meta.availableHistoryDates)) {
+    return false
+  }
+
+  const availableHistoryDates = new Set(meta.availableHistoryDates)
+  if (!availableHistoryDates.has(dateToday)) {
+    return false
+  }
+
+  const expectedDates = []
+  for (let daysAgo = expectedDays - 1; daysAgo >= 0; daysAgo -= 1) {
+    expectedDates.push(dateDaysBeforeUTC(dateToday, daysAgo))
+  }
+  const missingDates = expectedDates.filter(date => !availableHistoryDates.has(date))
+  if (missingDates.length === 0 || missingDates.length !== expectedDays - history.points.length) {
+    return false
+  }
+
+  const expectedAvailableDates = expectedDates.filter(date => availableHistoryDates.has(date))
+  const historyPointDates = history.points.map(point => point.date)
+  if (historyPointDates.length !== expectedAvailableDates.length) {
+    return false
+  }
+
+  return historyPointDates.every((date, index) => date === expectedAvailableDates[index])
+}
+
 async function fetchJSONWithRetry(url, attempts = 8, delayMs = 3_000) {
   let lastError = null
 
@@ -425,6 +479,7 @@ module.exports = {
   defaultGithubFallbackGraceMinutes,
   fetchJSONWithRetry,
   isRecoveryCoverageGap,
+  isStaticRecoveryHistoryGap,
   main,
   resolveExpectedDate,
   resolveFreshnessContract,
