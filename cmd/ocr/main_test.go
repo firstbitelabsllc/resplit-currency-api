@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -106,6 +107,19 @@ type errProvider struct{ err error }
 
 func (p errProvider) Scan(_ context.Context, _ []byte) ([]byte, error) { return nil, p.err }
 
+type countingProvider struct {
+	calls int
+	err   error
+}
+
+func (p *countingProvider) Scan(_ context.Context, _ []byte) ([]byte, error) {
+	p.calls++
+	if p.err != nil {
+		return nil, p.err
+	}
+	return []byte(`{"provider":"test","status":"ok"}`), nil
+}
+
 // findScanCount sums the ocr_scans_total data points whose attributes match the
 // requested status + attest labels, after collecting from the manual reader.
 func findScanCount(t *testing.T, reader *metric.ManualReader, status, attest string) int64 {
@@ -182,6 +196,94 @@ func TestScanCounterRecordsTerminalOutcomes(t *testing.T) {
 	rlSrv.routes().ServeHTTP(rec3, req3)
 	if got := findScanCount(t, reader, "rate_limited", "soft_fail"); got != 1 {
 		t.Fatalf("ocr_scans_total{status=rate_limited,attest=soft_fail} = %d, want 1", got)
+	}
+}
+
+func TestScanSpendGateKillSwitchBlocksBeforeProvider(t *testing.T) {
+	provider := &countingProvider{}
+	gate := &ocrSpendGate{
+		killSwitch:     true,
+		mem:            newMemorySpendStore(time.Now),
+		window:         time.Hour,
+		idempotencyTTL: time.Hour,
+		attestedLimit:  100,
+		softFailLimit:  10,
+	}
+	srv := newServerWithGate(attest.NewMemStore(), provider, slog.Default(), nil, gate)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+	req.Header.Set(headerSoftFail, "true")
+	srv.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("scan status = %d, want 429 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", provider.calls)
+	}
+	var body scanEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Status != "rate_limited" {
+		t.Fatalf("status = %q, want rate_limited", body.Status)
+	}
+}
+
+func TestScanSpendGateDuplicateDoesNotRebill(t *testing.T) {
+	provider := &countingProvider{}
+	gate := &ocrSpendGate{
+		mem:            newMemorySpendStore(time.Now),
+		window:         time.Hour,
+		idempotencyTTL: time.Hour,
+		attestedLimit:  100,
+		softFailLimit:  10,
+	}
+	srv := newServerWithGate(attest.NewMemStore(), provider, slog.Default(), nil, gate)
+
+	for i, wantCode := range []int{http.StatusOK, http.StatusTooManyRequests} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("same-image-bytes"))
+		req.RemoteAddr = "203.0.113.10:1234"
+		req.Header.Set(headerSoftFail, "true")
+		srv.routes().ServeHTTP(rec, req)
+		if rec.Code != wantCode {
+			t.Fatalf("request %d status = %d, want %d (body: %s)", i+1, rec.Code, wantCode, rec.Body.String())
+		}
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+}
+
+func TestScanSpendGateSoftFailCapBlocksDistinctImages(t *testing.T) {
+	provider := &countingProvider{}
+	gate := &ocrSpendGate{
+		mem:            newMemorySpendStore(time.Now),
+		window:         time.Hour,
+		idempotencyTTL: time.Hour,
+		attestedLimit:  100,
+		softFailLimit:  1,
+	}
+	srv := newServerWithGate(attest.NewMemStore(), provider, slog.Default(), nil, gate)
+
+	for i, body := range []string{"first-image", "second-image"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader(body))
+		req.RemoteAddr = "203.0.113.11:1234"
+		req.Header.Set(headerSoftFail, "true")
+		srv.routes().ServeHTTP(rec, req)
+		wantCode := http.StatusOK
+		if i == 1 {
+			wantCode = http.StatusTooManyRequests
+		}
+		if rec.Code != wantCode {
+			t.Fatalf("request %d status = %d, want %d (body: %s)", i+1, rec.Code, wantCode, rec.Body.String())
+		}
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 }
 
