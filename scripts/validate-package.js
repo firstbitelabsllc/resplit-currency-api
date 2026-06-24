@@ -101,6 +101,35 @@ function main() {
   const latestRate = latestFrom.rates[toCode]
   ensure(approximatelyEqual(derivedLatestRate, latestRate, 1e-8), 'snapshot-derived and latest sample rates diverge')
 
+  // Value-sanity gate (2026-06-24): every check above is structural. The daily
+  // publish is single-source (open.er-api.com), so a wrong-but-positive upstream
+  // rate clears all of them and ships as authoritative to every multi-currency
+  // split. Compare today's EUR-base table to the prior published day; a >2x
+  // day-over-day jump is almost certainly a bad upstream value — refuse to
+  // publish it. (Skips gracefully when there is no prior day to compare.)
+  const priorSanityDates = archiveManifest.availableDates.filter((date) => date < meta.latestDate)
+  const priorSanityDate = priorSanityDates.length ? priorSanityDates[priorSanityDates.length - 1] : null
+  if (priorSanityDate) {
+    const priorSnapshot = readJSON(`archive/${priorSanityDate}.json`)
+    const { gross, warns } = computeRateSanity(snapshot.rates, priorSnapshot.rates)
+    warnIf(
+      warns.length > 0,
+      `rate-sanity: ${warns.length} currency(ies) moved >15% vs ${priorSanityDate}: ${warns
+        .slice(0, 8)
+        .map((w) => `${w.code} ${w.ratio.toFixed(2)}x`)
+        .join(', ')}`
+    )
+    ensure(
+      gross.length === 0,
+      `rate-sanity: ${gross.length} currency(ies) jumped >2x vs ${priorSanityDate} — likely a bad upstream rate, refusing to publish: ${gross
+        .slice(0, 8)
+        .map((g) => `${g.code} ${g.prev}->${g.rate} (${g.ratio.toFixed(2)}x)`)
+        .join(', ')}`
+    )
+  } else {
+    warnIf(true, 'rate-sanity: no prior archived day before latestDate to compare — value gate skipped')
+  }
+
   // Minified files must parse too.
   ensure(isIsoDate(archiveManifest.earliestDate), 'archive earliestDate invalid')
   ensure(isIsoDate(archiveManifest.latestDate), 'archive latestDate invalid')
@@ -269,6 +298,29 @@ function formatDateSample(dates) {
   return `${dates.slice(0, 3).join(', ')} ... ${dates.slice(-3).join(', ')}`
 }
 
+/**
+ * Value-sanity gate: flag implausible day-over-day rate jumps between today's
+ * EUR-base table and the prior published day. A wrong-but-positive single-source
+ * rate clears every structural check, so a >2x jump (gross) refuses the publish
+ * and a >15% move (warn) surfaces for review. Pure + exported for tests.
+ */
+function computeRateSanity(todayRates, priorRates, { maxRatio = 2.0, warnRatio = 1.15 } = {}) {
+  const gross = []
+  const warns = []
+  for (const [code, rate] of Object.entries(todayRates || {})) {
+    const prev = priorRates && priorRates[code]
+    if (!Number.isFinite(prev) || prev <= 0 || !Number.isFinite(rate) || rate <= 0) continue
+    const ratio = rate / prev
+    if (ratio > maxRatio || ratio < 1 / maxRatio) {
+      gross.push({ code, prev, rate, ratio })
+    } else if (ratio > warnRatio || ratio < 1 / warnRatio) {
+      warns.push({ code, ratio })
+    }
+  }
+  return { gross, warns }
+}
+
 module.exports = {
-  main
+  main,
+  computeRateSanity
 }
