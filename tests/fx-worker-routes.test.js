@@ -85,6 +85,7 @@ test('worker health route returns liveness payload with request id', async () =>
 
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('x-request-id'), 'req-health')
+  assert.equal(response.headers.get('x-resplit-trace-id'), 'req-health')
   assert.equal(response.headers.get('cache-control'), 'no-store')
 
   const body = await response.json()
@@ -108,8 +109,30 @@ test('worker health route supports HEAD without a body', async () => {
 
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('x-request-id'), 'req-health-head')
+  assert.equal(response.headers.get('x-resplit-trace-id'), 'req-health-head')
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.equal(await response.text(), '')
+})
+
+test('worker routes prefer x-resplit-trace-id as the cross-service request id', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      headers: {
+        'x-request-id': 'legacy-health',
+        'x-resplit-trace-id': 'trace-health',
+      },
+    }),
+    {
+      SENTRY_ENVIRONMENT: 'production',
+      SENTRY_RELEASE: 'release-123',
+    }
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-request-id'), 'trace-health')
+  assert.equal(response.headers.get('x-resplit-trace-id'), 'trace-health')
 })
 
 test('worker health route rejects non-probe methods', async () => {
@@ -304,6 +327,7 @@ test('worker coverage route returns request id and no-store diagnostics payload'
 
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('x-request-id'), 'req-coverage')
+    assert.equal(response.headers.get('x-resplit-trace-id'), 'req-coverage')
     assert.equal(response.headers.get('cache-control'), 'no-store')
 
     const body = await response.json()

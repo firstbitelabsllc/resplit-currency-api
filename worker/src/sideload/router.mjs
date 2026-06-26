@@ -1,5 +1,5 @@
 import { errorResponse, jsonResponse } from '../http.mjs'
-import { resolveRequestId } from '../request-id.mjs'
+import { requestCorrelationHeaders, resolveRequestId } from '../request-id.mjs'
 import {
   captureFxRouteFailure,
   logFxMonitoringEvent,
@@ -385,7 +385,7 @@ async function handleGet(ctx, params) {
       headers: {
         'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
         'Content-Length': String(obj.size),
-        'x-request-id': ctx.requestId,
+        ...requestCorrelationHeaders(ctx.requestId),
         ...RESPONSE_HEADERS,
       },
     })
@@ -412,7 +412,7 @@ async function handleDelete(ctx, params) {
 
   return new Response(null, {
     status: 204,
-    headers: { 'x-request-id': ctx.requestId, ...RESPONSE_HEADERS },
+    headers: { ...requestCorrelationHeaders(ctx.requestId), ...RESPONSE_HEADERS },
   })
 }
 

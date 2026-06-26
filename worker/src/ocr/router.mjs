@@ -11,7 +11,7 @@
 //   | "failed" (layout submit/poll failed; base receipt result still returned).
 
 import { errorResponse, jsonResponse } from '../http.mjs'
-import { resolveRequestId } from '../request-id.mjs'
+import { requestCorrelationHeaders, resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
 import { CORS_HEADERS, handlePreflight } from '../sideload/cors.mjs'
 import { logOcrMonitoringEvent, captureOcrProviderFailure } from './monitoring.mjs'
@@ -154,7 +154,7 @@ async function handleScan(request, env, requestId) {
       signal: 'scan', phase: 'scan', mode: 'raw', provider: OCR_PROVIDER, status: 'ok',
       attest, cache: 'hit', total_ms: Date.now() - start, scanId, requestId, client_version: clientVersion,
     }, env)
-    return new Response(cached, { status: 200, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', 'x-request-id': requestId } })
+    return new Response(cached, { status: 200, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
   }
 
   // --- Azure forward (server-side; key never leaves the Worker) ---
@@ -274,7 +274,7 @@ async function finishScan(env, ctx) {
     }, env_)
   }
   const httpStatus = ctx.status === 'ok' ? 200 : 502
-  return new Response(body, { status: httpStatus, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', 'x-request-id': ctx.requestId } })
+  return new Response(body, { status: httpStatus, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(ctx.requestId) } })
 }
 
 function azureStatus(httpStatus) {
@@ -287,7 +287,7 @@ async function rateLimited(env, { scanId, attest, requestId, clientVersion }) {
     signal: 'scan', phase: 'scan', status: 'rate_limited', attest, scanId, requestId, client_version: clientVersion,
   }, env)
   const body = JSON.stringify(envelope({ status: 'rate_limited', raw: null, scanId }))
-  return new Response(body, { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', 'x-request-id': requestId } })
+  return new Response(body, { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
 }
 
 function scanDisabled(env, { scanId, requestId, clientVersion }) {

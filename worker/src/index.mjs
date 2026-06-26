@@ -25,7 +25,7 @@ import {
   logFxMonitoringEvent,
   startFxCanaryCheckIn,
 } from './monitoring.mjs'
-import { resolveRequestId } from './request-id.mjs'
+import { attachRequestCorrelationHeaders, resolveRequestId } from './request-id.mjs'
 import { handleSideload } from './sideload/router.mjs'
 import { handleOcr } from './ocr/router.mjs'
 
@@ -90,8 +90,7 @@ function handleHealth(request, env) {
       status: 200,
       headers,
     })
-    response.headers.set('x-request-id', requestId)
-    return response
+    return attachRequestCorrelationHeaders(response, requestId)
   }
 
   if (request.method !== 'GET') {
