@@ -97,6 +97,8 @@ test('sideload OPTIONS preflight returns 204 without requiring auth', async () =
 
   assert.equal(response.status, 204)
   assert.equal(response.headers.get('x-request-id'), 'req-sideload-preflight')
+  assert.equal(response.headers.get('x-resplit-trace-id'), 'req-sideload-preflight')
+  assert.match(response.headers.get('access-control-allow-headers') || '', /x-resplit-trace-id/)
   assert.equal(
     response.headers.get('access-control-allow-methods'),
     'GET, POST, DELETE, OPTIONS'

@@ -1,3 +1,5 @@
+import { attachRequestCorrelationHeaders } from './request-id.mjs'
+
 /**
  * @param {unknown} body
  * @param {{
@@ -13,7 +15,7 @@ export function jsonResponse(body, { status = 200, requestId, headers = {} } = {
     headers,
   })
   if (requestId) {
-    response.headers.set('x-request-id', requestId)
+    attachRequestCorrelationHeaders(response, requestId)
   }
   return response
 }

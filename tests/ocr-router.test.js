@@ -78,8 +78,10 @@ function scanRequest(imageBytes, headers = {}) {
 test('POST /ocr/scan (soft-fail) returns the versioned envelope wrapping the Azure result', async () => {
   stubAzure()
   const env = makeEnv()
-  const res = await handleOcr(scanRequest(new Uint8Array([1, 2, 3])), env)
+  const res = await handleOcr(scanRequest(new Uint8Array([1, 2, 3]), { 'x-resplit-trace-id': 'trace-ocr-scan' }), env)
   assert.equal(res.status, 200)
+  assert.equal(res.headers.get('x-request-id'), 'trace-ocr-scan')
+  assert.equal(res.headers.get('x-resplit-trace-id'), 'trace-ocr-scan')
   const body = await res.json()
   assert.equal(body.v, 1)
   assert.equal(body.mode, 'raw')
