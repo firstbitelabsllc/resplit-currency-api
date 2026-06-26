@@ -153,6 +153,8 @@ test('worker health route rejects non-probe methods', async () => {
   assert.deepEqual(await response.json(), {
     error: 'METHOD_NOT_ALLOWED',
     message: 'Expected GET or HEAD',
+    requestId: 'req-health-post',
+    traceId: 'req-health-post',
   })
 })
 
@@ -168,9 +170,12 @@ test('worker quote route returns request id on invalid query', async () => {
 
   assert.equal(response.status, 400)
   assert.equal(response.headers.get('x-request-id'), 'req-invalid')
+  assert.equal(response.headers.get('access-control-expose-headers'), 'x-request-id, x-resplit-trace-id, cf-ray')
   assert.deepEqual(await response.json(), {
     error: 'INVALID_QUERY',
     message: 'Expected from, to, and date query params',
+    requestId: 'req-invalid',
+    traceId: 'req-invalid',
   })
 })
 
@@ -215,6 +220,8 @@ test('worker quote route rejects impossible calendar dates', async () => {
   assert.deepEqual(await response.json(), {
     error: 'INVALID_QUERY',
     message: 'Invalid date: 2026-02-31',
+    requestId: 'req-invalid-date',
+    traceId: 'req-invalid-date',
   })
 })
 
@@ -308,6 +315,8 @@ test('worker history route rejects impossible calendar dates', async () => {
   assert.deepEqual(await response.json(), {
     error: 'INVALID_QUERY',
     message: 'Invalid date: 2026-02-31',
+    requestId: 'req-history-invalid',
+    traceId: 'req-history-invalid',
   })
 })
 
@@ -396,6 +405,8 @@ test('worker coverage route rejects impossible calendar anchor dates', async () 
   assert.deepEqual(await response.json(), {
     error: 'INVALID_QUERY',
     message: 'Invalid anchorDate: 2026-02-31',
+    requestId: 'req-coverage-invalid',
+    traceId: 'req-coverage-invalid',
   })
 })
 
@@ -423,7 +434,29 @@ test('worker coverage route defaults an empty days param to the 30-day window', 
   })
 })
 
-test('worker cron route rejects unauthorized requests', async () => {
+test('worker unknown route surfaces trace ids in headers and body', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/nope', {
+      headers: { 'x-resplit-trace-id': 'trace-root-404' },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 404)
+  assert.equal(response.headers.get('x-request-id'), 'trace-root-404')
+  assert.equal(response.headers.get('x-resplit-trace-id'), 'trace-root-404')
+  assert.equal(response.headers.get('access-control-expose-headers'), 'x-request-id, x-resplit-trace-id, cf-ray')
+  assert.deepEqual(await response.json(), {
+    error: 'NOT_FOUND',
+    message: 'Route not found',
+    requestId: 'trace-root-404',
+    traceId: 'trace-root-404',
+  })
+})
+
+test('worker cron route rejects unauthorized requests with generated trace ids', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 
   const response = await handleRequest(
@@ -433,9 +466,31 @@ test('worker cron route rejects unauthorized requests', async () => {
 
   assert.equal(response.status, 401)
   assert.equal(response.headers.get('cache-control'), 'no-store')
+  const body = await response.json()
+  assert.equal(body.error, 'UNAUTHORIZED')
+  assert.equal(body.message, 'Missing or invalid cron authorization')
+  assert.equal(body.requestId, body.traceId)
+  assert.match(body.requestId, /^[0-9a-f-]{36}$/)
+})
+
+test('worker cron route rejects unauthorized requests with supplied trace id', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/cron/fx-canary', {
+      headers: { 'x-resplit-trace-id': 'trace-canary-denied' },
+    }),
+    { CRON_SECRET: 'top-secret' }
+  )
+
+  assert.equal(response.status, 401)
+  assert.equal(response.headers.get('x-request-id'), 'trace-canary-denied')
+  assert.equal(response.headers.get('access-control-expose-headers'), 'x-request-id, x-resplit-trace-id, cf-ray')
   assert.deepEqual(await response.json(), {
     error: 'UNAUTHORIZED',
     message: 'Missing or invalid cron authorization',
+    requestId: 'trace-canary-denied',
+    traceId: 'trace-canary-denied',
   })
 })
 
@@ -521,6 +576,8 @@ test('worker cron route reports canary_error on unexpected failures', async () =
       assert.deepEqual(await response.json(), {
         error: 'FX_CANARY_FAILED',
         message: 'FX canary failed',
+        requestId: 'req-canary-fail',
+        traceId: 'req-canary-fail',
       })
     })
   } finally {

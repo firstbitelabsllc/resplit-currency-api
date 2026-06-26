@@ -1,4 +1,4 @@
-import { requestCorrelationHeaders } from '../request-id.mjs'
+import { CORRELATION_EXPOSE_HEADERS, requestCorrelationHeaders } from '../request-id.mjs'
 
 const ALLOWED_ORIGINS = new Set([
   'https://resplit.app',
@@ -9,6 +9,7 @@ export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, x-request-id, x-resplit-trace-id, CF-Access-Client-Id, CF-Access-Client-Secret',
+  'Access-Control-Expose-Headers': CORRELATION_EXPOSE_HEADERS,
   'Access-Control-Max-Age': '600',
 }
 

@@ -1,5 +1,6 @@
 export const REQUEST_ID_HEADER = 'x-request-id'
 export const RESPLIT_TRACE_ID_HEADER = 'x-resplit-trace-id'
+export const CORRELATION_EXPOSE_HEADERS = `${REQUEST_ID_HEADER}, ${RESPLIT_TRACE_ID_HEADER}, cf-ray`
 
 /**
  * @param {Request} request
@@ -21,6 +22,7 @@ export function requestCorrelationHeaders(requestId) {
   return {
     [REQUEST_ID_HEADER]: requestId,
     [RESPLIT_TRACE_ID_HEADER]: requestId,
+    'Access-Control-Expose-Headers': CORRELATION_EXPOSE_HEADERS,
   }
 }
 

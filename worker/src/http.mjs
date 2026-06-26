@@ -29,5 +29,8 @@ export function jsonResponse(body, { status = 200, requestId, headers = {} } = {
  * @returns {Response}
  */
 export function errorResponse(error, message, status, requestId, headers = {}) {
-  return jsonResponse({ error, message }, { status, requestId, headers })
+  const body = requestId
+    ? { error, message, requestId, traceId: requestId }
+    : { error, message }
+  return jsonResponse(body, { status, requestId, headers })
 }
