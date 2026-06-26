@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  CORRELATION_EXPOSE_HEADERS,
   RESPLIT_TRACE_ID_HEADER,
   REQUEST_ID_HEADER,
   requestCorrelationHeaders,
@@ -23,5 +24,6 @@ test('requestCorrelationHeaders emits both correlation headers', () => {
   assert.deepEqual(requestCorrelationHeaders('trace-join-1'), {
     [REQUEST_ID_HEADER]: 'trace-join-1',
     [RESPLIT_TRACE_ID_HEADER]: 'trace-join-1',
+    'Access-Control-Expose-Headers': CORRELATION_EXPOSE_HEADERS,
   })
 })
