@@ -25,6 +25,10 @@ Treat the next smallest actionable item from these surfaces as the queue:
 
 If the latest nurse log says the repo is `GO` and fresh proof still passes, do not invent work in this repo. Record the clean checkpoint and stop with the external blocker if the launch hold lives elsewhere.
 
+## Setup Contract
+
+Before taking a slice, run `/readiness` (or an inline preflight) to verify the deploy toolchain is up before you touch the surface: `wrangler` is authed, `CF_API_TOKEN` / Cloudflare account are present, and `npm run check` / `npm run smoke:deploy` install cleanly. Raise any missing dep as ONE up-front list, not mid-slice. The Completion Standard below remains the Proof Contract. See /leo-flow § P0 Setup Contract.
+
 ## Completion Standard
 
 A repo slice is only complete when all of the following are true:
