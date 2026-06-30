@@ -5,14 +5,17 @@ const os = require('os')
 const path = require('path')
 
 const {
+  allowArchiveRateFallback,
   bestEffortRemoveDir,
   buildArchiveManifest,
   buildArchiveYearPayloads,
   buildSnapshotWindow,
   computeCrossRates,
   dateDaysBeforeUTC,
+  fetchLatestRates,
   listSnapshotArchiveDates,
   loadAllSnapshotsFromArchive,
+  loadArchiveRateFallback,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
   promoteBuildOutput,
@@ -42,6 +45,97 @@ test('toLowerSorted normalizes keys, filters invalid values, and sorts', () => {
   assert.deepEqual(Object.keys(normalized), ['eur', 'usd'])
   assert.equal(normalized.eur, 1)
   assert.equal(normalized.usd, 1.3)
+})
+
+test('allowArchiveRateFallback requires an explicit opt-in env var', () => {
+  assert.equal(allowArchiveRateFallback({ env: {} }), false)
+  assert.equal(allowArchiveRateFallback({ env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '0' } }), false)
+  assert.equal(allowArchiveRateFallback({ env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' } }), true)
+  assert.equal(allowArchiveRateFallback({ env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: 'true' } }), true)
+})
+
+test('loadArchiveRateFallback returns exact-date archived rates when explicitly enabled', () => {
+  const warnings = []
+  const fallback = loadArchiveRateFallback({
+    publishDate: '2026-06-30',
+    env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
+    loadArchiveSnapshot: (date) => {
+      assert.equal(date, '2026-06-30')
+      return { USD: '1.2', EUR: 1 }
+    },
+    warn: (message) => warnings.push(message),
+    reason: new Error('dns unavailable')
+  })
+
+  assert.deepEqual(fallback, { eur: 1, usd: 1.2 })
+  assert.match(warnings[0], /Using exact-date archive fallback rates for 2026-06-30: dns unavailable/)
+})
+
+test('loadArchiveRateFallback stays disabled by default', () => {
+  const fallback = loadArchiveRateFallback({
+    publishDate: '2026-06-30',
+    env: {},
+    loadArchiveSnapshot: () => ({ eur: 1, usd: 1.2 }),
+    warn: () => {
+      throw new Error('unexpected warning')
+    }
+  })
+
+  assert.equal(fallback, null)
+})
+
+test('fetchLatestRates uses upstream rates before fallback', async () => {
+  const rates = await fetchLatestRates({
+    publishDate: '2026-06-30',
+    env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
+    fetchJson: async () => ({
+      result: 'success',
+      rates: { USD: '1.2', EUR: 1 }
+    }),
+    loadArchiveSnapshot: () => {
+      throw new Error('unexpected fallback')
+    }
+  })
+
+  assert.deepEqual(rates, { eur: 1, usd: 1.2 })
+})
+
+test('fetchLatestRates can fall back to exact-date archive rates after upstream failure', async () => {
+  const captured = []
+  const warnings = []
+
+  const rates = await fetchLatestRates({
+    publishDate: '2026-06-30',
+    env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
+    fetchJson: async () => {
+      throw new Error('getaddrinfo EAI_AGAIN open.er-api.com')
+    },
+    loadArchiveSnapshot: () => ({ USD: '1.2', EUR: 1 }),
+    capture: async (payload) => captured.push(payload),
+    warn: (message) => warnings.push(message)
+  })
+
+  assert.deepEqual(rates, { eur: 1, usd: 1.2 })
+  assert.equal(captured[0].signal, 'upstream_fetch_failure')
+  assert.match(warnings[0], /Using exact-date archive fallback rates/)
+})
+
+test('fetchLatestRates still throws upstream failures when archive fallback is unavailable', async () => {
+  await assert.rejects(
+    () => fetchLatestRates({
+      publishDate: '2026-06-30',
+      env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
+      fetchJson: async () => {
+        throw new Error('network unreachable')
+      },
+      loadArchiveSnapshot: () => null,
+      capture: async () => {},
+      warn: () => {
+        throw new Error('unexpected warning')
+      }
+    }),
+    /network unreachable/
+  )
 })
 
 test('computeCrossRates produces positive finite cross rates', () => {
