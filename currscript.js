@@ -24,7 +24,7 @@ if (require.main === module) {
 
 async function main() {
   const dateToday = resolvePublishDate()
-  const latestRates = await fetchLatestRates()
+  const latestRates = await fetchLatestRates({ publishDate: dateToday })
   if (!latestRates || Object.keys(latestRates).length === 0) {
     throw new Error('Failed to fetch currency rates from source')
   }
@@ -457,25 +457,76 @@ function pruneSnapshotArchive({
   return prunedDates
 }
 
-async function fetchLatestRates() {
+async function fetchLatestRates({
+  publishDate = resolvePublishDate(),
+  env = process.env,
+  fetchJson = fetchJSON,
+  loadArchiveSnapshot = loadSnapshotFromArchive,
+  capture = captureIssue,
+  warn = console.warn
+} = {}) {
   // Primary: open.er-api.com — free, ~160 fiat currencies, no API key.
+  const sourceUrl = 'https://open.er-api.com/v6/latest/EUR'
   try {
-    const data = await fetchJSON('https://open.er-api.com/v6/latest/EUR', 30_000)
+    const data = await fetchJson(sourceUrl, 30_000)
     if (data?.result === 'success' && data.rates) {
       return toLowerSorted(data.rates)
     }
-    return null
+    return loadArchiveRateFallback({
+      publishDate,
+      env,
+      loadArchiveSnapshot,
+      warn,
+      reason: new Error('upstream did not return successful rates')
+    })
   } catch (error) {
-    await captureIssue({
+    await capture({
       signal: 'upstream_fetch_failure',
       error,
       context: {
         workflow: 'daily_publish',
-        source_url: 'https://open.er-api.com/v6/latest/EUR'
+        source_url: sourceUrl
       }
     })
+
+    const fallbackRates = loadArchiveRateFallback({
+      publishDate,
+      env,
+      loadArchiveSnapshot,
+      warn,
+      reason: error
+    })
+    if (fallbackRates) {
+      return fallbackRates
+    }
+
     throw error
   }
+}
+
+function loadArchiveRateFallback({
+  publishDate,
+  env = process.env,
+  loadArchiveSnapshot = loadSnapshotFromArchive,
+  warn = console.warn,
+  reason = null
+} = {}) {
+  if (!allowArchiveRateFallback({ env })) {
+    return null
+  }
+
+  const fallbackRates = loadArchiveSnapshot(publishDate)
+  if (!fallbackRates || Object.keys(fallbackRates).length === 0) {
+    return null
+  }
+
+  const reasonText = reason?.message ? `: ${reason.message}` : ''
+  warn(`Using exact-date archive fallback rates for ${publishDate}${reasonText}`)
+  return toLowerSorted(fallbackRates)
+}
+
+function allowArchiveRateFallback({ env = process.env } = {}) {
+  return /^(1|true|yes|on)$/i.test(String(env.CURRENCY_API_ALLOW_ARCHIVE_FALLBACK || ''))
 }
 
 async function fetchJSON(url, timeoutMs) {
@@ -606,13 +657,16 @@ function buildArchiveManifest({ availableDates, latestRates, generatedAt }) {
 }
 
 module.exports = {
+  allowArchiveRateFallback,
   bestEffortRemoveDir,
   buildArchiveManifest,
   buildArchiveYearPayloads,
   buildSnapshotWindow,
   computeCrossRates,
   dateDaysBeforeUTC,
+  fetchLatestRates,
   loadAllSnapshotsFromArchive,
+  loadArchiveRateFallback,
   listSnapshotArchiveDates,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
