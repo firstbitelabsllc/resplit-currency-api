@@ -158,6 +158,36 @@ test('resolveGithubFallbackAcceptance rejects a >1 day stale fallback even insid
   assert.equal(result.reason, 'not_one_day_stale')
 })
 
+test('resolveGithubFallbackAcceptance post-publish tolerates one-day lag in a wall-clock dead zone', () => {
+  // The 2026-07-03T02:58Z failure: GitHub delayed the 00:00Z schedule into the
+  // gap between the [0h,3h] grace windows. Post-publish context makes the
+  // one-day propagation lag acceptable at ANY hour — no dead zones remain.
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-07-02',
+    expectedDate: '2026-07-03',
+    now: new Date('2026-07-03T02:58:18Z'),
+    postPublish: true,
+  })
+
+  assert.equal(result.accepted, true)
+  assert.equal(result.stale, true)
+  assert.equal(result.reason, 'post_publish_propagation')
+})
+
+test('resolveGithubFallbackAcceptance post-publish still rejects a >1 day stale fallback', () => {
+  // Post-publish context only excuses propagation of THIS run; a fallback two
+  // days behind means the PREVIOUS publish never landed — a real pipeline break.
+  const result = resolveGithubFallbackAcceptance({
+    ghFallbackDate: '2026-07-01',
+    expectedDate: '2026-07-03',
+    now: new Date('2026-07-03T02:58:18Z'),
+    postPublish: true,
+  })
+
+  assert.equal(result.accepted, false)
+  assert.equal(result.reason, 'not_one_day_stale')
+})
+
 test('isStaticRecoveryHistoryGap accepts fresh static history with known archive gaps', () => {
   const availableHistoryDates = [
     '2026-05-25',
