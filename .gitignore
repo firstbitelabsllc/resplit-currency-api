@@ -10,3 +10,4 @@ package/
 !.agent-ledger/hot-files.md
 .eve/
 .output/
+error.log

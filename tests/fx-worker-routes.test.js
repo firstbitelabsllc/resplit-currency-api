@@ -600,3 +600,54 @@ test('worker cron route reports canary_error on unexpected failures', async () =
   assert.equal(payload.error, 'console exploded')
   assert.equal(payload.requestedDays, 30)
 })
+
+test('worker scheduled handler runs the canary with no HTTP authorization', async () => {
+  const { handleScheduled } = await import('../worker/src/index.mjs')
+  const today = new Date().toISOString().slice(0, 10)
+  const anchorDates = [0, 7, 30, 180].map(days => {
+    const date = new Date(`${today}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() - days)
+    return date.toISOString().slice(0, 10)
+  })
+  const earliestStart = new Date(`${anchorDates.at(-1)}T00:00:00Z`)
+  earliestStart.setUTCDate(earliestStart.getUTCDate() - 29)
+  const availableDates = enumerateDates(
+    earliestStart.toISOString().slice(0, 10),
+    anchorDates[0]
+  )
+
+  const originalLog = console.log
+  const logLines = []
+  console.log = (...args) => {
+    logLines.push(args.map(arg => String(arg)).join(' '))
+  }
+
+  try {
+    await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+      // No CRON_SECRET and no Authorization header: the scheduled trigger is
+      // internal + trusted, so it must run without the HTTP Bearer gate.
+      await handleScheduled(
+        { cron: '0 13 * * *', scheduledTime: Date.now() },
+        { ASSET_BASE_URL: 'https://example-assets.dev' },
+        { waitUntil() {} }
+      )
+    })
+  } finally {
+    console.log = originalLog
+  }
+
+  const canaryOk = logLines.find(line => {
+    if (!line.startsWith('[FX_MONITORING] ')) {
+      return false
+    }
+    const payload = JSON.parse(line.replace('[FX_MONITORING] ', ''))
+    return payload.signal === 'canary_ok' && payload.trigger === 'scheduled'
+  })
+  assert.ok(canaryOk, 'expected scheduled canary to emit a canary_ok monitoring log tagged trigger=scheduled')
+
+  const payload = JSON.parse(canaryOk.replace('[FX_MONITORING] ', ''))
+  assert.equal(payload.route, 'cron_fx_canary')
+  assert.equal(payload.cron, '0 13 * * *')
+  assert.equal(payload.mismatchCount, 0)
+  assert.equal(payload.failureCount, 0)
+})
