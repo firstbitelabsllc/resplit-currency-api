@@ -1,0 +1,47 @@
+{
+  "$comment": "FX alert rules as code (Phase 4, 2026-07-03). Source of truth in a clean schema; scripts/provision-grafana.js translates to the Grafana provisioning API at push time. PromQL mirrors grafana/dashboards/resplit-fx.json so panels and alerts cannot drift. Datasource is Grafana Cloud Prometheus (OTLP), NOT the retired GCP Managed Prometheus.",
+  "folder": "Resplit FX",
+  "ruleGroup": "resplit-fx",
+  "intervalSeconds": 60,
+  "contactPoint": {
+    "default": "email",
+    "email": "leojkwan@gmail.com",
+    "$comment": "Per the plan Setup Contract: default email leojkwan@gmail.com unless overridden. Notification policy + Slack/PagerDuty routing live in Grafana, not here."
+  },
+  "rules": [
+    {
+      "uid": "fx-snapshot-stale",
+      "title": "FXSnapshotStale",
+      "summary": "FX snapshot dead-man's-switch: the daily publish stopped and clients are being served an ever-staler rate with no error.",
+      "severity": "page",
+      "for": "10m",
+      "expr": "max(fx_snapshot_age_seconds) > 93600",
+      "thresholdSeconds": 93600,
+      "noDataState": "Alerting",
+      "$why": "26h (93600s) gives a 2h grace past the daily publish cadence. This is the highest-value alert: a freshness dead-man is the only thing that catches a NON-erroring outage (the exact failure class this hardening responds to). noData => Alerting so a missing metric also pages (dead-man semantics)."
+    },
+    {
+      "uid": "fx-read-slo-fast-burn",
+      "title": "FXReadSLOFastBurn",
+      "summary": "The /quote read-path is burning its 99.9% error budget fast (5xx spike).",
+      "severity": "page",
+      "for": "5m",
+      "expr": "(sum(rate(http_requests_total{route=\"/quote\", status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{route=\"/quote\"}[5m])), 1) > 0.0144) and (sum(rate(http_requests_total{route=\"/quote\", status=~\"5..\"}[1h])) / clamp_min(sum(rate(http_requests_total{route=\"/quote\"}[1h])), 1) > 0.0144)",
+      "burnRateMultiplier": 14.4,
+      "sloTarget": 0.999,
+      "noDataState": "OK",
+      "$why": "Multi-window fast-burn (5m AND 1h both > 14.4x the 0.1% budget = 0.0144 error ratio) per the Google SRE multi-burn-rate pattern — pages only on a real, sustained 5xx spike, not a single blip. noData => OK because zero traffic is not an error."
+    },
+    {
+      "uid": "fx-fallback-share",
+      "title": "FXFallbackShare",
+      "summary": "A sustained majority of /quote responses are non-exact (stale/derived) rates served as if fresh — silent staleness.",
+      "severity": "page",
+      "for": "30m",
+      "expr": "sum(rate(fx_fallback_served_total{kind!=\"exact\"}[15m])) / clamp_min(sum(rate(fx_fallback_served_total[15m])), 1) > 0.25",
+      "thresholdRatio": 0.25,
+      "noDataState": "OK",
+      "$why": "The top app trust risk: clients shown prior_day/today cross-rate fallbacks instead of the exact published rate. Pages when >25% of served quotes are non-exact for 30m (transient publish-lag blips self-heal well under that). noData => OK (no traffic != staleness)."
+    }
+  ]
+}

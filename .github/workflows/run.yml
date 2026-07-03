@@ -60,6 +60,12 @@ jobs:
       - name: Validate generated artifacts
         run: node scripts/validate-package.js
 
+      # Phase 4 CI proof gate: validate the Grafana alert spec + dashboard/rule
+      # payloads on every run. No creds needed (--dry-run does zero network), so a
+      # broken alert rule fails CI before it can be provisioned live.
+      - name: Validate Grafana provisioning spec
+        run: node scripts/provision-grafana.js --dry-run
+
       # Phase 3: push publish metrics to Grafana Cloud via OTLP-HTTP/JSON. Hard
       # no-op (exit 0) whenever the OTLP secrets are absent, so this never blocks
       # a publish and stays green until Grafana credentials are provisioned.
@@ -224,6 +230,28 @@ jobs:
           # (>1-day stale still hard-fails). Kills the scheduler-delay dead zones.
           POST_PUBLISH_SMOKE: '1'
         run: node scripts/smoke-check-deploy.js
+
+      # Phase 4: post-deploy Grafana provisioning + telemetry smoke. Both are
+      # warn-only (continue-on-error) and no-op without Grafana creds, so they
+      # never block a deploy while credentials are still being provisioned.
+      - name: Provision Grafana dashboard + alerts
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
+        continue-on-error: true
+        env:
+          GRAFANA_BASE_URL: ${{ secrets.GRAFANA_BASE_URL }}
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+          GRAFANA_PROM_DATASOURCE_UID: ${{ secrets.GRAFANA_PROM_DATASOURCE_UID }}
+        run: node scripts/provision-grafana.js
+
+      - name: Grafana OTel telemetry smoke
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
+        continue-on-error: true
+        env:
+          GRAFANA_BASE_URL: ${{ secrets.GRAFANA_BASE_URL }}
+          GRAFANA_API_TOKEN: ${{ secrets.GRAFANA_API_TOKEN }}
+          GRAFANA_TEMPO_DATASOURCE_UID: ${{ secrets.GRAFANA_TEMPO_DATASOURCE_UID }}
+          GRAFANA_LOKI_DATASOURCE_UID: ${{ secrets.GRAFANA_LOKI_DATASOURCE_UID }}
+        run: node scripts/verify-grafana-otel-smoke.js
 
       - name: Finish Sentry publish check-in
         if: ${{ always() }}
