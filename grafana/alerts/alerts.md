@@ -1,32 +1,39 @@
-# Resplit FX/OCR — First-PR Alerts
+# Resplit FX — Alerts
 
-Five alerts ship in this first observability PR. They are the minimum set that
-catches a silent FX outage, an SLO regression, a cost runaway, and a broken
-delivery path. All run against the **Google Managed Prometheus** datasource the
-OTel metric exporter pushes to (see `internal/obs/otel.go`).
+**Canonical source of truth: [`fx-alerts.json`](fx-alerts.json)** (rules as code,
+provisioned idempotently by [`scripts/provision-grafana.js`](../../scripts/provision-grafana.js)).
+This doc is the human rationale; the JSON is what actually ships. The PromQL in
+both mirrors [`grafana/dashboards/resplit-fx.json`](../dashboards/resplit-fx.json)
+so panels and alerts cannot drift.
 
-Each alert is expressed as a Grafana-managed alert rule (Prometheus-style
-`expr`). Routing is via a single contact point (Slack `#resplit-alerts` +
-PagerDuty for `severity=page`); silence windows and the notification policy live
-in the Grafana provisioning, not here.
+Three FX alerts ship — the minimum set that catches a silent FX outage and an
+SLO regression on the Cloudflare/JS stack. They run against the **Grafana Cloud
+Prometheus** datasource the OTLP metric exporter pushes to (Cloudflare FX Worker
+via `@microlabs/otel-cf-workers` + the publish pipeline via OTLP-HTTP/JSON).
+Routing is via a single contact point (default email `leojkwan@gmail.com`);
+silence windows and the notification policy live in Grafana provisioning.
 
 | # | Alert | Severity | For | Fires when |
 |---|-------|----------|-----|------------|
 | 1 | `FXSnapshotStale` (dead-man) | page | 10m | snapshot age > 26h |
-| 2 | `FXReadSLOFastBurn` | page | 5m | 5m **and** 1h burn > 14.4× budget |
-| 3 | `CDNHitRatioLow` | warn | 15m | cache-hit ratio < 95% |
-| 4 | `OCRDailySpendBudget` | warn→page | 5m | projected/actual daily USD over budget |
-| 5 | `PubSubDLQNonEmpty` | page | 0m | publish DLQ depth > 0 |
+| 2 | `FXReadSLOFastBurn` | page | 5m | 5m **and** 1h burn > 14.4× budget on `/quote` |
+| 3 | `FXFallbackShare` | page | 30m | >25% of `/quote` responses non-exact (silent staleness) |
+
+> **Retired on Cloudflare:** the GCP-era `CDNHitRatioLow`
+> (`loadbalancing_googleapis_com:*`) and `PubSubDLQNonEmpty` alerts do not apply
+> to the Cloudflare/JS stack and are intentionally dropped. `OCRDailySpendBudget`
+> is tracked separately with the OCR/Azure work, not in this FX set.
 
 ---
 
 ## 1. `FXSnapshotStale` — dead-man's-switch (snapshot freshness)
 
 **Why:** the FX read-path is static-first — clients read a published snapshot
-from GCS+CDN. If the daily publish job silently stops, nothing 500s; clients
-just keep serving an ever-staler rate. This is the single highest-value alert: a
-freshness dead-man is the only thing that catches a *non-erroring* outage. The
-May-2026 incident this whole rewrite responds to was exactly this class.
+from the Cloudflare CDN (Pages/R2). If the daily publish job silently stops,
+nothing 500s; clients just keep serving an ever-staler rate. This is the single
+highest-value alert: a freshness dead-man is the only thing that catches a
+*non-erroring* outage. The May-2026 incident this whole hardening responds to was
+exactly this class. `noData` maps to `Alerting` so a missing metric also pages.
 
 **Signal:** `fx_snapshot_age_seconds` (set on every publish and on liveness
 checks via `Recorder.SetFXSnapshotAge`). The publisher runs daily, so a healthy

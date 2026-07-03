@@ -12,6 +12,8 @@
     "smoke:deploy": "node scripts/smoke-check-deploy.js",
     "smoke:sideload": "bash scripts/smoke-sideload-staging.sh",
     "observability:otel-smoke": "node scripts/verify-grafana-otel-smoke.js",
+    "provision:grafana": "node scripts/provision-grafana.js",
+    "provision:grafana:dry": "node scripts/provision-grafana.js --dry-run",
     "mcp:loaded-probe": "node scripts/capture-loaded-mcp-probe.js",
     "reliability:cockpit": "node scripts/reliability-cockpit.js",
     "source:promotion-packet": "node scripts/source-promotion-packet.js",
