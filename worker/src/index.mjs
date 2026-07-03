@@ -41,6 +41,20 @@ const handler = {
   async fetch(request, env, _ctx) {
     return handleRequest(request, env)
   },
+  /**
+   * Daily FX canary (13:00 UTC via wrangler.jsonc triggers.crons). The platform
+   * invokes this directly, so CRON_SECRET auth stays HTTP-route-only.
+   * Sentry.withSentry instruments scheduled invocations; a throw marks the run failed.
+   *
+   * @param {ScheduledController} controller
+   * @param {Record<string, string | undefined>} env
+   * @param {ExecutionContext} _ctx
+   */
+  async scheduled(controller, env, _ctx) {
+    const requestId = `sched-${crypto.randomUUID()}`
+    console.log(`[FX_CANARY] trigger=scheduled cron=${controller.cron} requestId=${requestId}`)
+    await runScheduledFxCanary(env, { requestId })
+  },
 }
 
 export default Sentry.withSentry(getSentryWorkerOptions, handler)
@@ -338,6 +352,31 @@ async function handleFxCanary(request, env) {
     )
   }
 
+  try {
+    const report = await runScheduledFxCanary(env, { requestId })
+    return jsonResponse(report, {
+      status: report.ok ? 200 : 500,
+      requestId,
+      headers: {
+        'Cache-Control': 'no-store',
+      },
+    })
+  } catch {
+    // runScheduledFxCanary already captured + logged the failure.
+    return errorResponse('FX_CANARY_FAILED', 'FX canary failed', 500, requestId, {
+      'Cache-Control': 'no-store',
+    })
+  }
+}
+
+/**
+ * Runs the FX canary with its Sentry check-in + monitoring wiring. Shared by the
+ * authorized HTTP route and the cron `scheduled` handler.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @param {{ requestId: string }} context
+ */
+export async function runScheduledFxCanary(env, { requestId }) {
   const startedAt = Date.now()
   const checkInId = startFxCanaryCheckIn(env)
   let checkInStatus = 'error'
@@ -346,7 +385,6 @@ async function handleFxCanary(request, env) {
     const report = await runFxCanary({
       baseUrl: env.ASSET_BASE_URL || ASSET_BASE_URL,
     })
-    const status = report.ok ? 200 : 500
     checkInStatus = report.ok ? 'ok' : 'error'
 
     logFxMonitoringEvent(report.ok ? 'info' : 'error', {
@@ -360,20 +398,14 @@ async function handleFxCanary(request, env) {
     }, env)
 
     console[report.ok ? 'log' : 'error'](
-      `[FX_CANARY] status=${status} ok=${report.ok} mismatchCount=${report.mismatchCount} failureCount=${report.failureCount}`
+      `[FX_CANARY] status=${report.ok ? 200 : 500} ok=${report.ok} mismatchCount=${report.mismatchCount} failureCount=${report.failureCount}`
     )
 
     if (!report.ok) {
       await captureFxCanaryIncident(report, requestId, env)
     }
 
-    return jsonResponse(report, {
-      status,
-      requestId,
-      headers: {
-        'Cache-Control': 'no-store',
-      },
-    })
+    return report
   } catch (error) {
     console.error('[FX_CANARY] status=500 FX canary failed', error)
     await captureFxRouteFailure(error, {
@@ -386,9 +418,7 @@ async function handleFxCanary(request, env) {
       requestedDays: 30,
       requestId,
     }, env)
-    return errorResponse('FX_CANARY_FAILED', 'FX canary failed', 500, requestId, {
-      'Cache-Control': 'no-store',
-    })
+    throw error
   } finally {
     await finishFxCanaryCheckIn(checkInId, /** @type {'ok' | 'error'} */ (checkInStatus), startedAt, env)
   }

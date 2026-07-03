@@ -3,6 +3,10 @@
   "main": "worker/src/index.mjs",
   "compatibility_date": "2026-03-17",
   "compatibility_flags": ["nodejs_compat"],
+  // Daily FX canary — Sentry monitor resplit-currency-api-fx-canary expects 13:00 UTC.
+  "triggers": {
+    "crons": ["0 13 * * *"]
+  },
   "workers_dev": true,
   "upload_source_maps": true,
   "observability": {
