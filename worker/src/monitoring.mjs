@@ -15,6 +15,8 @@ const FX_CANARY_MONITOR_CONFIG = {
   recoveryThreshold: 1,
 }
 
+const DEFAULT_TRACES_SAMPLE_RATE = 0.05
+
 /**
  * @param {{ SENTRY_DSN?: string }} env
  * @returns {boolean}
@@ -24,7 +26,20 @@ function isFxMonitoringEnabled(env) {
 }
 
 /**
- * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
+ * @param {{ SENTRY_TRACES_RATE?: string }} env
+ * @returns {number}
+ */
+function resolveTracesSampleRate(env) {
+  const raw = env.SENTRY_TRACES_RATE
+  if (raw === undefined || raw === null || raw === '') {
+    return DEFAULT_TRACES_SAMPLE_RATE
+  }
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : DEFAULT_TRACES_SAMPLE_RATE
+}
+
+/**
+ * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string, SENTRY_TRACES_RATE?: string }} env
  * @returns {import('@sentry/cloudflare').CloudflareOptions | undefined}
  */
 export function getSentryWorkerOptions(env) {
@@ -38,7 +53,7 @@ export function getSentryWorkerOptions(env) {
     enabled: true,
     environment: runtime.environment,
     release: runtime.release || undefined,
-    tracesSampleRate: 0,
+    tracesSampleRate: resolveTracesSampleRate(env),
     sendDefaultPii: false,
     initialScope: {
       tags: {

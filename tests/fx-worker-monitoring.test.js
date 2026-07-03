@@ -84,7 +84,7 @@ test('getSentryWorkerOptions returns dedicated worker config when DSN is present
     enabled: true,
     environment: 'staging',
     release: 'worker-unit-test',
-    tracesSampleRate: 0,
+    tracesSampleRate: 0.05,
     sendDefaultPii: false,
     initialScope: {
       tags: {
@@ -93,6 +93,38 @@ test('getSentryWorkerOptions returns dedicated worker config when DSN is present
       },
     },
   })
+})
+
+test('getSentryWorkerOptions defaults tracesSampleRate to 0.05 when SENTRY_TRACES_RATE is unset', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+
+  assert.equal(options.tracesSampleRate, 0.05)
+})
+
+test('getSentryWorkerOptions honors the SENTRY_TRACES_RATE env override', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    SENTRY_TRACES_RATE: '0.5',
+  })
+
+  assert.equal(options.tracesSampleRate, 0.5)
+})
+
+test('getSentryWorkerOptions falls back to the default when SENTRY_TRACES_RATE is not a finite number', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    SENTRY_TRACES_RATE: 'not-a-number',
+  })
+
+  assert.equal(options.tracesSampleRate, 0.05)
 })
 
 test('startFxCanaryCheckIn starts the dedicated worker canary monitor when DSN is present', async () => {
