@@ -15,6 +15,8 @@ const FX_CANARY_MONITOR_CONFIG = {
   recoveryThreshold: 1,
 }
 
+const DEFAULT_TRACES_SAMPLE_RATE = 0.05
+
 /**
  * @param {{ SENTRY_DSN?: string }} env
  * @returns {boolean}
@@ -24,7 +26,36 @@ function isFxMonitoringEnabled(env) {
 }
 
 /**
- * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
+ * @param {{ SENTRY_TRACES_RATE?: string }} env
+ * @returns {number}
+ */
+function resolveTracesSampleRate(env) {
+  const raw = env.SENTRY_TRACES_RATE
+  if (raw === undefined || raw === null || raw === '') {
+    return DEFAULT_TRACES_SAMPLE_RATE
+  }
+  const parsed = Number(raw)
+  // Clamp to a valid sample rate; a garbage or out-of-range knob (e.g. "5")
+  // falls back to the default rather than sampling every request.
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    return DEFAULT_TRACES_SAMPLE_RATE
+  }
+  return parsed
+}
+
+// Only attach sentry-trace/baggage headers on outbound calls to resplit-owned
+// hosts. Without this, tracing propagates the headers to every fetch — including
+// the Azure OCR endpoint — leaking trace ids to a third party. Inbound trace
+// continuation (iOS/web → worker) is unaffected; this governs OUTBOUND only.
+const TRACE_PROPAGATION_TARGETS = [
+  // Anchored on `//` (URL host start) so `resplit.app.evil.com` does NOT match
+  // and a bare host with no subdomain still does.
+  /\/\/([a-z0-9-]+\.)*resplit\.app(\/|:|$)/,
+  /\/\/([a-z0-9-]+\.)*resplit-currency-api\.pages\.dev(\/|:|$)/,
+]
+
+/**
+ * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string, SENTRY_TRACES_RATE?: string }} env
  * @returns {import('@sentry/cloudflare').CloudflareOptions | undefined}
  */
 export function getSentryWorkerOptions(env) {
@@ -38,7 +69,8 @@ export function getSentryWorkerOptions(env) {
     enabled: true,
     environment: runtime.environment,
     release: runtime.release || undefined,
-    tracesSampleRate: 0,
+    tracesSampleRate: resolveTracesSampleRate(env),
+    tracePropagationTargets: TRACE_PROPAGATION_TARGETS,
     sendDefaultPii: false,
     initialScope: {
       tags: {

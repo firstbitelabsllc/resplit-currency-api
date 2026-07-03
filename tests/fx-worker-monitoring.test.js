@@ -84,7 +84,11 @@ test('getSentryWorkerOptions returns dedicated worker config when DSN is present
     enabled: true,
     environment: 'staging',
     release: 'worker-unit-test',
-    tracesSampleRate: 0,
+    tracesSampleRate: 0.05,
+    tracePropagationTargets: [
+      /\/\/([a-z0-9-]+\.)*resplit\.app(\/|:|$)/,
+      /\/\/([a-z0-9-]+\.)*resplit-currency-api\.pages\.dev(\/|:|$)/,
+    ],
     sendDefaultPii: false,
     initialScope: {
       tags: {
@@ -93,6 +97,74 @@ test('getSentryWorkerOptions returns dedicated worker config when DSN is present
       },
     },
   })
+})
+
+test('getSentryWorkerOptions defaults tracesSampleRate to 0.05 when SENTRY_TRACES_RATE is unset', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+
+  assert.equal(options.tracesSampleRate, 0.05)
+})
+
+test('getSentryWorkerOptions honors the SENTRY_TRACES_RATE env override', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    SENTRY_TRACES_RATE: '0.5',
+  })
+
+  assert.equal(options.tracesSampleRate, 0.5)
+})
+
+test('getSentryWorkerOptions falls back to the default when SENTRY_TRACES_RATE is not a finite number', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    SENTRY_TRACES_RATE: 'not-a-number',
+  })
+
+  assert.equal(options.tracesSampleRate, 0.05)
+})
+
+test('getSentryWorkerOptions clamps an out-of-range SENTRY_TRACES_RATE to the default', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const high = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    SENTRY_TRACES_RATE: '5',
+  })
+  const negative = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    SENTRY_TRACES_RATE: '-1',
+  })
+
+  assert.equal(high.tracesSampleRate, 0.05)
+  assert.equal(negative.tracesSampleRate, 0.05)
+})
+
+test('getSentryWorkerOptions scopes tracePropagationTargets to resplit hosts only (no third-party leak)', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+
+  const targets = options.tracePropagationTargets
+  assert.ok(Array.isArray(targets) && targets.length > 0, 'must define tracePropagationTargets')
+  const matches = (url) => targets.some((re) => re.test(url))
+
+  // Propagate to resplit-owned hosts...
+  assert.ok(matches('https://fx.resplit.app/quote'), 'fx.resplit.app should propagate')
+  assert.ok(matches('https://resplit-currency-api.pages.dev/latest/usd.json'), 'asset host should propagate')
+  // ...but NOT to third parties.
+  assert.ok(!matches('https://superfit.cognitiveservices.azure.com/formrecognizer'), 'Azure OCR must NOT propagate')
+  assert.ok(!matches('https://example.ingest.sentry.io/1'), 'Sentry ingest must NOT propagate')
+  assert.ok(!matches('https://resplit.app.evil.com/'), 'look-alike host must NOT propagate')
 })
 
 test('startFxCanaryCheckIn starts the dedicated worker canary monitor when DSN is present', async () => {
