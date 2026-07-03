@@ -41,6 +41,18 @@ const handler = {
   async fetch(request, env, _ctx) {
     return handleRequest(request, env)
   },
+  /**
+   * Cron entrypoint. Cloudflare invokes this on the wrangler `triggers.crons`
+   * schedule ("0 13 * * *", matched to the Sentry monitor in monitoring.mjs).
+   * This is the scheduler the /cron/fx-canary route always expected but never
+   * had; the route stays for manual/authorized runs.
+   * @param {{ cron?: string, scheduledTime?: number }} event
+   * @param {Record<string, string | undefined>} env
+   * @param {ExecutionContext} ctx
+   */
+  async scheduled(event, env, ctx) {
+    return handleScheduled(event, env, ctx)
+  },
 }
 
 export default Sentry.withSentry(getSentryWorkerOptions, handler)
@@ -324,20 +336,18 @@ async function handleCoverage(request, env) {
   }
 }
 
-async function handleFxCanary(request, env) {
-  const requestId = resolveRequestId(request)
-
-  if (!isAuthorizedCronRequest(request, env)) {
-    console.warn('[FX_CANARY] status=401 unauthorized')
-    return errorResponse(
-      'UNAUTHORIZED',
-      'Missing or invalid cron authorization',
-      401,
-      requestId,
-      { 'Cache-Control': 'no-store' }
-    )
-  }
-
+/**
+ * Shared canary run + Sentry cron check-in state machine used by BOTH the
+ * authorized HTTP route and the scheduled() cron trigger. Opens the check-in,
+ * runs the multi-anchor coverage canary, logs the outcome, and escalates a
+ * Sentry incident on a coverage failure. Unexpected errors are captured and
+ * rethrown so each caller can shape its own outcome (HTTP 500 vs swallow).
+ * @param {Record<string, string | undefined>} env
+ * @param {{ requestId?: string, trigger?: 'http' | 'scheduled', cron?: string }} [context]
+ * @returns {Promise<Awaited<ReturnType<typeof runFxCanary>>>}
+ */
+async function runFxCanaryWithCheckIn(env, context = {}) {
+  const { requestId, trigger = 'http', cron } = context
   const startedAt = Date.now()
   const checkInId = startFxCanaryCheckIn(env)
   let checkInStatus = 'error'
@@ -353,6 +363,8 @@ async function handleFxCanary(request, env) {
       signal: report.ok ? 'canary_ok' : 'canary_error',
       source: 'fx-canary-cron',
       route: 'cron_fx_canary',
+      trigger,
+      cron,
       requestId,
       mismatchCount: report.mismatchCount,
       failureCount: report.failureCount,
@@ -367,13 +379,7 @@ async function handleFxCanary(request, env) {
       await captureFxCanaryIncident(report, requestId, env)
     }
 
-    return jsonResponse(report, {
-      status,
-      requestId,
-      headers: {
-        'Cache-Control': 'no-store',
-      },
-    })
+    return report
   } catch (error) {
     console.error('[FX_CANARY] status=500 FX canary failed', error)
     await captureFxRouteFailure(error, {
@@ -386,10 +392,58 @@ async function handleFxCanary(request, env) {
       requestedDays: 30,
       requestId,
     }, env)
+    throw error
+  } finally {
+    await finishFxCanaryCheckIn(checkInId, /** @type {'ok' | 'error'} */ (checkInStatus), startedAt, env)
+  }
+}
+
+/**
+ * Scheduled (cron) canary entrypoint. Runs without HTTP authorization because
+ * cron invocations are internal + trusted (the /cron/fx-canary route keeps its
+ * Bearer check for manual runs). A failure is already logged + captured inside
+ * runFxCanaryWithCheckIn and recorded on the Sentry check-in, so it is swallowed
+ * here to let the scheduled invocation resolve cleanly.
+ * @param {{ cron?: string, scheduledTime?: number } | undefined} event
+ * @param {Record<string, string | undefined>} env
+ * @param {ExecutionContext} [_ctx]
+ * @returns {Promise<void>}
+ */
+export async function handleScheduled(event, env, _ctx) {
+  try {
+    await runFxCanaryWithCheckIn(env, { trigger: 'scheduled', cron: event?.cron })
+  } catch {
+    // Already logged + captured in runFxCanaryWithCheckIn; swallow so the
+    // scheduled event resolves (the Sentry check-in already recorded 'error').
+  }
+}
+
+async function handleFxCanary(request, env) {
+  const requestId = resolveRequestId(request)
+
+  if (!isAuthorizedCronRequest(request, env)) {
+    console.warn('[FX_CANARY] status=401 unauthorized')
+    return errorResponse(
+      'UNAUTHORIZED',
+      'Missing or invalid cron authorization',
+      401,
+      requestId,
+      { 'Cache-Control': 'no-store' }
+    )
+  }
+
+  try {
+    const report = await runFxCanaryWithCheckIn(env, { requestId, trigger: 'http' })
+    return jsonResponse(report, {
+      status: report.ok ? 200 : 500,
+      requestId,
+      headers: {
+        'Cache-Control': 'no-store',
+      },
+    })
+  } catch {
     return errorResponse('FX_CANARY_FAILED', 'FX canary failed', 500, requestId, {
       'Cache-Control': 'no-store',
     })
-  } finally {
-    await finishFxCanaryCheckIn(checkInId, /** @type {'ok' | 'error'} */ (checkInStatus), startedAt, env)
   }
 }

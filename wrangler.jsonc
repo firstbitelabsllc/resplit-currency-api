@@ -5,6 +5,14 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "upload_source_maps": true,
+  // Daily FX canary dead-man trigger. The crontab MUST stay equal to the Sentry
+  // monitor schedule in worker/src/monitoring.mjs ("0 13 * * *", UTC) — a drift
+  // makes Sentry fire spurious missed-check-in incidents. Cloudflare invokes the
+  // scheduled() handler in worker/src/index.mjs on this schedule; the
+  // /cron/fx-canary HTTP route stays for manual/authorized runs.
+  "triggers": {
+    "crons": ["0 13 * * *"]
+  },
   "observability": {
     "enabled": true,
     "logs": {
@@ -46,6 +54,9 @@
   "env": {
     "production": {
       "name": "resplit-fx",
+      "triggers": {
+        "crons": ["0 13 * * *"]
+      },
       "observability": {
         "enabled": true,
         "logs": {
