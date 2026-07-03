@@ -204,6 +204,10 @@ jobs:
         if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
           EXPECTED_DATE: ${{ env.date_today }}
+          # This step runs seconds after THIS run pushed gh-pages: a one-day-stale
+          # github.io fallback here is CDN propagation, not a broken pipeline
+          # (>1-day stale still hard-fails). Kills the scheduler-delay dead zones.
+          POST_PUBLISH_SMOKE: '1'
         run: node scripts/smoke-check-deploy.js
 
       - name: Finish Sentry publish check-in
