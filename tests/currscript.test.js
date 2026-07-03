@@ -13,6 +13,7 @@ const {
   computeCrossRates,
   dateDaysBeforeUTC,
   fetchLatestRates,
+  fetchReconciledRates,
   listSnapshotArchiveDates,
   loadAllSnapshotsFromArchive,
   loadArchiveRateFallback,
@@ -136,6 +137,90 @@ test('fetchLatestRates still throws upstream failures when archive fallback is u
     }),
     /network unreachable/
   )
+})
+
+test('fetchReconciledRates keeps er-api authoritative and emits cross-check agreement', async () => {
+  const { rates, reconciliation } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    fetchPrimary: async () => ({
+      source: 'er-api',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.08, thb: 39.5 } // thb is er-api-only (tail)
+    }),
+    fetchSecondary: async () => ({
+      source: 'frankfurter',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.0805 }
+    }),
+    capture: async () => {},
+    warn: () => {}
+  })
+
+  // Published values are er-api's, tail preserved and unblended.
+  assert.deepEqual(rates, { eur: 1, usd: 1.08, thb: 39.5 })
+  assert.equal(reconciliation.publishedSource, 'er-api')
+  assert.equal(reconciliation.reducedCoverage, false)
+  assert.equal(reconciliation.agreement.intersectionCount, 2) // eur + usd; thb excluded
+})
+
+test('fetchReconciledRates degrades to Frankfurter majors when er-api is down', async () => {
+  const captured = []
+  const { rates, reconciliation } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    env: {}, // archive fallback disabled
+    fetchPrimary: async () => {
+      throw new Error('getaddrinfo EAI_AGAIN open.er-api.com')
+    },
+    fetchSecondary: async () => ({
+      source: 'frankfurter',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.083, gbp: 0.85 }
+    }),
+    loadArchiveSnapshot: () => null,
+    capture: async (payload) => captured.push(payload.signal),
+    warn: () => {}
+  })
+
+  assert.equal(reconciliation.publishedSource, 'frankfurter')
+  assert.equal(reconciliation.reducedCoverage, true)
+  assert.equal(rates.usd, 1.083)
+  assert.ok(captured.includes('upstream_fetch_failure'))
+  assert.ok(captured.includes('fx_reduced_coverage_publish'))
+})
+
+test('fetchReconciledRates returns null rates when both sources are down', async () => {
+  const { rates } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    env: {},
+    fetchPrimary: async () => {
+      throw new Error('primary down')
+    },
+    fetchSecondary: async () => {
+      throw new Error('secondary down')
+    },
+    loadArchiveSnapshot: () => null,
+    capture: async () => {},
+    warn: () => {}
+  })
+
+  assert.equal(rates, null)
+})
+
+test('fetchReconciledRates escalates a >5% cross-source disagreement signal', async () => {
+  const captured = []
+  const { reconciliation } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    fetchPrimary: async () => ({ source: 'er-api', date: '2026-07-03', rates: { eur: 1, usd: 1.08 } }),
+    fetchSecondary: async () => ({ source: 'frankfurter', date: '2026-07-03', rates: { eur: 1, usd: 1.30 } }),
+    capture: async (payload) => captured.push(payload.signal),
+    warn: () => {}
+  })
+
+  // er-api still published (authoritative); the disagreement is surfaced, and the
+  // validate-package gate is what actually refuses the publish.
+  assert.equal(reconciliation.publishedSource, 'er-api')
+  assert.ok(captured.includes('fx_cross_source_disagreement'))
+  assert.ok(reconciliation.agreement.maxRelDiff > 0.05)
 })
 
 test('computeCrossRates produces positive finite cross rates', () => {
