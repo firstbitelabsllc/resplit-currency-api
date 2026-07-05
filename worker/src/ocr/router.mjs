@@ -22,6 +22,7 @@ import {
   getLayoutKeyValueAnalyzeResult,
   OCR_PROVIDER,
 } from './azure.mjs'
+import { scanReceiptWithAnthropic, LLM_PROVIDER } from './anthropic.mjs'
 import { verifyAssertion, AttestError } from './attest.mjs'
 import { verifyAttestation } from './attestation.mjs'
 
@@ -34,6 +35,8 @@ const SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
+const DEFAULT_LLM_SCAN_MODEL = 'claude-sonnet-5'
+const DEFAULT_LLM_SCAN_DAILY_CAP = 50
 const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 
 const sha256Hex = async (bytes) => {
@@ -70,6 +73,9 @@ export async function handleOcr(request, env) {
     }
     if (method === 'POST' && url.pathname === '/ocr/scan') {
       return await handleScan(request, env, requestId)
+    }
+    if (method === 'POST' && url.pathname === '/ocr/dual-scan') {
+      return await handleDualScan(request, env, requestId)
     }
     return errorResponse('NOT_FOUND', 'OCR route not found', 404, requestId, RESPONSE_HEADERS)
   } catch (error) {
@@ -191,8 +197,117 @@ async function handleScan(request, env, requestId) {
   })
 }
 
+async function handleDualScan(request, env, requestId) {
+  const start = Date.now()
+  const scanId = crypto.randomUUID()
+  const clientVersion = request.headers.get('x-resplit-client-version') || 'unknown'
+  const softFail = request.headers.get('x-resplit-attest-soft-fail') === 'true'
+  const keyId = request.headers.get('x-resplit-attest-key-id') || ''
+  const assertionB64 = request.headers.get('x-resplit-attest-assertion') || ''
+  const contentType = request.headers.get('content-type') || 'image/jpeg'
+
+  if (scanKillSwitchEnabled(env)) {
+    return scanDisabled(env, { scanId, requestId, clientVersion })
+  }
+
+  const imageBytes = new Uint8Array(await request.arrayBuffer())
+  if (imageBytes.length === 0) {
+    return errorResponse('BAD_REQUEST', 'empty image body', 400, requestId, RESPONSE_HEADERS)
+  }
+
+  const azureUnits = 1
+  let attest = 'reject'
+  let deviceKey = keyId
+  if (softFail || !keyId || !assertionB64) {
+    attest = 'soft_fail'
+    deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
+    const ok = await underCap(env, deviceKey, SOFT_FAIL_DAILY_CAP, azureUnits)
+    if (!ok) return rateLimitedDualScan(env, { scanId, attest, requestId, clientVersion })
+  } else {
+    await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
+    attest = 'pass'
+    const ok = await underCap(env, deviceKey, PER_DEVICE_DAILY_CAP, azureUnits)
+    if (!ok) return rateLimitedDualScan(env, { scanId, attest, requestId, clientVersion })
+  }
+
+  const imageHash = await sha256Hex(imageBytes)
+  const llmGate = readLlmGate(env, keyId)
+  const model = llmModel(env)
+  const cacheKey = `cache:dualScan:${imageHash}:${llmGate.cacheKey}:${model}`
+  const cached = await env.ATTEST_KV.get(cacheKey)
+  if (cached) {
+    const cachedBody = JSON.parse(cached)
+    logDualScanMonitoring(env, {
+      body: cachedBody, requestId, clientVersion, attest, cache: 'hit',
+      azureLatencyMs: null, totalMs: Date.now() - start,
+    })
+    return new Response(cached, { status: 200, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
+  }
+
+  const azurePromise = runAzureRawLeg({ imageBytes, contentType, env })
+  const llmPromise = runLlmLeg({ imageBytes, contentType, env, gate: llmGate, model })
+
+  const [azureSettled, llmSettled] = await Promise.allSettled([azurePromise, llmPromise])
+  const azure = settledValue(azureSettled, () => ({
+    status: 'provider_error',
+    raw: null,
+    httpStatus: 502,
+    latencyMs: null,
+  }))
+  const llm = settledValue(llmSettled, () => ({
+    status: 'provider_error',
+    provider: LLM_PROVIDER,
+    model,
+    scanned: null,
+    latencyMs: null,
+    httpStatus: 502,
+  }))
+  const divergence = computeDivergence(azure.raw, llm.scanned, azure.status, llm.status)
+  const status = dualScanStatus(azure.status, llm.status)
+  const body = dualScanEnvelope({ scanId, status, azure, llm, divergence })
+  const bodyJson = JSON.stringify(body)
+  if (azure.status === 'succeeded' || llm.status === 'succeeded') {
+    await env.ATTEST_KV.put(cacheKey, bodyJson, { expirationTtl: CACHE_TTL_SECONDS })
+  }
+
+  const totalMs = Date.now() - start
+  logDualScanMonitoring(env, {
+    body, requestId, clientVersion, attest, cache: 'miss',
+    azureLatencyMs: azure.latencyMs, totalMs,
+  })
+
+  if (azure.status === 'provider_error') {
+    await captureOcrProviderFailure({
+      scanId, requestId, azureStatus: azure.httpStatus, attest, clientVersion, kvExtras: 'off', totalMs,
+    }, env)
+  }
+
+  return new Response(bodyJson, {
+    status: dualScanHttpStatus(status),
+    headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) },
+  })
+}
+
 function envelope({ status, raw, scanId, kvExtras }) {
   return { v: ENVELOPE_VERSION, mode: 'raw', provider: OCR_PROVIDER, scanId, status, kv_extras: kvExtras ?? 'off', raw: raw ?? null }
+}
+
+function dualScanEnvelope({ scanId, status, azure, llm, divergence }) {
+  return {
+    v: ENVELOPE_VERSION,
+    mode: 'dual',
+    scanId,
+    status,
+    azure: { status: azure.status, raw: azure.raw ?? null },
+    llm: {
+      status: llm.status,
+      provider: LLM_PROVIDER,
+      model: llm.model,
+      scanned: llm.scanned ?? null,
+      latencyMs: llm.latencyMs,
+    },
+    divergence,
+  }
 }
 
 function keyValueExtrasEnabled(env) {
@@ -282,12 +397,237 @@ function azureStatus(httpStatus) {
   return 'provider_error'
 }
 
+async function runAzureRawLeg({ imageBytes, contentType, env }) {
+  const start = Date.now()
+  const submit = await submitReceiptAnalyze(imageBytes, contentType, env)
+  if (!submit.ok || !submit.operationId) {
+    return {
+      status: azureStatus(submit.httpStatus),
+      raw: null,
+      httpStatus: submit.httpStatus,
+      latencyMs: Date.now() - start,
+    }
+  }
+
+  let raw = null
+  let httpStatus = submit.httpStatus
+  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    const poll = await getReceiptAnalyzeResult(submit.operationId, env)
+    httpStatus = poll.httpStatus
+    if (!poll.ok) break
+    if (poll.status === 'succeeded') { raw = poll.body; break }
+    if (poll.status === 'failed') break
+    await sleep(POLL_INTERVAL_MS)
+  }
+
+  return {
+    status: raw ? 'succeeded' : azureStatus(httpStatus),
+    raw,
+    httpStatus,
+    latencyMs: Date.now() - start,
+  }
+}
+
+async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
+  if (gate.status !== 'allowed') {
+    return {
+      status: gate.status,
+      provider: LLM_PROVIDER,
+      model,
+      scanned: null,
+      latencyMs: 0,
+      httpStatus: gate.httpStatus,
+    }
+  }
+
+  const underDailyCap = await underLlmDailyCap(env)
+  if (!underDailyCap) {
+    return {
+      status: 'rate_limited',
+      provider: LLM_PROVIDER,
+      model,
+      scanned: null,
+      latencyMs: 0,
+      httpStatus: 429,
+    }
+  }
+
+  const result = await scanReceiptWithAnthropic(imageBytes, contentType, env)
+  return {
+    status: result.ok ? 'succeeded' : azureStatus(result.httpStatus),
+    provider: LLM_PROVIDER,
+    model: result.model || model,
+    scanned: result.scanned ?? null,
+    latencyMs: result.latencyMs,
+    httpStatus: result.httpStatus,
+  }
+}
+
+function readLlmGate(env, keyId) {
+  if (!env.ANTHROPIC_API_KEY) {
+    return { status: 'provider_unavailable', httpStatus: 503, cacheKey: 'provider_unavailable' }
+  }
+
+  const allowed = new Set(String(env.LLM_SCAN_ALLOWED_KEY_IDS || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean))
+  if (!keyId || !allowed.has(keyId)) {
+    return { status: 'not_allowed', httpStatus: 403, cacheKey: `not_allowed:${keyId || 'missing'}` }
+  }
+
+  return { status: 'allowed', httpStatus: 200, cacheKey: `allowed:${keyId}` }
+}
+
+function llmModel(env) {
+  return (env.LLM_SCAN_MODEL || DEFAULT_LLM_SCAN_MODEL).trim() || DEFAULT_LLM_SCAN_MODEL
+}
+
+async function underLlmDailyCap(env) {
+  const cap = parseInt(String(env.LLM_SCAN_DAILY_CAP || DEFAULT_LLM_SCAN_DAILY_CAP), 10)
+  const day = new Date().toISOString().slice(0, 10)
+  const key = `llmcount:${day}`
+  const current = parseInt((await env.ATTEST_KV.get(key)) || '0', 10)
+  if (current + 1 > cap) return false
+  await env.ATTEST_KV.put(key, String(current + 1), { expirationTtl: 172800 })
+  return true
+}
+
+function settledValue(result, fallback) {
+  if (result.status === 'fulfilled') return result.value
+  return fallback(result.reason)
+}
+
+function dualScanStatus(azureStatus_, llmStatus) {
+  if (azureStatus_ === 'succeeded' && llmStatus === 'succeeded') return 'succeeded'
+  if (azureStatus_ === 'succeeded' || llmStatus === 'succeeded') return 'partial'
+  if (azureStatus_ === 'rate_limited' || llmStatus === 'rate_limited') return 'rate_limited'
+  return 'provider_error'
+}
+
+function dualScanHttpStatus(status) {
+  if (status === 'rate_limited') return 429
+  if (status === 'provider_error') return 502
+  return 200
+}
+
+function computeDivergence(azureRaw, llmScanned, azureStatus_, llmStatus) {
+  if (azureStatus_ !== 'succeeded' || llmStatus !== 'succeeded') return null
+
+  const azureTotal = azureRawTotal(azureRaw)
+  const llmTotal = finiteNumberOrNull(llmScanned?.total)
+  const azureKinds = azureExtraKinds(azureRaw)
+  const llmKinds = new Set((Array.isArray(llmScanned?.extras) ? llmScanned.extras : [])
+    .map((extra) => extra?.kind)
+    .filter((kind) => typeof kind === 'string' && kind.length > 0))
+  const extrasKindsDelta = Array.from(llmKinds)
+    .filter((kind) => !azureKinds.has(kind))
+    .sort()
+
+  return {
+    totalsAgree: azureTotal != null && llmTotal != null ? azureTotal === llmTotal : false,
+    azureTotal,
+    llmTotal,
+    extrasKindsDelta,
+    llmRecoveredAmount: azureTotal != null && llmTotal != null ? Number((llmTotal - azureTotal).toFixed(2)) : null,
+  }
+}
+
+function firstAzureDocument(raw) {
+  const documents = raw?.analyzeResult?.documents
+  return Array.isArray(documents) ? documents[0] : null
+}
+
+function azureField(raw, name) {
+  return firstAzureDocument(raw)?.fields?.[name] ?? null
+}
+
+function azureRawTotal(raw) {
+  return numberFromAzureField(azureField(raw, 'Total'))
+}
+
+function numberFromAzureField(field) {
+  if (!field || typeof field !== 'object') return finiteNumberOrNull(field)
+  return finiteNumberOrNull(
+    field.valueNumber ??
+    field.valueCurrency?.amount ??
+    field.valueObject?.amount ??
+    field.amount ??
+    field.content
+  )
+}
+
+function finiteNumberOrNull(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value !== 'string') return null
+  const normalized = value.replace(/[^0-9,.-]/g, '')
+  if (!normalized) return null
+  const decimal = normalized.includes(',') && !normalized.includes('.')
+    ? normalized.replace(',', '.')
+    : normalized.replace(/,/g, '')
+  const parsed = Number(decimal)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function azureExtraKinds(raw) {
+  const fields = firstAzureDocument(raw)?.fields || {}
+  const kinds = new Set()
+  for (const [name, field] of Object.entries(fields)) {
+    if (numberFromAzureField(field) == null) continue
+    const lower = name.toLowerCase()
+    if (lower.includes('tax')) kinds.add('tax')
+    if (lower.includes('tip') || lower.includes('gratuity')) kinds.add('tip')
+  }
+  return kinds
+}
+
+function logDualScanMonitoring(env, { body, requestId, clientVersion, attest, cache, azureLatencyMs, totalMs }) {
+  const divergence = body.divergence || {}
+  logOcrMonitoringEvent(body.status === 'provider_error' ? 'warn' : 'info', {
+    signal: 'dual_scan',
+    phase: 'scan',
+    mode: 'dual',
+    status: body.status,
+    azure_status: body.azure?.status,
+    llm_status: body.llm?.status,
+    llm_provider: body.llm?.provider,
+    llm_model: body.llm?.model,
+    attest,
+    cache,
+    azure_ms: azureLatencyMs,
+    llm_ms: body.llm?.latencyMs ?? null,
+    total_ms: totalMs,
+    totals_agree: divergence.totalsAgree ?? null,
+    azure_total: divergence.azureTotal ?? null,
+    llm_total: divergence.llmTotal ?? null,
+    extras_kinds_delta: divergence.extrasKindsDelta ?? null,
+    llm_recovered_amount: divergence.llmRecoveredAmount ?? null,
+    scanId: body.scanId,
+    requestId,
+    client_version: clientVersion,
+  }, env)
+}
+
 async function rateLimited(env, { scanId, attest, requestId, clientVersion }) {
   logOcrMonitoringEvent('warn', {
     signal: 'scan', phase: 'scan', status: 'rate_limited', attest, scanId, requestId, client_version: clientVersion,
   }, env)
   const body = JSON.stringify(envelope({ status: 'rate_limited', raw: null, scanId }))
   return new Response(body, { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
+}
+
+async function rateLimitedDualScan(env, { scanId, attest, requestId, clientVersion }) {
+  const body = dualScanEnvelope({
+    scanId,
+    status: 'rate_limited',
+    azure: { status: 'rate_limited', raw: null },
+    llm: { status: 'not_started', provider: LLM_PROVIDER, model: llmModel(env), scanned: null, latencyMs: 0 },
+    divergence: null,
+  })
+  logDualScanMonitoring(env, {
+    body, requestId, clientVersion, attest, cache: 'skip', azureLatencyMs: 0, totalMs: 0,
+  })
+  return new Response(JSON.stringify(body), { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
 }
 
 function scanDisabled(env, { scanId, requestId, clientVersion }) {
