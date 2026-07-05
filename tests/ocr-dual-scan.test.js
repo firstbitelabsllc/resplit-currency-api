@@ -215,3 +215,25 @@ test('POST /ocr/dual-scan divergence reports positive LLM recovered amount for r
   assert.equal(calls.azureSubmit, 1)
   assert.equal(calls.anthropic, 1)
 })
+
+test('POST /ocr/dual-scan soft-fail unlock admits keyless device when LLM_SCAN_ALLOW_SOFT_FAIL=true', async () => {
+  stubProviders()
+  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
+  const res = await handleOcr(dualScanRequest(new Uint8Array([7, 7, 7])), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.status, 'succeeded')
+  assert.equal(body.llm.status, 'succeeded')
+  assert.equal(calls.anthropic, 1)
+})
+
+test('POST /ocr/dual-scan soft-fail stays not_allowed when unlock var is absent', async () => {
+  stubProviders()
+  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key' })
+  const res = await handleOcr(dualScanRequest(new Uint8Array([8, 8, 8])), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.status, 'partial')
+  assert.equal(body.llm.status, 'not_allowed')
+  assert.equal(calls.anthropic, 0)
+})

@@ -231,7 +231,7 @@ async function handleDualScan(request, env, requestId) {
   }
 
   const imageHash = await sha256Hex(imageBytes)
-  const llmGate = readLlmGate(env, keyId)
+  const llmGate = readLlmGate(env, keyId, attest)
   const model = llmModel(env)
   const cacheKey = `cache:dualScan:${imageHash}:${llmGate.cacheKey}:${model}`
   const cached = await env.ATTEST_KV.get(cacheKey)
@@ -463,9 +463,18 @@ async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
   }
 }
 
-function readLlmGate(env, keyId) {
+function readLlmGate(env, keyId, attest) {
   if (!env.ANTHROPIC_API_KEY) {
     return { status: 'provider_unavailable', httpStatus: 503, cacheKey: 'provider_unavailable' }
+  }
+
+  // PRE-LAUNCH DEV UNLOCK: the iOS client ships SoftFailReceiptScannerAttestationProvider
+  // by default (no attested keyId exists yet), so a keyId allowlist alone is unreachable.
+  // LLM_SCAN_ALLOW_SOFT_FAIL='true' admits soft-fail devices, still bounded by the
+  // SOFT_FAIL_DAILY_CAP per-IP counter and the global LLM daily cap. FLIP TO 'false'
+  // AT PUBLIC LAUNCH (launch checklist row) — then only allowlisted attested keys pass.
+  if (env.LLM_SCAN_ALLOW_SOFT_FAIL === 'true' && attest === 'soft_fail') {
+    return { status: 'allowed', httpStatus: 200, cacheKey: 'allowed:soft_fail' }
   }
 
   const allowed = new Set(String(env.LLM_SCAN_ALLOWED_KEY_IDS || '')
