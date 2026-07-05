@@ -33,7 +33,12 @@
     // Discount/credit/fee capture via a 2nd prebuilt-layout keyValuePairs Azure call
     // (router.mjs keyValueExtrasEnabled). 2x cost/scan — APPROVED by Leo 2026-06-22 (low
     // traffic). Revertible: set "false" + redeploy.
-    "AZURE_OCR_KV_EXTRAS": "true"
+    "AZURE_OCR_KV_EXTRAS": "true",
+    // /ocr/dual-scan Anthropic leg. ANTHROPIC_API_KEY is a wrangler secret; empty allowlist
+    // ships the endpoint dark until specific App Attest keyIds are admitted.
+    "LLM_SCAN_MODEL": "claude-sonnet-5",
+    "LLM_SCAN_ALLOWED_KEY_IDS": "",
+    "LLM_SCAN_DAILY_CAP": "50"
   },
   "kv_namespaces": [
     {
@@ -69,7 +74,10 @@
         "SENTRY_TRACES_RATE": "0.05",
         "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com",
         // Discount/credit/fee capture (2x cost/scan) — APPROVED Leo 2026-06-22. Revert: "false".
-        "AZURE_OCR_KV_EXTRAS": "true"
+        "AZURE_OCR_KV_EXTRAS": "true",
+        "LLM_SCAN_MODEL": "claude-sonnet-5",
+        "LLM_SCAN_ALLOWED_KEY_IDS": "",
+        "LLM_SCAN_DAILY_CAP": "50"
       },
       "kv_namespaces": [
         {
