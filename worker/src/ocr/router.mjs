@@ -14,7 +14,7 @@ import { errorResponse, jsonResponse } from '../http.mjs'
 import { requestCorrelationHeaders, resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
 import { CORS_HEADERS, handlePreflight } from '../sideload/cors.mjs'
-import { logOcrMonitoringEvent, captureOcrProviderFailure } from './monitoring.mjs'
+import { logOcrMonitoringEvent, captureOcrProviderFailure, captureOcrLlmFailure } from './monitoring.mjs'
 import {
   submitReceiptAnalyze,
   getReceiptAnalyzeResult,
@@ -261,6 +261,7 @@ async function handleDualScan(request, env, requestId) {
     scanned: null,
     latencyMs: null,
     httpStatus: 502,
+    errorBody: 'llm_leg_threw',
   }))
   const divergence = computeDivergence(azure.raw, llm.scanned, azure.status, llm.status)
   const status = dualScanStatus(azure.status, llm.status)
@@ -286,6 +287,17 @@ async function handleDualScan(request, env, requestId) {
   if (azure.status === 'provider_error') {
     await captureOcrProviderFailure({
       scanId, requestId, azureStatus: azure.httpStatus, attest, clientVersion, kvExtras: 'off', totalMs,
+    }, env)
+  }
+
+  // The paid LLM leg needs its own error observability: a provider_error here covers
+  // an Anthropic API error, a truncated tool_use, a schema violation, or a timeout
+  // (all mapped to provider_error/502 upstream). Without this, the money leg's
+  // failures were invisible in Sentry — only the Azure leg was captured.
+  if (llm.status === 'provider_error') {
+    await captureOcrLlmFailure({
+      scanId, requestId, llmStatus: llm.status, httpStatus: llm.httpStatus,
+      reason: llm.errorBody, model: llm.model, attest, clientVersion, totalMs,
     }, env)
   }
 
@@ -444,6 +456,7 @@ async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
       scanned: null,
       latencyMs: 0,
       httpStatus: gate.httpStatus,
+      errorBody: null,
     }
   }
 
@@ -456,6 +469,7 @@ async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
       scanned: null,
       latencyMs: 0,
       httpStatus: 429,
+      errorBody: null,
     }
   }
 
@@ -467,6 +481,9 @@ async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
     scanned: result.scanned ?? null,
     latencyMs: result.latencyMs,
     httpStatus: result.httpStatus,
+    // Carries 'llm_truncated' / 'llm_schema_violation:…' / provider error text so the
+    // Sentry capture below can tag WHY the paid leg failed, not just that it did.
+    errorBody: result.errorBody ?? null,
   }
 }
 
@@ -484,6 +501,16 @@ function readLlmGate(env, keyId, attest) {
     return { status: 'allowed', httpStatus: 200, cacheKey: 'allowed:soft_fail' }
   }
 
+  // AUTH: the allowlist branch admits a device ONLY when its App Attest assertion
+  // was actually verified (attest === 'pass'). The x-resplit-attest-key-id header
+  // on a soft-fail / unverified request is UNAUTHENTICATED — trusting it here would
+  // let anyone spoof an allowlisted keyId and unlock the paid LLM leg. A soft_fail
+  // device may pass only through the explicit dev-unlock branch above; every other
+  // unverified request is not_allowed regardless of the header it carries.
+  if (attest !== 'pass') {
+    return { status: 'not_allowed', httpStatus: 403, cacheKey: `not_allowed:${keyId || 'missing'}` }
+  }
+
   const allowed = new Set(String(env.LLM_SCAN_ALLOWED_KEY_IDS || '')
     .split(',')
     .map((id) => id.trim())
@@ -499,11 +526,28 @@ function llmModel(env) {
   return (env.LLM_SCAN_MODEL || DEFAULT_LLM_SCAN_MODEL).trim() || DEFAULT_LLM_SCAN_MODEL
 }
 
+// A daily cap read from env config: parse to a non-negative integer, else fall
+// back to the documented default. A non-numeric/empty cap (e.g. '' or 'fifty')
+// must NEVER become NaN — `current + 1 > NaN` is always false, which silently
+// lifts the cap to infinity and lets the paid leg run unbounded.
+function resolveDailyCap(rawValue, fallback) {
+  const parsed = parseInt(String(rawValue ?? ''), 10)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+// A KV counter value: parse to a non-negative integer, else 0. A corrupt/absent
+// counter must never become NaN (which would fail the cap check open); 0 is the
+// safe, self-healing floor.
+function readCounter(rawValue) {
+  const parsed = parseInt(String(rawValue ?? '0'), 10)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0
+}
+
 async function underLlmDailyCap(env) {
-  const cap = parseInt(String(env.LLM_SCAN_DAILY_CAP || DEFAULT_LLM_SCAN_DAILY_CAP), 10)
+  const cap = resolveDailyCap(env.LLM_SCAN_DAILY_CAP, DEFAULT_LLM_SCAN_DAILY_CAP)
   const day = new Date().toISOString().slice(0, 10)
   const key = `llmcount:${day}`
-  const current = parseInt((await env.ATTEST_KV.get(key)) || '0', 10)
+  const current = readCounter(await env.ATTEST_KV.get(key))
   if (current + 1 > cap) return false
   await env.ATTEST_KV.put(key, String(current + 1), { expirationTtl: 172800 })
   return true
@@ -527,7 +571,7 @@ function dualScanHttpStatus(status) {
   return 200
 }
 
-function computeDivergence(azureRaw, llmScanned, azureStatus_, llmStatus) {
+export function computeDivergence(azureRaw, llmScanned, azureStatus_, llmStatus) {
   if (azureStatus_ !== 'succeeded' || llmStatus !== 'succeeded') return null
 
   const azureTotal = azureRawTotal(azureRaw)
@@ -540,12 +584,16 @@ function computeDivergence(azureRaw, llmScanned, azureStatus_, llmStatus) {
     .filter((kind) => !azureKinds.has(kind))
     .sort()
 
+  // Both legs succeeded but a total can still be missing (no Azure Total field, or
+  // llm total null). Uncomparable is NOT disagreement: totalsAgree stays null rather
+  // than falsely asserting the totals differ, and llmRecoveredAmount stays null too.
+  const comparable = azureTotal != null && llmTotal != null
   return {
-    totalsAgree: azureTotal != null && llmTotal != null ? azureTotal === llmTotal : false,
+    totalsAgree: comparable ? azureTotal === llmTotal : null,
     azureTotal,
     llmTotal,
     extrasKindsDelta,
-    llmRecoveredAmount: azureTotal != null && llmTotal != null ? Number((llmTotal - azureTotal).toFixed(2)) : null,
+    llmRecoveredAmount: comparable ? Number((llmTotal - azureTotal).toFixed(2)) : null,
   }
 }
 
@@ -573,16 +621,48 @@ function numberFromAzureField(field) {
   )
 }
 
-function finiteNumberOrNull(value) {
+export function finiteNumberOrNull(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value !== 'string') return null
-  const normalized = value.replace(/[^0-9,.-]/g, '')
-  if (!normalized) return null
-  const decimal = normalized.includes(',') && !normalized.includes('.')
-    ? normalized.replace(',', '.')
-    : normalized.replace(/,/g, '')
-  const parsed = Number(decimal)
-  return Number.isFinite(parsed) ? parsed : null
+  const cleaned = value.replace(/[^0-9,.-]/g, '')
+  if (!cleaned) return null
+  const negative = cleaned.trimStart().startsWith('-')
+  const body = cleaned.replace(/-/g, '')
+  const normalized = normalizeSeparators(body)
+  if (normalized == null) return null
+  const parsed = Number(normalized)
+  if (!Number.isFinite(parsed)) return null
+  return negative ? -parsed : parsed
+}
+
+// Resolve thousands vs decimal separators the way the lab's EXTRACT_PROMPT does:
+// the LAST separator is the decimal, the other is thousands; a lone comma before a
+// 3-digit group is a thousands separator ('1,234' -> 1234, '4,500' -> 4500), while
+// 1-2 trailing digits is a decimal ('12,50' -> 12.50). Fixes '$1,234' -> 1.234.
+function normalizeSeparators(body) {
+  const hasComma = body.includes(',')
+  const hasDot = body.includes('.')
+
+  if (hasComma && hasDot) {
+    // Both present: the last-occurring separator is the decimal point.
+    const decimalSep = body.lastIndexOf(',') > body.lastIndexOf('.') ? ',' : '.'
+    const thousandsSep = decimalSep === ',' ? '.' : ','
+    return body.split(thousandsSep).join('').replace(decimalSep, '.')
+  }
+
+  if (hasComma) {
+    const parts = body.split(',')
+    // Multiple commas (1,234,567) are all thousands separators.
+    if (parts.length > 2) return parts.join('')
+    const last = parts[parts.length - 1]
+    // A single comma before exactly 3 digits is a thousands separator; 1-2 trailing
+    // digits (or an empty group) reads as a decimal per the lab's ambiguity rule.
+    if (last.length === 3) return parts.join('')
+    return parts.join('.')
+  }
+
+  // Dot-only or no separators: leave as-is; Number() handles the decimal dot.
+  return body
 }
 
 function azureExtraKinds(raw) {
@@ -663,7 +743,7 @@ function scanDisabled(env, { scanId, requestId, clientVersion }) {
 async function underCap(env, deviceKey, cap, units = 1) {
   const day = new Date().toISOString().slice(0, 10)
   const key = `count:${deviceKey}:${day}`
-  const current = parseInt((await env.ATTEST_KV.get(key)) || '0', 10)
+  const current = readCounter(await env.ATTEST_KV.get(key))
   if (current + units > cap) return false
   await env.ATTEST_KV.put(key, String(current + units), { expirationTtl: 172800 })
   return true

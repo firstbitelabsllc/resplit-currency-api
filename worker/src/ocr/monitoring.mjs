@@ -137,3 +137,69 @@ export async function captureOcrProviderFailure(context, env) {
 
   return sentrySdk.flush(2_000)
 }
+
+/**
+ * Report a failed /ocr/dual-scan LLM (Anthropic) leg to Sentry — the paid leg's
+ * error observability. Fires when the LLM leg ends in `provider_error`, which
+ * covers an Anthropic API error, a truncated tool_use (`llm_truncated`), a
+ * server-side schema violation (`llm_schema_violation:*`), or a timeout. The
+ * `reason` carries that discriminator so the paid leg's failure modes are
+ * trendable/alertable, not silent. PII-safe: no image bytes, no API key.
+ *
+ * @param {{
+ *   scanId: string
+ *   requestId?: string
+ *   llmStatus?: string
+ *   httpStatus?: number | null
+ *   reason?: string | null
+ *   model?: string
+ *   attest?: string
+ *   clientVersion?: string
+ *   totalMs?: number
+ * }} context
+ * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
+ * @returns {Promise<boolean>} true when the failure was reported to Sentry
+ */
+export async function captureOcrLlmFailure(context, env) {
+  if (!isOcrSentryEnabled(env)) {
+    return false
+  }
+
+  sentrySdk.withScope(scope => {
+    scope.setLevel('error')
+    scope.setTag('surface', SURFACE)
+    scope.setTag('runtime', 'worker')
+    scope.setTag('monitoring.domain', DOMAIN)
+    scope.setTag('monitoring.signal', 'ocr_llm_error')
+    if (context.requestId) {
+      scope.setTag('request.id', context.requestId)
+    }
+    if (context.httpStatus != null) {
+      scope.setTag('ocr.llm_status', String(context.httpStatus))
+    }
+    if (context.model) {
+      scope.setTag('ocr.llm_model', context.model)
+    }
+    if (context.reason) {
+      scope.setTag('ocr.llm_reason', context.reason)
+    }
+    if (context.clientVersion) {
+      scope.setTag('ocr.client_version', context.clientVersion)
+    }
+    scope.setContext('ocrLlmScan', {
+      scanId: context.scanId,
+      requestId: context.requestId,
+      llmStatus: context.llmStatus ?? null,
+      httpStatus: context.httpStatus ?? null,
+      reason: context.reason ?? null,
+      model: context.model ?? null,
+      attest: context.attest,
+      totalMs: context.totalMs,
+    })
+    sentrySdk.captureMessage(
+      `OCR dual-scan llm_error (reason=${context.reason ?? 'unknown'}, http=${context.httpStatus ?? 'unknown'})`
+    )
+  })
+
+  return sentrySdk.flush(2_000)
+}
