@@ -316,6 +316,49 @@ test('POST /ocr/dual-scan enforces the default LLM daily cap when LLM_SCAN_DAILY
   }
 })
 
+test('POST /ocr/dual-scan totals disagreement emits an ocr_totals_divergence Sentry warning; agreement does not (P8 alert wiring)', async () => {
+  const captured = { messages: [], scopes: [] }
+  setOcrSentrySdkForTests({
+    captureMessage(m) { captured.messages.push(m) },
+    flush() { return Promise.resolve(true) },
+    withScope(cb) {
+      const scope = { tags: {}, contexts: {}, level: null, setLevel(l) { this.level = l }, setTag(k, v) { this.tags[k] = v }, setContext(k, v) { this.contexts[k] = v } }
+      captured.scopes.push(scope)
+      cb(scope)
+    },
+  })
+  try {
+    // Disagree: azure 12 vs llm 14 -> the watched signal fires at warning level.
+    stubProviders({
+      azure: azureRaw({ total: 12, tax: 1 }),
+      scanned: scannedReceipt({ total: 14 }),
+    })
+    const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true', SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
+    const res = await handleOcr(dualScanRequest(new Uint8Array([9, 1, 9])), env)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.divergence.totalsAgree, false)
+    const divScope = captured.scopes.find((s) => s.tags['monitoring.signal'] === 'ocr_totals_divergence')
+    assert.ok(divScope, 'a totals disagreement must emit an ocr_totals_divergence Sentry issue')
+    assert.equal(divScope.level, 'warning', 'divergence is a warning, not an error — the scan itself worked')
+    assert.equal(divScope.contexts.ocrTotalsDivergence.azureTotal, 12)
+    assert.equal(divScope.contexts.ocrTotalsDivergence.llmTotal, 14)
+    assert.equal(captured.messages.some((m) => /totals_divergence/.test(m)), true)
+
+    // Agree: default 10 vs 10 -> no divergence capture (fresh image, cache miss).
+    const before = captured.scopes.length
+    stubProviders()
+    const res2 = await handleOcr(dualScanRequest(new Uint8Array([9, 2, 9])), env)
+    assert.equal(res2.status, 200)
+    const body2 = await res2.json()
+    assert.equal(body2.divergence.totalsAgree, true)
+    const newDivScopes = captured.scopes.slice(before).filter((s) => s.tags['monitoring.signal'] === 'ocr_totals_divergence')
+    assert.equal(newDivScopes.length, 0, 'agreeing totals must not alert')
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
+})
+
 test('POST /ocr/dual-scan divergence reports positive LLM recovered amount for recovered fee', async () => {
   stubProviders({
     azure: azureRaw({ total: 12, tax: 1 }),

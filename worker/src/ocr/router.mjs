@@ -14,7 +14,7 @@ import { errorResponse, jsonResponse } from '../http.mjs'
 import { requestCorrelationHeaders, resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
 import { CORS_HEADERS, handlePreflight } from '../sideload/cors.mjs'
-import { logOcrMonitoringEvent, captureOcrProviderFailure, captureOcrLlmFailure } from './monitoring.mjs'
+import { logOcrMonitoringEvent, captureOcrProviderFailure, captureOcrLlmFailure, captureOcrTotalsDivergence } from './monitoring.mjs'
 import {
   submitReceiptAnalyze,
   getReceiptAnalyzeResult,
@@ -298,6 +298,21 @@ async function handleDualScan(request, env, requestId) {
     await captureOcrLlmFailure({
       scanId, requestId, llmStatus: llm.status, httpStatus: llm.httpStatus,
       reason: llm.errorBody, model: llm.model, attest, clientVersion, totalMs,
+    }, env)
+  }
+
+  // P8 alert wiring ("divergence telemetry is watched"): a SUCCEEDED dual scan
+  // whose legs DISAGREE on the money total is the signal this endpoint exists
+  // to surface — trendable in Sentry, not just an info log line. Cache-miss
+  // path only (the first computation): a cached divergent envelope replayed on
+  // retry must not re-alert for the same image.
+  if (divergence?.totalsAgree === false) {
+    await captureOcrTotalsDivergence({
+      scanId, requestId,
+      azureTotal: divergence.azureTotal, llmTotal: divergence.llmTotal,
+      llmRecoveredAmount: divergence.llmRecoveredAmount,
+      extrasKindsDelta: divergence.extrasKindsDelta,
+      model, attest, clientVersion, totalMs,
     }, env)
   }
 
@@ -679,7 +694,11 @@ function azureExtraKinds(raw) {
 
 function logDualScanMonitoring(env, { body, requestId, clientVersion, attest, cache, azureLatencyMs, totalMs }) {
   const divergence = body.divergence || {}
-  logOcrMonitoringEvent(body.status === 'provider_error' ? 'warn' : 'info', {
+  // warn on provider errors AND on totals disagreement — a divergent money
+  // total is never routine (P8 alert wiring; the Sentry capture rides the
+  // cache-miss path, this level applies to hits too so log queries trend both).
+  const level = body.status === 'provider_error' || divergence.totalsAgree === false ? 'warn' : 'info'
+  logOcrMonitoringEvent(level, {
     signal: 'dual_scan',
     phase: 'scan',
     mode: 'dual',
