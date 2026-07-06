@@ -7,6 +7,21 @@ const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
 const DEFAULT_MODEL = 'claude-sonnet-5'
 const FETCH_TIMEOUT_MS = 60_000
+// Dense receipts (many line items + extras) can exceed a small ceiling and get
+// truncated mid tool_use. 4096 gives headroom; a truncated response is still
+// caught below via stop_reason and rejected rather than returned as a partial.
+const MAX_TOKENS = 4096
+
+// Mirrors receiptSchema.required/enum so a returned tool input is validated
+// server-side before we trust it — strict:true guards the happy path, this guards
+// against a model/provider that ignores or partially honors the schema.
+const EXTRA_KINDS = new Set([
+  'tax', 'tip', 'fee', 'serviceCharge', 'mandate', 'surcharge', 'discount', 'credit', 'rounding', 'payment', 'unknown',
+])
+const REQUIRED_RECEIPT_KEYS = [
+  'merchantName', 'merchantAddress', 'transactionDate', 'currencyCode', 'currencySymbol',
+  'lineItems', 'subtotal', 'total', 'extras',
+]
 
 export const LLM_PROVIDER = 'anthropic'
 
@@ -95,12 +110,18 @@ function bytesToBase64(imageBytes) {
 function buildRequestBody({ imageBytes, contentType, model }) {
   return {
     model,
-    max_tokens: 2048,
+    max_tokens: MAX_TOKENS,
     system: RECEIPT_SYSTEM_PROMPT,
     tools: [
       {
         name: 'emit_receipt',
         description: 'Emit the extracted receipt fields.',
+        // Anthropic strict tool use (supported on claude-sonnet-5, the deployed
+        // model): input_schema already has additionalProperties:false + full
+        // required arrays on every object, so the model's tool_use.input is
+        // guaranteed to validate against the schema. Server-side validation below
+        // is the backstop for any model/provider that ignores strict.
+        strict: true,
         input_schema: receiptSchema,
       },
     ],
@@ -131,6 +152,45 @@ function toolInputFromMessagesBody(body) {
   const content = Array.isArray(body?.content) ? body.content : []
   const toolUse = content.find((part) => part?.type === 'tool_use' && part?.name === 'emit_receipt')
   return toolUse?.input ?? null
+}
+
+const isNumber = (v) => typeof v === 'number' && Number.isFinite(v)
+const isNumberOrNull = (v) => v === null || isNumber(v)
+const isStringOrNull = (v) => v === null || typeof v === 'string'
+
+// Validate the model's tool input against receiptSchema server-side. Returns a
+// short violation code on mismatch (amount as a string, missing key, bad extras
+// kind, …), or null when the shape is sound. Never trust the LLM's shape blindly.
+export function receiptShapeViolation(scanned) {
+  if (!scanned || typeof scanned !== 'object' || Array.isArray(scanned)) return 'not_object'
+  for (const key of REQUIRED_RECEIPT_KEYS) {
+    if (!(key in scanned)) return `missing:${key}`
+  }
+  if (!isStringOrNull(scanned.merchantName)) return 'merchantName'
+  if (!isStringOrNull(scanned.merchantAddress)) return 'merchantAddress'
+  if (!isStringOrNull(scanned.transactionDate)) return 'transactionDate'
+  if (!isStringOrNull(scanned.currencyCode)) return 'currencyCode'
+  if (!isStringOrNull(scanned.currencySymbol)) return 'currencySymbol'
+  if (!isNumberOrNull(scanned.subtotal)) return 'subtotal'
+  if (!isNumberOrNull(scanned.total)) return 'total'
+
+  if (!Array.isArray(scanned.lineItems)) return 'lineItems'
+  for (const item of scanned.lineItems) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return 'lineItem'
+    if (typeof item.name !== 'string') return 'lineItem.name'
+    if (!isNumberOrNull(item.amount)) return 'lineItem.amount'
+    if (!isNumberOrNull(item.quantity)) return 'lineItem.quantity'
+  }
+
+  if (!Array.isArray(scanned.extras)) return 'extras'
+  for (const extra of scanned.extras) {
+    if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return 'extra'
+    if (typeof extra.label !== 'string') return 'extra.label'
+    if (!isNumber(extra.amount)) return 'extra.amount'
+    if (!EXTRA_KINDS.has(extra.kind)) return 'extra.kind'
+  }
+
+  return null
 }
 
 /**
@@ -169,9 +229,19 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
     }
 
     const body = await res.json().catch(() => null)
+    // A max_tokens stop means the tool_use was truncated: the emitted receipt is a
+    // partial (missing line items, cut-off amounts). Never return it as a success —
+    // a partial that looks whole is worse than an explicit failure the caller retries.
+    if (body?.stop_reason === 'max_tokens') {
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'llm_truncated' }
+    }
     const scanned = toolInputFromMessagesBody(body)
     if (!scanned) {
       return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'missing emit_receipt tool_use' }
+    }
+    const violation = receiptShapeViolation(scanned)
+    if (violation) {
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: `llm_schema_violation:${violation}` }
     }
     return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null }
   } catch (error) {
