@@ -266,7 +266,14 @@ async function handleDualScan(request, env, requestId) {
   const status = dualScanStatus(azure.status, llm.status)
   const body = dualScanEnvelope({ scanId, status, azure, llm, divergence })
   const bodyJson = JSON.stringify(body)
-  if (azure.status === 'succeeded' || llm.status === 'succeeded') {
+  // Cache ONLY a fully-succeeded LLM leg. Previously an azure-only partial (LLM
+  // failed) was pinned for CACHE_TTL_SECONDS: a transient Anthropic failure then
+  // got served back on EVERY retry of the same image for the whole TTL, so the
+  // user could never recover the LLM leg until it expired. Azure-only partials
+  // now stay uncached and re-run the LLM on retry. (A future all-legs-succeeded
+  // gate would also require azure.status === 'succeeded', but today an LLM
+  // success is the scarce, worth-caching outcome.)
+  if (llm.status === 'succeeded') {
     await env.ATTEST_KV.put(cacheKey, bodyJson, { expirationTtl: CACHE_TTL_SECONDS })
   }
 
