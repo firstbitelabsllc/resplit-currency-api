@@ -203,3 +203,46 @@ export async function captureOcrLlmFailure(context, env) {
 
   return sentrySdk.flush(2_000)
 }
+
+// P8 DONE-test "divergence telemetry is watched (alert wired)": a SUCCEEDED
+// dual scan whose two legs DISAGREE on the money total is the exact signal
+// the endpoint exists to surface — before this it was an info-level log line
+// nobody watched. Level warning (not error): the scan itself worked; the
+// money truth needs eyes, trendable via monitoring.signal.
+export async function captureOcrTotalsDivergence(context, env) {
+  if (!isOcrSentryEnabled(env)) {
+    return false
+  }
+
+  sentrySdk.withScope(scope => {
+    scope.setLevel('warning')
+    scope.setTag('surface', SURFACE)
+    scope.setTag('runtime', 'worker')
+    scope.setTag('monitoring.domain', DOMAIN)
+    scope.setTag('monitoring.signal', 'ocr_totals_divergence')
+    if (context.requestId) {
+      scope.setTag('request.id', context.requestId)
+    }
+    if (context.model) {
+      scope.setTag('ocr.llm_model', context.model)
+    }
+    if (context.clientVersion) {
+      scope.setTag('ocr.client_version', context.clientVersion)
+    }
+    scope.setContext('ocrTotalsDivergence', {
+      scanId: context.scanId,
+      requestId: context.requestId,
+      azureTotal: context.azureTotal ?? null,
+      llmTotal: context.llmTotal ?? null,
+      llmRecoveredAmount: context.llmRecoveredAmount ?? null,
+      extrasKindsDelta: context.extrasKindsDelta ?? null,
+      attest: context.attest,
+      totalMs: context.totalMs,
+    })
+    sentrySdk.captureMessage(
+      `OCR dual-scan totals_divergence (azure=${context.azureTotal ?? 'null'}, llm=${context.llmTotal ?? 'null'})`
+    )
+  })
+
+  return sentrySdk.flush(2_000)
+}
