@@ -77,6 +77,9 @@ export async function handleOcr(request, env) {
     if (method === 'POST' && url.pathname === '/ocr/dual-scan') {
       return await handleDualScan(request, env, requestId)
     }
+    if (method === 'POST' && url.pathname === '/ocr/analyze') {
+      return await handleAnalyze(request, env, requestId)
+    }
     return errorResponse('NOT_FOUND', 'OCR route not found', 404, requestId, RESPONSE_HEADERS)
   } catch (error) {
     if (error instanceof AttestError) {
@@ -197,7 +200,24 @@ async function handleScan(request, env, requestId) {
   })
 }
 
+// The legacy route: serves the EXACT v1 dual envelope shipped TestFlight builds
+// parse, plus the two additive top-level fields (llmReasoning + aiModels).
 async function handleDualScan(request, env, requestId) {
+  return runOcrScan(request, env, requestId, { route: 'dual-scan', shapeEnvelope: shapeDualScanV1Envelope })
+}
+
+// The new route: same pipeline, served as the v2 N-engine envelope.
+async function handleAnalyze(request, env, requestId) {
+  return runOcrScan(request, env, requestId, { route: 'analyze', shapeEnvelope: shapeAnalyzeV2Envelope })
+}
+
+// Shared scan core for the multi-engine OCR routes. /ocr/dual-scan and /ocr/analyze
+// run the IDENTICAL pipeline — kill switch, empty-body guard, App Attest + daily-cap
+// gate, idempotency cache, Azure OCR + Anthropic vision legs, divergence/consensus,
+// cache write, Loki + Sentry monitoring — and differ ONLY in how the shape-neutral
+// internal result is rendered into a response (shapeEnvelope). The gate logic lives
+// here once so a naming/shape change on one route can never drift the other's auth.
+async function runOcrScan(request, env, requestId, { route, shapeEnvelope }) {
   const start = Date.now()
   const scanId = crypto.randomUUID()
   const clientVersion = request.headers.get('x-resplit-client-version') || 'unknown'
@@ -215,33 +235,31 @@ async function handleDualScan(request, env, requestId) {
     return errorResponse('BAD_REQUEST', 'empty image body', 400, requestId, RESPONSE_HEADERS)
   }
 
-  const azureUnits = 1
-  let attest = 'reject'
-  let deviceKey = keyId
-  if (softFail || !keyId || !assertionB64) {
-    attest = 'soft_fail'
-    deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
-    const ok = await underCap(env, deviceKey, SOFT_FAIL_DAILY_CAP, azureUnits)
-    if (!ok) return rateLimitedDualScan(env, { scanId, attest, requestId, clientVersion })
-  } else {
-    await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
-    attest = 'pass'
-    const ok = await underCap(env, deviceKey, PER_DEVICE_DAILY_CAP, azureUnits)
-    if (!ok) return rateLimitedDualScan(env, { scanId, attest, requestId, clientVersion })
+  // --- Auth gate (shared) --- the daily caps bound Azure ANALYZE CALLS; both
+  // routes fire exactly one Azure receipt analyze, so one unit per request.
+  const auth = await authorizeScan({ request, env, imageBytes, softFail, keyId, assertionB64, azureUnits: 1 })
+  if (!auth.ok) {
+    return respondRateLimited(env, { route, shapeEnvelope, scanId, attest: auth.attest, requestId, clientVersion, start })
   }
+  const attest = auth.attest
 
   const imageHash = await sha256Hex(imageBytes)
   const llmGate = readLlmGate(env, keyId, attest)
   const model = llmModel(env)
-  const cacheKey = `cache:dualScan:${imageHash}:${llmGate.cacheKey}:${model}`
+  // The cached value is the shape-neutral internal result, NOT a v1/v2 envelope, so
+  // the key is route-agnostic: dual-scan and analyze share one scan for the same
+  // image+gate+model (the Azure+Anthropic work is byte-identical; only presentation
+  // differs). The `v2core` token stops a read from parsing a pre-deploy v1-envelope
+  // cache entry as an internal result.
+  const cacheKey = `cache:dualScan:v2core:${imageHash}:${llmGate.cacheKey}:${model}`
   const cached = await env.ATTEST_KV.get(cacheKey)
   if (cached) {
-    const cachedBody = JSON.parse(cached)
+    const result = JSON.parse(cached)
     logDualScanMonitoring(env, {
-      body: cachedBody, requestId, clientVersion, attest, cache: 'hit',
+      result, route, requestId, clientVersion, attest, cache: 'hit',
       azureLatencyMs: null, totalMs: Date.now() - start,
     })
-    return new Response(cached, { status: 200, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
+    return renderScan(shapeEnvelope, result, requestId)
   }
 
   const azurePromise = runAzureRawLeg({ imageBytes, contentType, env })
@@ -265,8 +283,8 @@ async function handleDualScan(request, env, requestId) {
   }))
   const divergence = computeDivergence(azure.raw, llm.scanned, azure.status, llm.status)
   const status = dualScanStatus(azure.status, llm.status)
-  const body = dualScanEnvelope({ scanId, status, azure, llm, divergence })
-  const bodyJson = JSON.stringify(body)
+  const result = { scanId, status, azure, llm, divergence }
+
   // Cache ONLY a fully-succeeded LLM leg. Previously an azure-only partial (LLM
   // failed) was pinned for CACHE_TTL_SECONDS: a transient Anthropic failure then
   // got served back on EVERY retry of the same image for the whole TTL, so the
@@ -275,18 +293,18 @@ async function handleDualScan(request, env, requestId) {
   // gate would also require azure.status === 'succeeded', but today an LLM
   // success is the scarce, worth-caching outcome.)
   if (llm.status === 'succeeded') {
-    await env.ATTEST_KV.put(cacheKey, bodyJson, { expirationTtl: CACHE_TTL_SECONDS })
+    await env.ATTEST_KV.put(cacheKey, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS })
   }
 
   const totalMs = Date.now() - start
   logDualScanMonitoring(env, {
-    body, requestId, clientVersion, attest, cache: 'miss',
+    result, route, requestId, clientVersion, attest, cache: 'miss',
     azureLatencyMs: azure.latencyMs, totalMs,
   })
 
   if (azure.status === 'provider_error') {
     await captureOcrProviderFailure({
-      scanId, requestId, azureStatus: azure.httpStatus, attest, clientVersion, kvExtras: 'off', totalMs,
+      scanId, requestId, route, azureStatus: azure.httpStatus, attest, clientVersion, kvExtras: 'off', totalMs,
     }, env)
   }
 
@@ -296,19 +314,19 @@ async function handleDualScan(request, env, requestId) {
   // failures were invisible in Sentry — only the Azure leg was captured.
   if (llm.status === 'provider_error') {
     await captureOcrLlmFailure({
-      scanId, requestId, llmStatus: llm.status, httpStatus: llm.httpStatus,
+      scanId, requestId, route, llmStatus: llm.status, httpStatus: llm.httpStatus,
       reason: llm.errorBody, model: llm.model, attest, clientVersion, totalMs,
     }, env)
   }
 
-  // P8 alert wiring ("divergence telemetry is watched"): a SUCCEEDED dual scan
-  // whose legs DISAGREE on the money total is the signal this endpoint exists
-  // to surface — trendable in Sentry, not just an info log line. Cache-miss
-  // path only (the first computation): a cached divergent envelope replayed on
-  // retry must not re-alert for the same image.
+  // P8 alert wiring ("divergence telemetry is watched"): a SUCCEEDED scan whose
+  // legs DISAGREE on the money total is the signal this endpoint exists to surface
+  // — trendable in Sentry, not just an info log line. Cache-miss path only (the
+  // first computation): a cached divergent result replayed on retry must not
+  // re-alert for the same image. The alert fires for BOTH routes (same helper).
   if (divergence?.totalsAgree === false) {
     await captureOcrTotalsDivergence({
-      scanId, requestId,
+      scanId, requestId, route,
       azureTotal: divergence.azureTotal, llmTotal: divergence.llmTotal,
       llmRecoveredAmount: divergence.llmRecoveredAmount,
       extrasKindsDelta: divergence.extrasKindsDelta,
@@ -316,10 +334,46 @@ async function handleDualScan(request, env, requestId) {
     }, env)
   }
 
-  return new Response(bodyJson, {
-    status: dualScanHttpStatus(status),
+  return renderScan(shapeEnvelope, result, requestId)
+}
+
+// Shared App Attest + daily-cap gate. Returns { ok, attest }; a verifyAssertion
+// rejection throws AttestError, caught by handleOcr and mapped to 401 (unchanged).
+async function authorizeScan({ request, env, imageBytes, softFail, keyId, assertionB64, azureUnits }) {
+  if (softFail || !keyId || !assertionB64) {
+    // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
+    const deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
+    const ok = await underCap(env, deviceKey, SOFT_FAIL_DAILY_CAP, azureUnits)
+    return { ok, attest: 'soft_fail' }
+  }
+  await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
+  const ok = await underCap(env, keyId, PER_DEVICE_DAILY_CAP, azureUnits)
+  return { ok, attest: 'pass' }
+}
+
+// Serialize a shaped envelope; HTTP status is derived from the scan status so
+// dual-scan and analyze return the same 200/429/502 for the same outcome.
+function renderScan(shapeEnvelope, result, requestId) {
+  return new Response(JSON.stringify(shapeEnvelope(result)), {
+    status: dualScanHttpStatus(result.status),
     headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) },
   })
+}
+
+// Cap-exceeded response, shaped per-route from a rate_limited internal result so
+// the divergence-free monitoring line is emitted uniformly for both routes.
+function respondRateLimited(env, { route, shapeEnvelope, scanId, attest, requestId, clientVersion, start }) {
+  const result = {
+    scanId,
+    status: 'rate_limited',
+    azure: { status: 'rate_limited', raw: null, httpStatus: 429, latencyMs: 0 },
+    llm: { status: 'not_started', provider: LLM_PROVIDER, model: llmModel(env), scanned: null, latencyMs: 0, httpStatus: 429, errorBody: null },
+    divergence: null,
+  }
+  logDualScanMonitoring(env, {
+    result, route, requestId, clientVersion, attest, cache: 'skip', azureLatencyMs: 0, totalMs: Date.now() - start,
+  })
+  return renderScan(shapeEnvelope, result, requestId)
 }
 
 function envelope({ status, raw, scanId, kvExtras }) {
@@ -341,6 +395,77 @@ function dualScanEnvelope({ scanId, status, azure, llm, divergence }) {
       latencyMs: llm.latencyMs,
     },
     divergence,
+  }
+}
+
+// --- Response shaping (the ONLY per-route difference) --------------------------
+const ANALYZE_ENVELOPE_VERSION = 2
+// v2 engine identity. `azure-di-v4` is the aiModels label for the Azure Document
+// Intelligence v4 receipt model; the llm engine contributes its resolved model id.
+// True Azure model id (azure.mjs RECEIPT_MODEL_ID) — telemetry must name the
+// real engine, not a marketing alias; aiModels keeps the human label.
+const AZURE_ENGINE_MODEL = 'prebuilt-receipt'
+const AZURE_AI_MODEL_LABEL = 'azure-di-v4'
+
+// Legacy v1 dual envelope, byte-for-byte as shipped, PLUS the two additive
+// top-level fields Leo asked clients to parse. Additive is safe: existing clients
+// ignore unknown keys and every field dualScanEnvelope emits is unchanged.
+function shapeDualScanV1Envelope(result) {
+  const base = dualScanEnvelope({
+    scanId: result.scanId, status: result.status,
+    azure: result.azure, llm: result.llm, divergence: result.divergence,
+  })
+  base.llmReasoning = result.llm.status === 'succeeded'
+  base.aiModels = contributingAiModels(result)
+  return base
+}
+
+// v2 N-engine envelope. engines[] is an ARRAY so a THIRD engine is an append, not a
+// schema break. consensus = today's divergence object, inner field names preserved
+// (clients of this route are new). llmReasoning is true iff the vision-llm leg
+// succeeded — a capped/failed leg did not reason about the receipt.
+function shapeAnalyzeV2Envelope(result) {
+  return {
+    v: ANALYZE_ENVELOPE_VERSION,
+    scanId: result.scanId,
+    status: result.status,
+    llmReasoning: result.llm.status === 'succeeded',
+    aiModels: contributingAiModels(result),
+    engines: [analyzeAzureEngine(result.azure), analyzeLlmEngine(result.llm)],
+    consensus: result.divergence,
+  }
+}
+
+// The engines that CONTRIBUTED (succeeded), in engine order: azure first, then the
+// vision-llm. A capped or failed leg is omitted — it did not AI-reason the receipt.
+function contributingAiModels(result) {
+  const models = []
+  if (result.azure.status === 'succeeded') models.push(AZURE_AI_MODEL_LABEL)
+  if (result.llm.status === 'succeeded') models.push(result.llm.model)
+  return models
+}
+
+function analyzeAzureEngine(azure) {
+  return {
+    id: 'azure',
+    kind: 'ocr',
+    provider: OCR_PROVIDER,
+    model: AZURE_ENGINE_MODEL,
+    status: azure.status,
+    latencyMs: azure.latencyMs ?? null,
+    raw: azure.raw ?? null,
+  }
+}
+
+function analyzeLlmEngine(llm) {
+  return {
+    id: 'llm',
+    kind: 'vision-llm',
+    provider: LLM_PROVIDER,
+    model: llm.model,
+    status: llm.status,
+    latencyMs: llm.latencyMs ?? null,
+    scanned: llm.scanned ?? null,
   }
 }
 
@@ -692,32 +817,39 @@ function azureExtraKinds(raw) {
   return kinds
 }
 
-function logDualScanMonitoring(env, { body, requestId, clientVersion, attest, cache, azureLatencyMs, totalMs }) {
-  const divergence = body.divergence || {}
+// Structured Loki line for a scan served by EITHER OCR route. `signal` stays
+// 'dual_scan' so existing Grafana/Loki queries (scan volume, p95, totals-agree
+// trend, the divergence alert) keep covering both routes; the new `route` field
+// discriminates which one served. Reads the shape-neutral internal result, so it
+// works identically on the cache-hit, cache-miss, and rate-limited paths.
+function logDualScanMonitoring(env, { result, route, requestId, clientVersion, attest, cache, azureLatencyMs, totalMs }) {
+  const divergence = result.divergence || {}
   // warn on provider errors AND on totals disagreement — a divergent money
   // total is never routine (P8 alert wiring; the Sentry capture rides the
   // cache-miss path, this level applies to hits too so log queries trend both).
-  const level = body.status === 'provider_error' || divergence.totalsAgree === false ? 'warn' : 'info'
+  const level = result.status === 'provider_error' || divergence.totalsAgree === false ? 'warn' : 'info'
   logOcrMonitoringEvent(level, {
     signal: 'dual_scan',
+    route: route ?? 'dual-scan',
     phase: 'scan',
     mode: 'dual',
-    status: body.status,
-    azure_status: body.azure?.status,
-    llm_status: body.llm?.status,
-    llm_provider: body.llm?.provider,
-    llm_model: body.llm?.model,
+    status: result.status,
+    azure_status: result.azure?.status,
+    llm_status: result.llm?.status,
+    llm_provider: result.llm?.provider ?? LLM_PROVIDER,
+    llm_model: result.llm?.model,
+    llm_reasoning: result.llm?.status === 'succeeded',
     attest,
     cache,
     azure_ms: azureLatencyMs,
-    llm_ms: body.llm?.latencyMs ?? null,
+    llm_ms: result.llm?.latencyMs ?? null,
     total_ms: totalMs,
     totals_agree: divergence.totalsAgree ?? null,
     azure_total: divergence.azureTotal ?? null,
     llm_total: divergence.llmTotal ?? null,
     extras_kinds_delta: divergence.extrasKindsDelta ?? null,
     llm_recovered_amount: divergence.llmRecoveredAmount ?? null,
-    scanId: body.scanId,
+    scanId: result.scanId,
     requestId,
     client_version: clientVersion,
   }, env)
@@ -729,20 +861,6 @@ async function rateLimited(env, { scanId, attest, requestId, clientVersion }) {
   }, env)
   const body = JSON.stringify(envelope({ status: 'rate_limited', raw: null, scanId }))
   return new Response(body, { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
-}
-
-async function rateLimitedDualScan(env, { scanId, attest, requestId, clientVersion }) {
-  const body = dualScanEnvelope({
-    scanId,
-    status: 'rate_limited',
-    azure: { status: 'rate_limited', raw: null },
-    llm: { status: 'not_started', provider: LLM_PROVIDER, model: llmModel(env), scanned: null, latencyMs: 0 },
-    divergence: null,
-  })
-  logDualScanMonitoring(env, {
-    body, requestId, clientVersion, attest, cache: 'skip', azureLatencyMs: 0, totalMs: 0,
-  })
-  return new Response(JSON.stringify(body), { status: 429, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
 }
 
 function scanDisabled(env, { scanId, requestId, clientVersion }) {
