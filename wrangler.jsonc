@@ -55,6 +55,17 @@
       "bucket_name": "resplit-sideload-staging"
     }
   ],
+  // Per-scan OCR recovery telemetry (router.mjs writeOcrScanAnalytics): what the AI
+  // (vision-LLM) leg catches that Azure's prebuilt parse misses — the pro-tier
+  // AI-scan product signal. Free tier, zero added latency; the dataset auto-creates
+  // on first write (no account-level setup for WRITES — querying uses the AE SQL
+  // API). No PII: scanId is a per-scan UUID, never a device/user id.
+  "analytics_engine_datasets": [
+    {
+      "binding": "OCR_SCAN_ANALYTICS",
+      "dataset": "ocr_scan_recovery"
+    }
+  ],
   "env": {
     "production": {
       "name": "resplit-fx",
@@ -95,6 +106,13 @@
         {
           "binding": "SIDELOAD_R2",
           "bucket_name": "resplit-sideload-prod"
+        }
+      ],
+      // Mirrored from root vars so the two postures don't diverge (see root note).
+      "analytics_engine_datasets": [
+        {
+          "binding": "OCR_SCAN_ANALYTICS",
+          "dataset": "ocr_scan_recovery"
         }
       ]
     }

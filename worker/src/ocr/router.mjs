@@ -717,9 +717,7 @@ export function computeDivergence(azureRaw, llmScanned, azureStatus_, llmStatus)
   const azureTotal = azureRawTotal(azureRaw)
   const llmTotal = finiteNumberOrNull(llmScanned?.total)
   const azureKinds = azureExtraKinds(azureRaw)
-  const llmKinds = new Set((Array.isArray(llmScanned?.extras) ? llmScanned.extras : [])
-    .map((extra) => extra?.kind)
-    .filter((kind) => typeof kind === 'string' && kind.length > 0))
+  const llmKinds = llmExtraKinds(llmScanned)
   const extrasKindsDelta = Array.from(llmKinds)
     .filter((kind) => !azureKinds.has(kind))
     .sort()
@@ -735,6 +733,75 @@ export function computeDivergence(azureRaw, llmScanned, azureStatus_, llmStatus)
     extrasKindsDelta,
     llmRecoveredAmount: comparable ? Number((llmTotal - azureTotal).toFixed(2)) : null,
   }
+}
+
+// Per-scan recovery telemetry: which receipt fields the vision-LLM leg populated
+// that Azure's prebuilt parse LACKED. This is the product signal behind a pro-tier
+// AI-scan subscription ("what the LLM catches that the prebuilt model misses"), so
+// it is computed for BOTH routes. Every value is a boolean presence pair, a count,
+// or an amount — never field TEXT — so the block is PII-safe. Robust to a failed
+// leg: a null raw / null scanned reads as "not present" for that side.
+export function computeRecovery(azure, llm) {
+  const raw = azure?.raw ?? null
+  const scanned = (llm?.scanned && typeof llm.scanned === 'object') ? llm.scanned : null
+  const azureKinds = azureExtraKinds(raw)
+  const llmKinds = llmExtraKinds(scanned)
+
+  const merchant = presencePair(azureFieldHasContent(raw, 'MerchantName'), isNonEmptyString(scanned?.merchantName))
+  const date = presencePair(azureFieldHasContent(raw, 'TransactionDate'), isNonEmptyString(scanned?.transactionDate))
+  const tax = presencePair(azureKinds.has('tax'), llmKinds.has('tax'))
+  const tip = presencePair(azureKinds.has('tip'), llmKinds.has('tip'))
+  const total = presencePair(azureRawTotal(raw) != null, finiteNumberOrNull(scanned?.total) != null)
+
+  const azureItems = azureItemsCount(raw)
+  const llmItems = Array.isArray(scanned?.lineItems) ? scanned.lineItems.length : 0
+  const fields = [merchant, date, tax, tip, total]
+
+  return {
+    merchant, date, tax, tip, total,
+    azureItems,
+    llmItems,
+    // Extra line items the LLM read beyond Azure's count (>=0). A shorter LLM list
+    // clamps to 0 — that is a different (possibly worse) read, not "recovery".
+    itemsDelta: Math.max(0, llmItems - azureItems),
+    // Headline pro-tier number: of the 5 tracked fields, how many the LLM populated
+    // that Azure missed — the concrete "AI recovered this" tally.
+    llmOnlyFieldCount: fields.filter((f) => f.llmOnly).length,
+  }
+}
+
+// {azure, llm} presence booleans plus the derived llm-only signal (the pro-tier
+// "LLM caught what Azure missed" per-field flag).
+function presencePair(azurePresent, llmPresent) {
+  const azure = Boolean(azurePresent)
+  const llm = Boolean(llmPresent)
+  return { azure, llm, llmOnly: llm && !azure }
+}
+
+function llmExtraKinds(scanned) {
+  return new Set((Array.isArray(scanned?.extras) ? scanned.extras : [])
+    .map((extra) => extra?.kind)
+    .filter((kind) => typeof kind === 'string' && kind.length > 0))
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+// Azure DI names merchant as a valueString/content field and the date as valueDate;
+// treat any non-empty resolved value as "present".
+function azureFieldHasContent(raw, name) {
+  const field = azureField(raw, name)
+  if (!field || typeof field !== 'object') return false
+  const value = field.valueString ?? field.valueDate ?? field.valuePhoneNumber ?? field.content ?? null
+  if (typeof value === 'string') return value.trim().length > 0
+  return value != null
+}
+
+// Azure DI v4 line items live under fields.Items.valueArray.
+function azureItemsCount(raw) {
+  const arr = firstAzureDocument(raw)?.fields?.Items?.valueArray
+  return Array.isArray(arr) ? arr.length : 0
 }
 
 function firstAzureDocument(raw) {
@@ -824,6 +891,7 @@ function azureExtraKinds(raw) {
 // works identically on the cache-hit, cache-miss, and rate-limited paths.
 function logDualScanMonitoring(env, { result, route, requestId, clientVersion, attest, cache, azureLatencyMs, totalMs }) {
   const divergence = result.divergence || {}
+  const recovery = computeRecovery(result.azure, result.llm)
   // warn on provider errors AND on totals disagreement — a divergent money
   // total is never routine (P8 alert wiring; the Sentry capture rides the
   // cache-miss path, this level applies to hits too so log queries trend both).
@@ -849,10 +917,60 @@ function logDualScanMonitoring(env, { result, route, requestId, clientVersion, a
     llm_total: divergence.llmTotal ?? null,
     extras_kinds_delta: divergence.extrasKindsDelta ?? null,
     llm_recovered_amount: divergence.llmRecoveredAmount ?? null,
+    // Recovery telemetry (pro-tier AI-scan signal): what the LLM leg caught that
+    // Azure's prebuilt parse missed. Nested `recovery` block for the full per-field
+    // picture PLUS flat headline metrics so simple Loki label filters work too.
+    recovery,
+    recovery_llm_only_fields: recovery.llmOnlyFieldCount,
+    azure_items: recovery.azureItems,
+    llm_items: recovery.llmItems,
+    items_delta: recovery.itemsDelta,
     scanId: result.scanId,
     requestId,
     client_version: clientVersion,
   }, env)
+
+  // One Analytics Engine datapoint per FRESH scan (cache miss only — a cache hit or
+  // rate-limited request ran no new OCR, and a cache hit replays the original
+  // scanId, so counting it would double the recovery tally). No-op without a bound
+  // dataset; write errors are swallowed so telemetry never fails a scan.
+  if (cache === 'miss') {
+    writeOcrScanAnalytics(env, { result, route, recovery, azureLatencyMs, totalMs })
+  }
+}
+
+// Workers Analytics Engine datapoint: zero added latency, SQL-queryable via the AE
+// API, free tier. PII-safe — scanId is a per-scan random UUID (not a device/user
+// id) and caps stay server-side; this is product telemetry, not user tracking.
+function writeOcrScanAnalytics(env, { result, route, recovery, azureLatencyMs, totalMs }) {
+  const dataset = env && env.OCR_SCAN_ANALYTICS
+  if (!dataset || typeof dataset.writeDataPoint !== 'function') return
+  try {
+    dataset.writeDataPoint({
+      // Sampling index (<=96 bytes): llmReasoning as '1'/'0' so pro-tier
+      // (AI-reasoned) scans partition cleanly from plain OCR.
+      indexes: [result.llm?.status === 'succeeded' ? '1' : '0'],
+      blobs: [
+        result.scanId,
+        route,
+        result.status,
+        result.llm?.status ?? 'unknown',
+        result.llm?.model ?? 'unknown',
+      ],
+      doubles: [
+        recovery.azureItems,
+        recovery.llmItems,
+        recovery.itemsDelta,
+        recovery.llmOnlyFieldCount,
+        result.divergence?.llmRecoveredAmount ?? 0,
+        azureLatencyMs ?? 0,
+        result.llm?.latencyMs ?? 0,
+        totalMs ?? 0,
+      ],
+    })
+  } catch {
+    // Telemetry must never break a scan.
+  }
 }
 
 async function rateLimited(env, { scanId, attest, requestId, clientVersion }) {
