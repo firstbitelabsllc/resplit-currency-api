@@ -402,7 +402,9 @@ function dualScanEnvelope({ scanId, status, azure, llm, divergence }) {
 const ANALYZE_ENVELOPE_VERSION = 2
 // v2 engine identity. `azure-di-v4` is the aiModels label for the Azure Document
 // Intelligence v4 receipt model; the llm engine contributes its resolved model id.
-const AZURE_ENGINE_MODEL = 'prebuilt-receipt-v4'
+// True Azure model id (azure.mjs RECEIPT_MODEL_ID) — telemetry must name the
+// real engine, not a marketing alias; aiModels keeps the human label.
+const AZURE_ENGINE_MODEL = 'prebuilt-receipt'
 const AZURE_AI_MODEL_LABEL = 'azure-di-v4'
 
 // Legacy v1 dual envelope, byte-for-byte as shipped, PLUS the two additive

@@ -130,7 +130,7 @@ test('POST /ocr/analyze returns the exact v2 N-engine envelope on the happy path
   const llmEngine = body.engines.find((e) => e.id === 'llm')
   assert.equal(azureEngine.kind, 'ocr')
   assert.equal(azureEngine.provider, 'azure-di')
-  assert.equal(azureEngine.model, 'prebuilt-receipt-v4')
+  assert.equal(azureEngine.model, 'prebuilt-receipt')
   assert.equal(azureEngine.status, 'succeeded')
   assert.equal(azureEngine.raw.analyzeResult.documents[0].fields.Total.valueCurrency.amount, 10)
   assert.equal(llmEngine.kind, 'vision-llm')
