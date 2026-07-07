@@ -116,6 +116,9 @@ export async function captureOcrProviderFailure(context, env) {
     if (context.requestId) {
       scope.setTag('request.id', context.requestId)
     }
+    if (context.route) {
+      scope.setTag('ocr.route', context.route)
+    }
     if (context.azureStatus != null) {
       scope.setTag('ocr.azure_status', String(context.azureStatus))
     }
@@ -174,6 +177,9 @@ export async function captureOcrLlmFailure(context, env) {
     if (context.requestId) {
       scope.setTag('request.id', context.requestId)
     }
+    if (context.route) {
+      scope.setTag('ocr.route', context.route)
+    }
     if (context.httpStatus != null) {
       scope.setTag('ocr.llm_status', String(context.httpStatus))
     }
@@ -222,6 +228,9 @@ export async function captureOcrTotalsDivergence(context, env) {
     scope.setTag('monitoring.signal', 'ocr_totals_divergence')
     if (context.requestId) {
       scope.setTag('request.id', context.requestId)
+    }
+    if (context.route) {
+      scope.setTag('ocr.route', context.route)
     }
     if (context.model) {
       scope.setTag('ocr.llm_model', context.model)

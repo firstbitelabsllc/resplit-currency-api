@@ -500,6 +500,48 @@ test('POST /ocr/dual-scan does NOT cache a truncated LLM leg (stop_reason max_to
   assert.equal(cacheKeys.length, 0, 'a truncated LLM leg must not be cached')
 })
 
+test('POST /ocr/dual-scan carries the additive llmReasoning + aiModels fields without changing the v1 shape', async () => {
+  // Leo's client-parse ask: the legacy v1 envelope gains two ADDITIVE top-level
+  // fields. Every pre-existing field must stay byte-identical (v1 mode/azure/llm/
+  // divergence), so this asserts the additive fields AND the untouched shape.
+  stubProviders()
+  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
+  const res = await handleOcr(dualScanRequest(new Uint8Array([3, 1, 4])), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+
+  // Additive fields (both legs succeeded).
+  assert.equal(body.llmReasoning, true)
+  assert.deepEqual(body.aiModels, ['azure-di-v4', 'claude-sonnet-5'])
+
+  // The v1 shape is UNTOUCHED — same discriminators and nested objects as before.
+  assert.equal(body.v, 1)
+  assert.equal(body.mode, 'dual')
+  assert.equal(body.status, 'succeeded')
+  assert.equal(body.azure.status, 'succeeded')
+  assert.equal(body.llm.status, 'succeeded')
+  assert.equal(body.llm.provider, 'anthropic')
+  assert.equal(body.llm.model, 'claude-sonnet-5')
+  assert.equal(body.llm.scanned.total, 10)
+  assert.deepEqual(body.divergence, {
+    totalsAgree: true, azureTotal: 10, llmTotal: 10, extrasKindsDelta: [], llmRecoveredAmount: 0,
+  })
+  // The legacy route must NOT sprout the v2 engines[] array.
+  assert.equal('engines' in body, false)
+})
+
+test('POST /ocr/dual-scan additive fields reflect a failed LLM leg (llmReasoning false, azure-only aiModels)', async () => {
+  stubProviders()
+  const env = makeEnv() // dark mode: no ANTHROPIC_API_KEY -> llm provider_unavailable
+  const res = await handleOcr(dualScanRequest(new Uint8Array([2, 7, 1])), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.status, 'partial')
+  assert.equal(body.llm.status, 'provider_unavailable')
+  assert.equal(body.llmReasoning, false)
+  assert.deepEqual(body.aiModels, ['azure-di-v4'])
+})
+
 test('POST /ocr/dual-scan reports a failed LLM leg to Sentry (paid-leg error observability)', async () => {
   // Azure succeeds, Anthropic 500s -> llm provider_error. With a DSN set, the paid leg's
   // failure must surface as a Sentry issue tagged ocr_llm_error (finding #7).
