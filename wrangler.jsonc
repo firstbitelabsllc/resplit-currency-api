@@ -39,6 +39,7 @@
     "LLM_SCAN_MODEL": "claude-sonnet-5",
     "LLM_SCAN_ALLOWED_KEY_IDS": "",
     "LLM_SCAN_DAILY_CAP": "1000",
+    "SOFT_FAIL_DAILY_CAP": "600",
     // pre-launch dev unlock — set false at public launch (see router readLlmGate)
     "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
   },

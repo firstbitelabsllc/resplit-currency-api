@@ -31,7 +31,7 @@ const ENVELOPE_VERSION = 1
 
 const APP_ID = 'GXS8378HLM.com.superfit.Resplit'
 const PER_DEVICE_DAILY_CAP = 200
-const SOFT_FAIL_DAILY_CAP = 20
+const DEFAULT_SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
@@ -145,7 +145,7 @@ async function handleScan(request, env, requestId) {
     // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
     attest = 'soft_fail'
     deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
-    const ok = await underCap(env, deviceKey, SOFT_FAIL_DAILY_CAP, azureUnits)
+    const ok = await underCap(env, deviceKey, resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP), azureUnits)
     if (!ok) return rateLimited(env, { scanId, attest, requestId, clientVersion })
   } else {
     await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
@@ -343,7 +343,7 @@ async function authorizeScan({ request, env, imageBytes, softFail, keyId, assert
   if (softFail || !keyId || !assertionB64) {
     // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
     const deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
-    const ok = await underCap(env, deviceKey, SOFT_FAIL_DAILY_CAP, azureUnits)
+    const ok = await underCap(env, deviceKey, resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP), azureUnits)
     return { ok, attest: 'soft_fail' }
   }
   await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
