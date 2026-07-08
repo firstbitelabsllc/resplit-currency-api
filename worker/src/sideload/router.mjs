@@ -183,16 +183,6 @@ const ALLOWED_CONTENT_TYPES = new Set([
   'image/webp',
 ])
 
-function notImplemented(ctx, name) {
-  return errorResponse(
-    'NOT_IMPLEMENTED',
-    `${name} handler pending Task 6`,
-    501,
-    ctx.requestId,
-    RESPONSE_HEADERS,
-  )
-}
-
 async function handleUploadInit(ctx, _params) {
   let body
   try {

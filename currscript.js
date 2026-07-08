@@ -573,10 +573,6 @@ function dateDaysBeforeUTC(anchorDate, daysBefore) {
   return toDateStringUTC(date)
 }
 
-function dateDaysAgoUTC(daysAgo, { now = new Date() } = {}) {
-  return dateDaysBeforeUTC(toDateStringUTC(now), daysAgo)
-}
-
 function toLowerSorted(obj) {
   const entries = Object.entries(obj)
     .map(([key, value]) => [key.toLowerCase(), parseFloat(value)])
