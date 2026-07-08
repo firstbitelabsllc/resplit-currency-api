@@ -17,7 +17,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-const testAppID = "GXS8378HLM.com.superfit.Resplit"
+const testAppID = "QSL6XFT438.com.superfit.Resplit"
 
 // fakeStore is an in-memory Store for tests. It mirrors the Firestore
 // attest_keys collection: keyID -> (SPKI pubkey, signCount).

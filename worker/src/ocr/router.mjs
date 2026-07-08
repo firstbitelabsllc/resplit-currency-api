@@ -29,7 +29,14 @@ import { verifyAttestation } from './attestation.mjs'
 const RESPONSE_HEADERS = { ...CORS_HEADERS, 'Cache-Control': 'no-store' }
 const ENVELOPE_VERSION = 1
 
-const APP_ID = 'GXS8378HLM.com.superfit.Resplit'
+// App Attest RP-ID: assertions/attestations bind rpIdHash === SHA256(APP_ID), where
+// APP_ID is <teamID>.<bundleID>. teamID is the App ID prefix under the app's CURRENT
+// Apple team — ASC `GET /v1/bundleIds?filter[identifier]=com.superfit.Resplit` returns
+// seedId QSL6XFT438 (FirstBite Labs LLC), the source of truth. GXS8378HLM was the
+// pre-transfer Superfit prefix and is STALE for attest — do not revert. (The iOS
+// ubiquity-kvstore entitlement legitimately keeps GXS8378HLM for iCloud data
+// continuity; that prefix does not govern App Attest.)
+const APP_ID = 'QSL6XFT438.com.superfit.Resplit'
 const PER_DEVICE_DAILY_CAP = 200
 const DEFAULT_SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600

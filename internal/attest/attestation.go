@@ -71,7 +71,7 @@ type AttestationInput struct {
 	AttestationObjectB64 string
 	// Challenge is the server-issued challenge string the client attested over.
 	Challenge string
-	// AppID is the Apple App ID, e.g. "GXS8378HLM.com.superfit.Resplit".
+	// AppID is the Apple App ID, e.g. "QSL6XFT438.com.superfit.Resplit".
 	AppID string
 }
 
