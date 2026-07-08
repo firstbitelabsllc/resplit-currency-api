@@ -34,8 +34,11 @@ import (
 )
 
 // AppID is the Apple App ID (teamID.bundleID) bound into the attestation.
-// rpIdHash in authenticator data must equal SHA256(AppID).
-const AppID = "GXS8378HLM.com.superfit.Resplit"
+// rpIdHash in authenticator data must equal SHA256(AppID). teamID is the App ID
+// prefix under the app's CURRENT team: ASC seedId QSL6XFT438 (FirstBite Labs LLC)
+// is the source of truth. GXS8378HLM was the pre-transfer Superfit prefix and is
+// STALE for attest — do not revert.
+const AppID = "QSL6XFT438.com.superfit.Resplit"
 
 // appAttestNonceOID is the certificate extension OID Apple stamps into the
 // credCert carrying the attestation nonce. The nonce is the trailing 32 bytes of

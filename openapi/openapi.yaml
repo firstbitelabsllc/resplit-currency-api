@@ -200,7 +200,7 @@ paths:
         (`SHA256(authData || SHA256(challenge))` against OID 1.2.840.113635.100.8.2),
         verifies `rpIdHash == SHA256(appId)` and `signCount == 0`, then stores the
         extracted P-256 public key (SPKI) in Firestore `attest_keys` with signCount 0.
-        appId is `GXS8378HLM.com.superfit.Resplit`. The challenge is single-use.
+        appId is `QSL6XFT438.com.superfit.Resplit`. The challenge is single-use.
       requestBody:
         required: true
         content:

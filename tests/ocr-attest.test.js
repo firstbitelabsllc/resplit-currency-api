@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { verifyAssertion, AttestError } from '../worker/src/ocr/attest.mjs'
 
-const APP_ID = 'GXS8378HLM.com.superfit.Resplit'
+const APP_ID = 'QSL6XFT438.com.superfit.Resplit'
 
 // --- tiny CBOR + DER encoders (test-side only) -------------------------------
 

@@ -7,7 +7,7 @@ import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/sr
 // Mirrors tests/ocr-attest.test.js so the dual-scan attested branch (attest === 'pass')
 // is exercised with a genuine ES256 assertion, not stubbed. The auth-bypass fix means
 // only an attested device (or the explicit dev-unlock flag) may reach the paid LLM leg.
-const APP_ID = 'GXS8378HLM.com.superfit.Resplit'
+const APP_ID = 'QSL6XFT438.com.superfit.Resplit'
 
 function concatBytes(...arrs) {
   const total = arrs.reduce((n, a) => n + a.length, 0)
