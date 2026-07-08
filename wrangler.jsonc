@@ -38,8 +38,8 @@
     // ships the endpoint dark until specific App Attest keyIds are admitted.
     "LLM_SCAN_MODEL": "claude-sonnet-5",
     "LLM_SCAN_ALLOWED_KEY_IDS": "",
-    "LLM_SCAN_DAILY_CAP": "1000",
-    "SOFT_FAIL_DAILY_CAP": "20",
+    "LLM_SCAN_DAILY_CAP": "3000",
+    "SOFT_FAIL_DAILY_CAP": "150",
     // pre-launch dev unlock — set false at public launch (see router readLlmGate)
     "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
   },
@@ -91,7 +91,7 @@
         "AZURE_OCR_KV_EXTRAS": "true",
         "LLM_SCAN_MODEL": "claude-sonnet-5",
         "LLM_SCAN_ALLOWED_KEY_IDS": "",
-        "LLM_SCAN_DAILY_CAP": "1000",
+        "LLM_SCAN_DAILY_CAP": "3000",
         // pre-launch dev unlock — mirrored from root vars so the two postures don't
         // diverge; set false at public launch (see router readLlmGate).
         "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
