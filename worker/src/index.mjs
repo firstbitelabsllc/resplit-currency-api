@@ -376,7 +376,7 @@ async function handleFxCanary(request, env) {
  * @param {Record<string, string | undefined>} env
  * @param {{ requestId: string }} context
  */
-export async function runScheduledFxCanary(env, { requestId }) {
+async function runScheduledFxCanary(env, { requestId }) {
   const startedAt = Date.now()
   const checkInId = startFxCanaryCheckIn(env)
   let checkInStatus = 'error'
