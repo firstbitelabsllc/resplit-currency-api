@@ -10,3 +10,9 @@ package/
 !.agent-ledger/hot-files.md
 .eve/
 .output/
+
+# Runtime log debris (written at runtime; never source-of-truth)
+error.log
+ocr-lab/cron.log
+ocr-lab/launchd.err.log
+ocr-lab/launchd.out.log
