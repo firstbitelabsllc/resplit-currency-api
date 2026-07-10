@@ -309,7 +309,14 @@ async function runOcrScan(request, env, requestId, { route, shapeEnvelope }) {
   // gate would also require azure.status === 'succeeded', but today an LLM
   // success is the scarce, worth-caching outcome.)
   if (llm.status === 'succeeded') {
-    await env.ATTEST_KV.put(cacheKey, JSON.stringify(result), { expirationTtl: CACHE_TTL_SECONDS })
+    await writeOcrCacheBestEffort(env, {
+      cacheKey,
+      value: JSON.stringify(result),
+      route,
+      scanId,
+      requestId,
+      clientVersion,
+    })
   }
 
   const totalMs = Date.now() - start
@@ -544,7 +551,14 @@ async function finishScan(env, ctx) {
   const env_ = env
   const body = JSON.stringify(envelope({ status: ctx.status, raw: ctx.raw, scanId: ctx.scanId, kvExtras: ctx.kvExtras }))
   if (ctx.status === 'ok' && ctx.cacheKey) {
-    await env_.ATTEST_KV.put(ctx.cacheKey, body, { expirationTtl: CACHE_TTL_SECONDS })
+    await writeOcrCacheBestEffort(env_, {
+      cacheKey: ctx.cacheKey,
+      value: body,
+      route: 'scan',
+      scanId: ctx.scanId,
+      requestId: ctx.requestId,
+      clientVersion: ctx.clientVersion,
+    })
   }
   const totalMs = Date.now() - ctx.start
   logOcrMonitoringEvent(ctx.status === 'ok' ? 'info' : 'warn', {
@@ -565,6 +579,28 @@ async function finishScan(env, ctx) {
   }
   const httpStatus = ctx.status === 'ok' ? 200 : 502
   return new Response(body, { status: httpStatus, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(ctx.requestId) } })
+}
+
+// Cache persistence is an optimization after the paid providers have already
+// produced a usable result. A transient KV outage must not discard that result
+// or make the client pay for a retry. The warning deliberately excludes cache
+// keys, image hashes/bytes, device identity, provider credentials, and raw errors.
+async function writeOcrCacheBestEffort(env, { cacheKey, value, route, scanId, requestId, clientVersion }) {
+  try {
+    await env.ATTEST_KV.put(cacheKey, value, { expirationTtl: CACHE_TTL_SECONDS })
+    return true
+  } catch {
+    logOcrMonitoringEvent('warn', {
+      signal: 'ocr_cache_write_failed',
+      phase: 'scan',
+      route,
+      status: 'degraded',
+      scanId,
+      requestId,
+      client_version: clientVersion,
+    }, env)
+    return false
+  }
 }
 
 function azureStatus(httpStatus) {
