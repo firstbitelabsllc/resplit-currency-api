@@ -175,7 +175,7 @@ test('idempotency: the same image twice bills Azure once (second is a cache hit)
 
 test('POST /ocr/scan keeps a successful provider result when the cache write fails and emits one PII-free signal', async () => {
   stubAzure()
-  const env = makeEnv({ AZURE_OCR_KEY: 'azure-key-must-not-leak' })
+  const env = makeEnv({ AZURE_OCR_KEY: 'azure-key-must-not-leak', SENTRY_RELEASE: 'release-cache-test' })
   const originalPut = env.ATTEST_KV.put.bind(env.ATTEST_KV)
   env.ATTEST_KV.put = async (key, value, options) => {
     if (key.startsWith('cache:')) throw new Error('cache backend unavailable')
@@ -183,8 +183,11 @@ test('POST /ocr/scan keeps a successful provider result when the cache write fai
   }
   const image = new TextEncoder().encode('IMAGE_BYTES_MUST_NOT_LEAK')
   const warnings = []
+  const logs = []
   const originalWarn = console.warn
+  const originalLog = console.log
   console.warn = (line) => warnings.push(line)
+  console.log = (line) => logs.push(line)
   let res
   try {
     res = await handleOcr(scanRequest(image, {
@@ -194,6 +197,7 @@ test('POST /ocr/scan keeps a successful provider result when the cache write fai
     }), env)
   } finally {
     console.warn = originalWarn
+    console.log = originalLog
   }
 
   assert.equal(res.status, 200, 'cache availability must not replace a successful OCR result with a 502')
@@ -202,7 +206,12 @@ test('POST /ocr/scan keeps a successful provider result when the cache write fai
   assert.equal(body.mode, 'raw')
   assert.equal(body.provider, 'azure-di')
   assert.equal(body.status, 'ok')
-  assert.equal(body.raw.status, 'succeeded')
+  assert.deepEqual(body.raw, {
+    status: 'succeeded',
+    analyzeResult: { documents: [{ docType: 'receipt' }] },
+  })
+  assert.equal(azureCalls.receiptSubmit, 1)
+  assert.equal(azureCalls.receiptPoll, 1)
 
   const cacheFailureLines = warnings.filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
     .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
@@ -210,10 +219,39 @@ test('POST /ocr/scan keeps a successful provider result when the cache write fai
   assert.equal(cacheFailureLines.length, 1, 'one cache-write failure must emit exactly one structured signal')
   const [event] = cacheFailureLines
   assert.equal(event.route, 'scan')
-  assert.equal(event.requestId, 'trace-cache-write-raw')
-  assert.equal(event.client_version, 'cache-failure-test')
+  assert.equal(event.scanId, body.scanId)
+  assert.equal(event.release, 'release-cache-test')
+  assert.equal('requestId' in event, false)
+  assert.equal('client_version' in event, false)
   assert.equal(Object.keys(event).some((key) => /image|key|device/i.test(key)), false)
   assert.doesNotMatch(JSON.stringify(event), /IMAGE_BYTES_MUST_NOT_LEAK|azure-key-must-not-leak|device-key-must-not-leak|cache:/)
+
+  const successEvents = logs.filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
+    .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
+    .filter((event_) => event_.signal === 'scan' && event_.status === 'ok')
+  assert.equal(successEvents.length, 1, 'cache degradation must not suppress normal success telemetry')
+  assert.equal(successEvents[0].scanId, body.scanId)
+})
+
+test('POST /ocr/scan keeps provider success when cache-failure logging throws', async () => {
+  stubAzure()
+  const env = makeEnv()
+  const originalPut = env.ATTEST_KV.put.bind(env.ATTEST_KV)
+  env.ATTEST_KV.put = async (key, value, options) => {
+    if (key.startsWith('cache:')) throw new Error('cache backend unavailable')
+    return originalPut(key, value, options)
+  }
+  const originalWarn = console.warn
+  console.warn = () => { throw new Error('logging unavailable') }
+  try {
+    const res = await handleOcr(scanRequest(new Uint8Array([4, 3, 2, 1])), env)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.status, 'ok')
+    assert.equal(body.raw.analyzeResult.documents[0].docType, 'receipt')
+  } finally {
+    console.warn = originalWarn
+  }
 })
 
 test('per-device (soft-fail/IP) cap returns 429 with rate_limited envelope', async () => {

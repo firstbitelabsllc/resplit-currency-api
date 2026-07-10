@@ -1,6 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
+import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
 
 // /ocr/analyze — the v2 N-engine envelope. Same auth/attest/caps/cache pipeline as
 // /ocr/dual-scan (they share one internal implementation), rendered as the versioned
@@ -150,6 +151,106 @@ test('POST /ocr/analyze returns the exact v2 N-engine envelope on the happy path
 
   assert.equal(calls.azureSubmit, 1)
   assert.equal(calls.anthropic, 1)
+})
+
+test('POST /ocr/analyze preserves the full v2 result and emits grouped cache-degradation telemetry when cache write fails', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key-must-not-leak',
+    AZURE_OCR_KEY: 'azure-key-must-not-leak',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1',
+    SENTRY_RELEASE: 'release-cache-test',
+  })
+  const originalPut = env.ATTEST_KV.put.bind(env.ATTEST_KV)
+  env.ATTEST_KV.put = async (key, value, options) => {
+    if (key.startsWith('cache:dualScan:')) throw new Error('RAW_CACHE_ERROR_MUST_NOT_LEAK')
+    return originalPut(key, value, options)
+  }
+  const warnings = []
+  const logs = []
+  const originalWarn = console.warn
+  const originalLog = console.log
+  console.warn = (line) => warnings.push(line)
+  console.log = (line) => logs.push(line)
+  const sentry = { messages: [], scopes: [] }
+  setOcrSentrySdkForTests({
+    captureMessage(message) { sentry.messages.push(message) },
+    flush() { return Promise.resolve(true) },
+    withScope(cb) {
+      const scope = {
+        tags: {}, contexts: {}, fingerprint: null,
+        setLevel(level) { this.level = level },
+        setTag(key, value) { this.tags[key] = value },
+        setContext(key, value) { this.contexts[key] = value },
+        setFingerprint(value) { this.fingerprint = value },
+      }
+      sentry.scopes.push(scope)
+      cb(scope)
+    },
+  })
+
+  let res
+  try {
+    res = await handleOcr(analyzeRequest(new TextEncoder().encode('ANALYZE_IMAGE_MUST_NOT_LEAK'), {
+      'x-resplit-attest-key-id': 'DEVICE_KEY_MUST_NOT_LEAK',
+      'x-resplit-client-version': 'CLIENT_VERSION_MUST_NOT_LEAK',
+      'x-resplit-trace-id': 'CLIENT_REQUEST_ID_MUST_NOT_LEAK',
+    }), env)
+  } finally {
+    console.warn = originalWarn
+    console.log = originalLog
+    resetOcrSentrySdkForTests()
+  }
+
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.v, 2)
+  assert.equal(body.status, 'succeeded')
+  const azureEngine = body.engines.find((engine) => engine.id === 'azure')
+  const llmEngine = body.engines.find((engine) => engine.id === 'llm')
+  assert.equal(azureEngine.raw.analyzeResult.documents[0].fields.Total.valueCurrency.amount, 10)
+  assert.deepEqual(llmEngine.scanned, scannedReceipt())
+  assert.deepEqual(body.consensus, {
+    totalsAgree: true,
+    azureTotal: 10,
+    llmTotal: 10,
+    extrasKindsDelta: [],
+    llmRecoveredAmount: 0,
+  })
+  assert.equal(calls.azureSubmit, 1)
+  assert.equal(calls.azurePoll, 1)
+  assert.equal(calls.anthropic, 1)
+
+  const cacheEvents = warnings.filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
+    .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
+    .filter((event) => event.signal === 'ocr_cache_write_failed')
+  assert.equal(cacheEvents.length, 1)
+  assert.equal(cacheEvents[0].route, 'analyze')
+  assert.equal(cacheEvents[0].scanId, body.scanId)
+  assert.equal(cacheEvents[0].release, 'release-cache-test')
+  assert.equal('requestId' in cacheEvents[0], false)
+  assert.equal('client_version' in cacheEvents[0], false)
+
+  const successEvents = logs.filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
+    .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
+    .filter((event) => event.signal === 'dual_scan' && event.route === 'analyze')
+  assert.equal(successEvents.length, 1)
+  assert.equal(successEvents[0].scanId, body.scanId)
+
+  assert.deepEqual(sentry.messages, ['OCR cache write failed'])
+  assert.equal(sentry.scopes.length, 1)
+  assert.equal(sentry.scopes[0].tags['monitoring.signal'], 'ocr_cache_write_failed')
+  assert.deepEqual(sentry.scopes[0].fingerprint, ['ocr_cache_write_failed'])
+  assert.deepEqual(sentry.scopes[0].contexts.ocrCacheWrite, {
+    scanId: body.scanId,
+    route: 'analyze',
+    release: 'release-cache-test',
+  })
+  assert.doesNotMatch(
+    JSON.stringify({ cacheEvents, sentry }),
+    /ANALYZE_IMAGE_MUST_NOT_LEAK|DEVICE_KEY_MUST_NOT_LEAK|CLIENT_VERSION_MUST_NOT_LEAK|CLIENT_REQUEST_ID_MUST_NOT_LEAK|RAW_CACHE_ERROR_MUST_NOT_LEAK|azure-key-must-not-leak|anthropic-key-must-not-leak/
+  )
 })
 
 test('POST /ocr/analyze with a failed LLM leg is partial: llmReasoning false, aiModels azure-only', async () => {
