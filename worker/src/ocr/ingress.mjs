@@ -27,16 +27,72 @@ export async function readOcrImageWithinBudget(request, env, context) {
     })
   }
 
-  const imageBytes = new Uint8Array(await request.arrayBuffer())
-  if (imageBytes.byteLength > max) {
+  const body = await readBodyWithinBudget(request, max)
+  if (!body.ok) {
     return rejectOversizedImage(env, context, {
       sizeSource: 'actual',
-      size: imageBytes.byteLength,
+      size: body.observedSize,
       max,
     })
   }
 
+  return { ok: true, imageBytes: body.imageBytes }
+}
+
+async function readBodyWithinBudget(request, max) {
+  // Workers expose request bodies as ReadableStreams. Keep arrayBuffer only as
+  // a compatibility fallback for synthetic/request-like callers with no stream.
+  if (!request.body || typeof request.body.getReader !== 'function') {
+    const imageBytes = new Uint8Array(await request.arrayBuffer())
+    if (imageBytes.byteLength > max) {
+      return { ok: false, observedSize: imageBytes.byteLength }
+    }
+    return { ok: true, imageBytes }
+  }
+
+  const reader = request.body.getReader()
+  const chunks = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = toUint8Array(value)
+      const observedSize = total + chunk.byteLength
+      if (observedSize > max) {
+        // Stop the network/body producer at the first overflow. Never pull or
+        // retain the remaining request, and never let cancellation failure turn
+        // the deterministic 413 into a route exception.
+        try {
+          await reader.cancel('ocr_ingress_limit_exceeded')
+        } catch {
+          // Best-effort transport cleanup; the request is still rejected.
+        }
+        return { ok: false, observedSize }
+      }
+      chunks.push(chunk)
+      total = observedSize
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const imageBytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    imageBytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
   return { ok: true, imageBytes }
+}
+
+function toUint8Array(value) {
+  if (value instanceof Uint8Array) return value
+  if (value instanceof ArrayBuffer) return new Uint8Array(value)
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  }
+  throw new TypeError('OCR request stream yielded a non-byte chunk')
 }
 
 /**
