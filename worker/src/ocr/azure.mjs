@@ -8,6 +8,8 @@
 const RECEIPT_MODEL_ID = 'prebuilt-receipt'
 const LAYOUT_MODEL_ID = 'prebuilt-layout'
 const API_VERSION = '2024-11-30'
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000
+const MAX_FETCH_TIMEOUT_MS = 60_000
 
 export const OCR_PROVIDER = 'azure-di'
 
@@ -29,6 +31,61 @@ function readConfig(env) {
     throw new AzureConfigError('AZURE_OCR_ENDPOINT and AZURE_OCR_KEY must be configured (wrangler secret)')
   }
   return { endpoint, key }
+}
+
+/**
+ * Keep the Worker-side deadline configurable without letting malformed or
+ * surprising values silently remove the guard. One millisecond remains valid
+ * for hermetic tests; production is explicitly pinned to the 15-second default.
+ *
+ * @param {unknown} value
+ * @returns {number}
+ */
+export function resolveAzureFetchTimeoutMs(value) {
+  const raw = typeof value === 'string' || typeof value === 'number'
+    ? String(value).trim()
+    : ''
+  if (!/^\d+$/.test(raw)) return DEFAULT_FETCH_TIMEOUT_MS
+
+  const timeoutMs = Number(raw)
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_FETCH_TIMEOUT_MS) {
+    return DEFAULT_FETCH_TIMEOUT_MS
+  }
+  return timeoutMs
+}
+
+/**
+ * Run one Azure transport call under its own deadline. Fetch failures stay
+ * data-shaped so every OCR route can preserve its existing provider_error
+ * envelope instead of falling into an unclassified route exception.
+ *
+ * @param {string} url
+ * @param {RequestInit} init
+ * @param {{ AZURE_OCR_FETCH_TIMEOUT_MS?: string | number }} env
+ * @returns {Promise<{ response: Response | null, failure: { httpStatus: number, errorBody: string } | null }>}
+ */
+async function fetchAzure(url, init, env) {
+  const controller = new AbortController()
+  const timeout = setTimeout(
+    () => controller.abort('azure_timeout'),
+    resolveAzureFetchTimeoutMs(env.AZURE_OCR_FETCH_TIMEOUT_MS),
+  )
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    return { response, failure: null }
+  } catch {
+    const timedOut = controller.signal.aborted
+    return {
+      response: null,
+      failure: {
+        httpStatus: timedOut ? 504 : 502,
+        errorBody: timedOut ? 'azure_timeout' : 'azure_transport_error',
+      },
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 const analyzeUrl = (endpoint, { modelId = RECEIPT_MODEL_ID, features = [] } = {}) => {
@@ -73,14 +130,18 @@ function extractOperationId(headers) {
  */
 async function submitAnalyze(imageBytes, contentType, env, options = {}) {
   const { endpoint, key } = readConfig(env)
-  const res = await fetch(analyzeUrl(endpoint, options), {
+  const { response: res, failure } = await fetchAzure(analyzeUrl(endpoint, options), {
     method: 'POST',
     headers: {
       'Ocp-Apim-Subscription-Key': key,
       'Content-Type': contentType || 'image/jpeg',
     },
     body: imageBytes,
-  })
+  }, env)
+
+  if (failure) {
+    return { ok: false, httpStatus: failure.httpStatus, operationId: null, errorBody: failure.errorBody }
+  }
 
   if (res.status === 202 || res.status === 200) {
     return { ok: true, httpStatus: res.status, operationId: extractOperationId(res.headers), errorBody: null }
@@ -110,10 +171,20 @@ export async function submitLayoutKeyValueAnalyze(imageBytes, contentType, env) 
  */
 async function getAnalyzeResult(operationId, env, options = {}) {
   const { endpoint, key } = readConfig(env)
-  const res = await fetch(resultUrl(endpoint, operationId, options), {
+  const { response: res, failure } = await fetchAzure(resultUrl(endpoint, operationId, options), {
     method: 'GET',
     headers: { 'Ocp-Apim-Subscription-Key': key },
-  })
+  }, env)
+
+  if (failure) {
+    return {
+      ok: false,
+      httpStatus: failure.httpStatus,
+      status: null,
+      body: null,
+      errorBody: failure.errorBody,
+    }
+  }
 
   if (res.status !== 200) {
     const errorBody = await res.text().catch(() => '')

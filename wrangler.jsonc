@@ -34,6 +34,8 @@
     // iOS clients preprocess JPEGs to <=2,000 KiB; 10 MiB preserves that contract
     // while bounding Worker memory before auth, caps, cache, or provider calls.
     "OCR_MAX_INGRESS_BYTES": "10485760",
+    // Per-request Azure transport deadline. Malformed/out-of-range values fail safe to 15s.
+    "AZURE_OCR_FETCH_TIMEOUT_MS": "15000",
     // Discount/credit/fee capture via a 2nd prebuilt-layout keyValuePairs Azure call
     // (router.mjs keyValueExtrasEnabled). 2x cost/scan — APPROVED by Leo 2026-06-22 (low
     // traffic). Revertible: set "false" + redeploy.
@@ -93,6 +95,7 @@
         "AZURE_OCR_ENDPOINT": "https://superfit.cognitiveservices.azure.com",
         // Keep the named production env aligned with the root worker deployed by run.yml.
         "OCR_MAX_INGRESS_BYTES": "10485760",
+        "AZURE_OCR_FETCH_TIMEOUT_MS": "15000",
         // Discount/credit/fee capture (2x cost/scan) — APPROVED Leo 2026-06-22. Revert: "false".
         "AZURE_OCR_KV_EXTRAS": "true",
         "LLM_SCAN_MODEL": "claude-sonnet-5",

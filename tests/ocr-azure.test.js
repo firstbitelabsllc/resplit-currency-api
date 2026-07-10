@@ -5,6 +5,7 @@ import {
   getReceiptAnalyzeResult,
   submitReceiptAnalyze,
 } from '../worker/src/ocr/azure.mjs'
+import { handleOcr } from '../worker/src/ocr/router.mjs'
 
 const BASE_ENV = Object.freeze({
   AZURE_OCR_ENDPOINT: 'https://test.cognitiveservices.azure.com',
@@ -48,6 +49,26 @@ function rejectWhenAborted(signal, onAbort) {
       onAbort()
       reject(new DOMException('request aborted', 'AbortError'))
     }, { once: true })
+  })
+}
+
+function makeKV() {
+  const store = new Map()
+  return {
+    async get(key) { return store.has(key) ? store.get(key) : null },
+    async put(key, value) { store.set(key, value) },
+    async delete(key) { store.delete(key) },
+  }
+}
+
+function scanRequest(path, imageByte) {
+  return new Request(`https://fx.resplit.app${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'image/jpeg',
+      'x-resplit-attest-soft-fail': 'true',
+    },
+    body: new Uint8Array([imageByte]),
   })
 }
 
@@ -152,4 +173,32 @@ test('invalid Azure timeout config falls back to the conservative default and cl
   assert.equal(result.ok, true)
   assert.equal(configuredDelay, 15_000)
   assert.equal(clearedHandle, handle)
+})
+
+test('Azure timeout preserves the legacy v1 and v2 provider_error/502 route contracts', { concurrency: false, timeout: 500 }, async (t) => {
+  const timers = installTrackedTimers(t)
+  installFetch(t, async (_url, init) => rejectWhenAborted(init.signal, () => {}))
+  const env = {
+    ...BASE_ENV,
+    ATTEST_KV: makeKV(),
+    AZURE_OCR_FETCH_TIMEOUT_MS: '1',
+    SENTRY_ENVIRONMENT: 'test',
+  }
+
+  const v1Response = await handleOcr(scanRequest('/ocr/dual-scan', 7), env)
+  const v1 = await v1Response.json()
+  assert.equal(v1Response.status, 502)
+  assert.equal(v1.v, 1)
+  assert.equal(v1.status, 'provider_error')
+  assert.equal(v1.azure.status, 'provider_error')
+
+  const v2Response = await handleOcr(scanRequest('/ocr/analyze', 8), env)
+  const v2 = await v2Response.json()
+  assert.equal(v2Response.status, 502)
+  assert.equal(v2.v, 2)
+  assert.equal(v2.status, 'provider_error')
+  assert.equal(v2.engines.find((engine) => engine.id === 'azure').status, 'provider_error')
+
+  assert.deepEqual(timers.delays, [1, 1])
+  assert.equal(timers.active.size, 0)
 })
