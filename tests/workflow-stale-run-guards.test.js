@@ -8,6 +8,12 @@ const workflow = fs.readFileSync(workflowPath, 'utf8')
 const continueGuard =
   "steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true'"
 const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
+const rootWorkerSecretWrites = [
+  'printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc --env=""',
+  'printf "%s" "$SENTRY_RELEASE" | npx wrangler secret put SENTRY_RELEASE --config wrangler.jsonc --env=""',
+  'printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc --env=""',
+  'printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc --env=""',
+]
 const publicationSteps = [
   'Deploy to Cloudflare Pages',
   'Deploy FX Worker',
@@ -62,6 +68,20 @@ function assertRequiredOcrSecretGate(source) {
   }
 }
 
+function assertRootWorkerSecretTargets(source) {
+  const sync = stepBlock(source, 'Sync FX Worker runtime secrets')
+  const secretPutLines = sync
+    .split('\n')
+    .filter((line) => line.includes('npx wrangler secret put'))
+    .map((line) => line.trim())
+
+  assert.deepEqual(
+    secretPutLines,
+    rootWorkerSecretWrites,
+    'runtime-secret sync must preserve the exact reviewed root Worker upserts'
+  )
+}
+
 test('workflow keeps both the midnight publish pass and the 03:00 UTC refresh schedule', () => {
   assert.match(workflow, /schedule:\s*\n\s*-\s*cron:\s*'0 0 \* \* \*'\s*\n\s*-\s*cron:\s*'0 3 \* \* \*'/)
 })
@@ -82,6 +102,33 @@ test('workflow syncs Azure and then verifies both OCR provider secrets before pu
   assertRequiredOcrSecretGate(workflow)
   assert.doesNotMatch(workflow, /::warning::Missing AZURE_OCR_KEY for FX Worker OCR proxy\./)
   assert.match(workflow, /npx wrangler deploy --config wrangler\.jsonc --env=""/)
+})
+
+test('every runtime secret write targets only the root Worker, including mutations', () => {
+  assertRootWorkerSecretTargets(workflow)
+
+  for (const line of rootWorkerSecretWrites) {
+    const inputName = line.match(/"\$([A-Z0-9_]+)"/)?.[1]
+    assert.ok(inputName, 'reviewed secret write must retain an input variable')
+    const mutations = [
+      line.replace(' --env=""', ''),
+      line.replace('--env=""', '--env=production'),
+      line.replace('--env=""', '--env="" --env=production'),
+      `${line} --name not-resplit-fx`,
+      line.replace(`"$${inputName}"`, '"$WRONG_SECRET"'),
+      `${line}; npx wrangler secret put EXTRA_SECRET --config wrangler.jsonc`,
+    ]
+
+    for (const mutatedLine of mutations) {
+      const mutatedWorkflow = workflow.replace(line, mutatedLine)
+
+      assert.notEqual(mutatedWorkflow, workflow, 'mutation must alter the workflow fixture')
+      assert.throws(
+        () => assertRootWorkerSecretTargets(mutatedWorkflow),
+        /must preserve the exact reviewed root Worker upserts/
+      )
+    }
+  }
 })
 
 test('required OCR secret gate rejects omission, substitution, and order mutations', () => {
