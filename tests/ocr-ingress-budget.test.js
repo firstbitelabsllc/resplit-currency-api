@@ -166,6 +166,78 @@ for (const { path, route } of OCR_ROUTES) {
   })
 }
 
+test('chunked ingress cancels immediately on overflow without buffering later chunks', async () => {
+  const env = makeEnv({ OCR_MAX_INGRESS_BYTES: String(CONFIGURED_MAX_BYTES) })
+  const firstChunkBytes = CONFIGURED_MAX_BYTES - 1024
+  const secondChunkBytes = 2048
+  let pulls = 0
+  let cancelReason = null
+  const stream = new ReadableStream({
+    pull(controller) {
+      pulls++
+      if (pulls === 1) {
+        controller.enqueue(new Uint8Array(firstChunkBytes))
+        return
+      }
+      if (pulls === 2) {
+        controller.enqueue(new Uint8Array(secondChunkBytes))
+        return
+      }
+      throw new Error('ingress reader consumed bytes after the limit was crossed')
+    },
+    cancel(reason) {
+      cancelReason = reason
+    },
+  }, { highWaterMark: 0 })
+  const req = new Request('https://fx.resplit.app/ocr/analyze', {
+    method: 'POST',
+    headers: {
+      'content-type': 'image/jpeg',
+      'x-resplit-attest-soft-fail': 'true',
+      'x-resplit-client-version': '2.2.0-stream-test',
+      'x-resplit-trace-id': 'trace-stream-overflow',
+    },
+    body: stream,
+    duplex: 'half',
+  })
+  assert.equal(req.headers.get('content-length'), null, 'streamed request must exercise the no-length path')
+  let arrayBufferReads = 0
+  Object.defineProperty(req, 'arrayBuffer', {
+    value: async () => {
+      arrayBufferReads++
+      throw new Error('streaming ingress must not fall back to arrayBuffer')
+    },
+  })
+
+  const captured = captureWarnings()
+  let res
+  try {
+    res = await handleOcr(req, env)
+  } finally {
+    captured.restore()
+  }
+  const body = await res.json()
+
+  assert.equal(res.status, 413)
+  assert.equal(body.error, 'OCR_PAYLOAD_TOO_LARGE')
+  assert.equal(body.requestId, 'trace-stream-overflow')
+  assert.equal(arrayBufferReads, 0)
+  assert.equal(pulls, 2, 'the third chunk must never be pulled')
+  assert.equal(cancelReason, 'ocr_ingress_limit_exceeded')
+  assert.equal(providerCalls, 0)
+  assert.deepEqual(env.ATTEST_KV.calls, { get: 0, put: 0, delete: 0 })
+
+  const monitoring = captured.lines
+    .filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
+    .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
+  assert.equal(monitoring.length, 1)
+  assert.equal(monitoring[0].route, 'analyze')
+  assert.equal(monitoring[0].client_version, '2.2.0-stream-test')
+  assert.equal(monitoring[0].size_source, 'actual')
+  assert.equal(monitoring[0].declared_or_actual_size, firstChunkBytes + secondChunkBytes)
+  assert.equal(monitoring[0].max, CONFIGURED_MAX_BYTES)
+})
+
 test('missing, invalid, and unsafe max configuration fail closed to 10 MiB', async () => {
   const unsafeValues = [
     undefined,
