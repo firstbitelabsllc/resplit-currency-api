@@ -8,6 +8,12 @@ const workflow = fs.readFileSync(workflowPath, 'utf8')
 const continueGuard =
   "steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true'"
 const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
+const rootWorkerSecretNames = [
+  'SENTRY_DSN',
+  'SENTRY_RELEASE',
+  'CRON_SECRET',
+  'AZURE_OCR_KEY',
+]
 const publicationSteps = [
   'Deploy to Cloudflare Pages',
   'Deploy FX Worker',
@@ -62,6 +68,29 @@ function assertRequiredOcrSecretGate(source) {
   }
 }
 
+function assertRootWorkerSecretTargets(source) {
+  const sync = stepBlock(source, 'Sync FX Worker runtime secrets')
+  const secretPutLines = sync
+    .split('\n')
+    .filter((line) => line.includes('npx wrangler secret put'))
+
+  assert.equal(
+    secretPutLines.length,
+    rootWorkerSecretNames.length,
+    'runtime-secret sync must retain exactly the four existing Worker secret writes'
+  )
+
+  for (const secretName of rootWorkerSecretNames) {
+    const command =
+      `npx wrangler secret put ${secretName} --config wrangler.jsonc --env=""`
+    assert.equal(
+      occurrences(sync, command),
+      1,
+      `${secretName} secret write must explicitly target the root Worker environment`
+    )
+  }
+}
+
 test('workflow keeps both the midnight publish pass and the 03:00 UTC refresh schedule', () => {
   assert.match(workflow, /schedule:\s*\n\s*-\s*cron:\s*'0 0 \* \* \*'\s*\n\s*-\s*cron:\s*'0 3 \* \* \*'/)
 })
@@ -82,6 +111,25 @@ test('workflow syncs Azure and then verifies both OCR provider secrets before pu
   assertRequiredOcrSecretGate(workflow)
   assert.doesNotMatch(workflow, /::warning::Missing AZURE_OCR_KEY for FX Worker OCR proxy\./)
   assert.match(workflow, /npx wrangler deploy --config wrangler\.jsonc --env=""/)
+})
+
+test('workflow explicitly targets the root Worker for every runtime secret write', () => {
+  assertRootWorkerSecretTargets(workflow)
+})
+
+test('root Worker secret targeting rejects every omitted environment flag', () => {
+  for (const secretName of rootWorkerSecretNames) {
+    const exactCommand =
+      `npx wrangler secret put ${secretName} --config wrangler.jsonc --env=""`
+    const mutatedCommand = exactCommand.replace(' --env=""', '')
+    const mutatedWorkflow = workflow.replace(exactCommand, mutatedCommand)
+
+    assert.notEqual(mutatedWorkflow, workflow, 'mutation must alter the workflow fixture')
+    assert.throws(
+      () => assertRootWorkerSecretTargets(mutatedWorkflow),
+      new RegExp(`${secretName} secret write must explicitly target the root Worker environment`)
+    )
+  }
 })
 
 test('required OCR secret gate rejects omission, substitution, and order mutations', () => {
