@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+const CONFIGURED_MAX_BYTES = 2 * 1024 * 1024
 const OCR_ROUTES = [
   { path: '/ocr/scan', route: 'scan' },
   { path: '/ocr/dual-scan', route: 'dual-scan' },
@@ -131,11 +132,11 @@ for (const { path, route } of OCR_ROUTES) {
     }
   })
 
-  test(`POST ${path} rejects actual bytes above a configured cap despite a spoofed low length`, async () => {
-    const env = makeEnv({ OCR_MAX_INGRESS_BYTES: '3' })
+  test(`POST ${path} rejects actual bytes above a configured cap with missing or spoofed length`, async () => {
+    const env = makeEnv({ OCR_MAX_INGRESS_BYTES: String(CONFIGURED_MAX_BYTES) })
     const requestId = `trace-actual-${route}`
-    const req = scanRequest(path, new Uint8Array([1, 2, 3, 4]), {
-      'content-length': '1',
+    const req = scanRequest(path, new Uint8Array(CONFIGURED_MAX_BYTES + 1), {
+      ...(route === 'analyze' ? {} : { 'content-length': String(CONFIGURED_MAX_BYTES) }),
       'x-resplit-trace-id': requestId,
     })
     const captured = captureWarnings()
@@ -149,7 +150,7 @@ for (const { path, route } of OCR_ROUTES) {
 
     assert.equal(res.status, 413)
     assert.equal(body.error, 'OCR_PAYLOAD_TOO_LARGE')
-    assert.equal(body.message, 'OCR image exceeds the 3 byte limit')
+    assert.equal(body.message, `OCR image exceeds the ${CONFIGURED_MAX_BYTES} byte limit`)
     assert.equal(body.requestId, requestId)
     assert.equal(providerCalls, 0)
     assert.deepEqual(env.ATTEST_KV.calls, { get: 0, put: 0, delete: 0 })
@@ -160,13 +161,23 @@ for (const { path, route } of OCR_ROUTES) {
     assert.equal(monitoring.length, 1)
     assert.equal(monitoring[0].route, route)
     assert.equal(monitoring[0].size_source, 'actual')
-    assert.equal(monitoring[0].declared_or_actual_size, 4)
-    assert.equal(monitoring[0].max, 3)
+    assert.equal(monitoring[0].declared_or_actual_size, CONFIGURED_MAX_BYTES + 1)
+    assert.equal(monitoring[0].max, CONFIGURED_MAX_BYTES)
   })
 }
 
 test('missing, invalid, and unsafe max configuration fail closed to 10 MiB', async () => {
-  const unsafeValues = [undefined, '', 'not-a-number', '0', '-1', '1.5', String(DEFAULT_MAX_BYTES + 1)]
+  const unsafeValues = [
+    undefined,
+    '',
+    'not-a-number',
+    '0',
+    '-1',
+    '1.5',
+    '3',
+    String((2_000 * 1024) - 1),
+    String(DEFAULT_MAX_BYTES + 1),
+  ]
 
   for (const configured of unsafeValues) {
     const env = makeEnv(configured === undefined ? {} : { OCR_MAX_INGRESS_BYTES: configured })
