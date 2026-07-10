@@ -6,9 +6,10 @@ const RESERVATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 /**
  * Dormant SQLite accounting primitive for future OCR admission control.
  *
- * The production OCR router deliberately does not call this class while
- * OCR_ACCOUNTING_MODE remains "legacy". Its public reserve() RPC is exercised
- * only by the Workers-runtime contract tests in this foundation change.
+ * The production OCR router deliberately cannot reach this class while
+ * OCR_ACCOUNTING_MODE remains "legacy". A separate adapter may call reserve()
+ * in non-enforcing shadow mode after cache misses; the legacy spend gates and
+ * every client response remain authoritative until a later reviewed rollout.
  */
 export class OcrAccounting extends DurableObject {
   constructor(ctx, env) {
