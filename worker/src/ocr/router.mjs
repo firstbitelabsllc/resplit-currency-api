@@ -32,6 +32,7 @@ import { scanReceiptWithAnthropic, LLM_PROVIDER } from './anthropic.mjs'
 import { verifyAssertion, AttestError } from './attest.mjs'
 import { verifyAttestation } from './attestation.mjs'
 import { readOcrImageWithinBudget } from './ingress.mjs'
+import { scheduleOcrAccountingShadow } from './accounting-shadow.mjs'
 
 const RESPONSE_HEADERS = { ...CORS_HEADERS, 'Cache-Control': 'no-store' }
 const ENVELOPE_VERSION = 1
@@ -64,7 +65,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {Record<string, any>} env  // expects env.ATTEST_KV (KVNamespace), env.AZURE_OCR_*
  * @returns {Promise<Response>}
  */
-export async function handleOcr(request, env) {
+export async function handleOcr(request, env, ctx) {
   const requestId = resolveRequestId(request)
   const url = new URL(request.url)
   const method = request.method
@@ -86,13 +87,13 @@ export async function handleOcr(request, env) {
       return await handleAttest(request, env, requestId)
     }
     if (method === 'POST' && url.pathname === '/ocr/scan') {
-      return await handleScan(request, env, requestId)
+      return await handleScan(request, env, requestId, ctx)
     }
     if (method === 'POST' && url.pathname === '/ocr/dual-scan') {
-      return await handleDualScan(request, env, requestId)
+      return await handleDualScan(request, env, requestId, ctx)
     }
     if (method === 'POST' && url.pathname === '/ocr/analyze') {
-      return await handleAnalyze(request, env, requestId)
+      return await handleAnalyze(request, env, requestId, ctx)
     }
     return errorResponse('NOT_FOUND', 'OCR route not found', 404, requestId, RESPONSE_HEADERS)
   } catch (error) {
@@ -130,7 +131,7 @@ async function handleAttest(request, env, requestId) {
   return jsonResponse({ ok: true }, { status: 200, requestId, headers: RESPONSE_HEADERS })
 }
 
-async function handleScan(request, env, requestId) {
+async function handleScan(request, env, requestId, ctx) {
   const start = Date.now()
   const scanId = crypto.randomUUID()
   const clientVersion = request.headers.get('x-resplit-client-version') || 'unknown'
@@ -159,11 +160,17 @@ async function handleScan(request, env, requestId) {
   const azureUnits = keyValueExtrasEnabled(env) ? 2 : 1
   let attest = 'reject'
   let deviceKey = keyId
+  let principalKind = 'attested'
+  let principal = keyId
+  let azureSubjectCap = PER_DEVICE_DAILY_CAP
   if (softFail || !keyId || !assertionB64) {
     // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
     attest = 'soft_fail'
-    deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
-    const ok = await underCap(env, deviceKey, resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP), azureUnits)
+    principalKind = 'soft_fail'
+    principal = request.headers.get('cf-connecting-ip') || 'unknown'
+    deviceKey = `ip:${principal}`
+    azureSubjectCap = resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP)
+    const ok = await underCap(env, deviceKey, azureSubjectCap, azureUnits)
     if (!ok) return rateLimited(env, { scanId, attest, requestId, clientVersion })
   } else {
     await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
@@ -183,6 +190,20 @@ async function handleScan(request, env, requestId) {
     }, env)
     return new Response(cached, { status: 200, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
   }
+
+  scheduleOcrAccountingShadow({
+    env,
+    ctx,
+    route: 'scan',
+    requestId,
+    scanId,
+    principalKind,
+    principal,
+    azureUnits,
+    anthropicUnits: 0,
+    azureSubjectCap,
+    anthropicSubjectCap: azureSubjectCap,
+  })
 
   // --- Azure forward (server-side; key never leaves the Worker) ---
   const azureStart = Date.now()
@@ -220,13 +241,13 @@ async function handleScan(request, env, requestId) {
 
 // The legacy route: serves the EXACT v1 dual envelope shipped TestFlight builds
 // parse, plus the two additive top-level fields (llmReasoning + aiModels).
-async function handleDualScan(request, env, requestId) {
-  return runOcrScan(request, env, requestId, { route: 'dual-scan', shapeEnvelope: shapeDualScanV1Envelope })
+async function handleDualScan(request, env, requestId, ctx) {
+  return runOcrScan(request, env, requestId, ctx, { route: 'dual-scan', shapeEnvelope: shapeDualScanV1Envelope })
 }
 
 // The new route: same pipeline, served as the v2 N-engine envelope.
-async function handleAnalyze(request, env, requestId) {
-  return runOcrScan(request, env, requestId, { route: 'analyze', shapeEnvelope: shapeAnalyzeV2Envelope })
+async function handleAnalyze(request, env, requestId, ctx) {
+  return runOcrScan(request, env, requestId, ctx, { route: 'analyze', shapeEnvelope: shapeAnalyzeV2Envelope })
 }
 
 // Shared scan core for the multi-engine OCR routes. /ocr/dual-scan and /ocr/analyze
@@ -235,7 +256,7 @@ async function handleAnalyze(request, env, requestId) {
 // cache write, Loki + Sentry monitoring — and differ ONLY in how the shape-neutral
 // internal result is rendered into a response (shapeEnvelope). The gate logic lives
 // here once so a naming/shape change on one route can never drift the other's auth.
-async function runOcrScan(request, env, requestId, { route, shapeEnvelope }) {
+async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }) {
   const start = Date.now()
   const scanId = crypto.randomUUID()
   const clientVersion = request.headers.get('x-resplit-client-version') || 'unknown'
@@ -283,6 +304,20 @@ async function runOcrScan(request, env, requestId, { route, shapeEnvelope }) {
     })
     return renderScan(shapeEnvelope, result, requestId)
   }
+
+  scheduleOcrAccountingShadow({
+    env,
+    ctx,
+    route,
+    requestId,
+    scanId,
+    principalKind: auth.principalKind,
+    principal: auth.principal,
+    azureUnits: 1,
+    anthropicUnits: llmGate.status === 'allowed' ? 1 : 0,
+    azureSubjectCap: auth.azureSubjectCap,
+    anthropicSubjectCap: auth.azureSubjectCap,
+  })
 
   const azurePromise = runAzureRawLeg({ imageBytes, contentType, env })
   const llmPromise = runLlmLeg({ imageBytes, contentType, env, gate: llmGate, model })
@@ -369,13 +404,15 @@ async function runOcrScan(request, env, requestId, { route, shapeEnvelope }) {
 async function authorizeScan({ request, env, imageBytes, softFail, keyId, assertionB64, azureUnits }) {
   if (softFail || !keyId || !assertionB64) {
     // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
-    const deviceKey = `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`
-    const ok = await underCap(env, deviceKey, resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP), azureUnits)
-    return { ok, attest: 'soft_fail' }
+    const principal = request.headers.get('cf-connecting-ip') || 'unknown'
+    const deviceKey = `ip:${principal}`
+    const azureSubjectCap = resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP)
+    const ok = await underCap(env, deviceKey, azureSubjectCap, azureUnits)
+    return { ok, attest: 'soft_fail', principalKind: 'soft_fail', principal, azureSubjectCap }
   }
   await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
   const ok = await underCap(env, keyId, PER_DEVICE_DAILY_CAP, azureUnits)
-  return { ok, attest: 'pass' }
+  return { ok, attest: 'pass', principalKind: 'attested', principal: keyId, azureSubjectCap: PER_DEVICE_DAILY_CAP }
 }
 
 // Serialize a shaped envelope; HTTP status is derived from the scan status so

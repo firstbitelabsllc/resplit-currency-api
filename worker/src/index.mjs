@@ -36,10 +36,10 @@ const handler = {
   /**
    * @param {Request} request
    * @param {Record<string, string | undefined>} env
-   * @param {ExecutionContext} _ctx
+   * @param {ExecutionContext} ctx
    */
-  async fetch(request, env, _ctx) {
-    return handleRequest(request, env)
+  async fetch(request, env, ctx) {
+    return handleRequest(request, env, ctx)
   },
   /**
    * Daily FX canary (13:00 UTC via wrangler.jsonc triggers.crons). The platform
@@ -62,9 +62,10 @@ export default Sentry.withSentry(getSentryWorkerOptions, handler)
 /**
  * @param {Request} request
  * @param {Record<string, string | undefined>} env
+ * @param {ExecutionContext} [ctx]
  * @returns {Promise<Response>}
  */
-export async function handleRequest(request, env) {
+export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url)
 
   if (url.pathname.startsWith('/sideload/')) {
@@ -72,7 +73,7 @@ export async function handleRequest(request, env) {
   }
 
   if (url.pathname.startsWith('/ocr/')) {
-    return handleOcr(request, env)
+    return handleOcr(request, env, ctx)
   }
 
   switch (url.pathname) {
