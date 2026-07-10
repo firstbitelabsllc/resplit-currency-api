@@ -2,10 +2,14 @@
 
 'use strict'
 
-const secretName = process.argv[2]
+const secretNames = process.argv.slice(2)
 
-if (process.argv.length !== 3 || !secretName.trim()) {
-  console.error('usage: worker-secret-continuity.js <SECRET_NAME>')
+if (
+  secretNames.length === 0 ||
+  secretNames.some((secretName) => !secretName.trim()) ||
+  new Set(secretNames).size !== secretNames.length
+) {
+  console.error('usage: worker-secret-continuity.js <SECRET_NAME> [SECRET_NAME ...]')
   process.exit(2)
 }
 
@@ -31,14 +35,17 @@ process.stdin.on('end', () => {
     process.exit(1)
   }
 
-  const exists = entries.some(
-    (entry) => entry && entry.name === secretName && entry.type === 'secret_text'
+  const missingSecret = secretNames.find(
+    (secretName) =>
+      !entries.some(
+        (entry) => entry && entry.name === secretName && entry.type === 'secret_text'
+      )
   )
 
-  if (!exists) {
-    console.error(`required Worker secret is absent: ${secretName}`)
+  if (missingSecret) {
+    console.error(`required Worker secret is absent: ${missingSecret}`)
     process.exit(1)
   }
 
-  console.log(`continuity preserved: ${secretName} exists on the deployed Worker`)
+  console.log(`continuity preserved: ${secretNames.join(', ')} exist on the deployed Worker`)
 })
