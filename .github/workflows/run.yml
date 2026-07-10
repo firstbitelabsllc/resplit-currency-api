@@ -84,7 +84,7 @@ jobs:
           remote_snapshot="$(mktemp)"
           if git show "origin/${branch_name}:snapshot-archive/${{ env.date_today }}.json" > "$remote_snapshot" 2>/dev/null \
             && cmp -s "$remote_snapshot" "snapshot-archive/${{ env.date_today }}.json"; then
-            deploy_drift="$(git diff --name-only HEAD..origin/${branch_name} -- .github/workflows/run.yml country.json currscript.js package.json package-lock.json scripts skeleton-package.json worker wrangler.jsonc snapshot-archive || true)"
+            deploy_drift="$(git diff --name-only "HEAD..origin/${branch_name}" -- .github/workflows/run.yml country.json currscript.js package.json package-lock.json scripts skeleton-package.json worker wrangler.jsonc snapshot-archive || true)"
             if [ -z "$deploy_drift" ]; then
               echo "::notice::Remote ${branch_name} already has snapshot-archive/${{ env.date_today }}.json from a newer run, and deploy inputs still match. Continuing deploy steps with the validated local artifact output."
               echo "continue_stale_deploy=true" >> "$GITHUB_OUTPUT"
@@ -140,13 +140,14 @@ jobs:
           if [ -n "$AZURE_OCR_KEY" ]; then
             printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc
           else
-            if ! deployed_worker_secrets="$(npx wrangler secret list --config wrangler.jsonc --env="")"; then
-              echo "::error::Unable to inspect deployed Worker secret continuity."
-              exit 1
-            fi
-            printf "%s" "$deployed_worker_secrets" | node scripts/worker-secret-continuity.js AZURE_OCR_KEY
-            echo "::notice::GitHub AZURE_OCR_KEY is unset; preserving the verified deployed Worker secret."
+            echo "::notice::GitHub AZURE_OCR_KEY is unset; verifying deployed Worker provider-secret continuity."
           fi
+
+          if ! deployed_worker_secrets="$(npx wrangler secret list --config wrangler.jsonc --env="")"; then
+            echo "::error::Unable to inspect deployed Worker secret continuity."
+            exit 1
+          fi
+          printf "%s" "$deployed_worker_secrets" | node scripts/worker-secret-continuity.js AZURE_OCR_KEY ANTHROPIC_API_KEY
 
       - name: Deploy to Cloudflare Pages
         id: deploy_cloudflare

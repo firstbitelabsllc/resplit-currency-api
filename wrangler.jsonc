@@ -49,8 +49,8 @@
     // pre-launch dev unlock — set false at public launch (see router readLlmGate)
     "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
   },
-  // Names only: Wrangler validates that both provider credentials already exist
-  // on the deployed Worker before it uploads a new version.
+  // Names only: experimental Wrangler metadata for local-dev warnings and Env
+  // type generation. run.yml enforces remote continuity before publication.
   "secrets": {
     "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
   },
@@ -113,7 +113,7 @@
         // diverge; set false at public launch (see router readLlmGate).
         "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
       },
-      // Wrangler environments do not inherit secret requirements from root.
+      // Environments do not inherit this local-dev/type-generation metadata.
       "secrets": {
         "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
       },
