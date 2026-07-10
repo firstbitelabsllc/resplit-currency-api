@@ -49,6 +49,11 @@
     // pre-launch dev unlock — set false at public launch (see router readLlmGate)
     "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
   },
+  // Names only: Wrangler validates that both provider credentials already exist
+  // on the deployed Worker before it uploads a new version.
+  "secrets": {
+    "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
+  },
   "kv_namespaces": [
     {
       "binding": "ATTEST_KV",
@@ -107,6 +112,10 @@
         // pre-launch dev unlock — mirrored from root vars so the two postures don't
         // diverge; set false at public launch (see router readLlmGate).
         "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
+      },
+      // Wrangler environments do not inherit secret requirements from root.
+      "secrets": {
+        "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
       },
       "kv_namespaces": [
         {
