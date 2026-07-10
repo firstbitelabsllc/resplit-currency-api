@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   logOcrMonitoringEvent,
+  captureOcrCacheWriteFailure,
   captureOcrProviderFailure,
   setOcrSentrySdkForTests,
   resetOcrSentrySdkForTests,
@@ -14,10 +15,11 @@ function makeSentryMock() {
     flush(timeout) { calls.flush.push(timeout); return Promise.resolve(true) },
     withScope(cb) {
       const scope = {
-        level: null, tags: {}, contexts: {},
+        level: null, tags: {}, contexts: {}, fingerprint: null,
         setLevel(l) { this.level = l },
         setTag(k, v) { this.tags[k] = v },
         setContext(k, v) { this.contexts[k] = v },
+        setFingerprint(value) { this.fingerprint = value },
       }
       calls.scopes.push(scope)
       cb(scope)
@@ -104,6 +106,80 @@ test('captureOcrProviderFailure is a no-op (no Sentry) when no DSN is configured
     assert.equal(calls.captureMessage.length, 0)
     assert.equal(calls.flush.length, 0)
     assert.equal(calls.scopes.length, 0)
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
+})
+
+test('captureOcrCacheWriteFailure emits one grouped PII-free warning with server correlation only', async () => {
+  const { calls, sdk } = makeSentryMock()
+  setOcrSentrySdkForTests(sdk)
+  try {
+    const result = await captureOcrCacheWriteFailure({
+      scanId: 'scan-server-generated',
+      route: 'analyze',
+      requestId: 'CLIENT_REQUEST_ID_MUST_NOT_LEAK',
+      clientVersion: 'CLIENT_VERSION_MUST_NOT_LEAK',
+      cacheKey: 'CACHE_KEY_MUST_NOT_LEAK',
+      error: new Error('RAW_CACHE_ERROR_MUST_NOT_LEAK'),
+    }, {
+      SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1',
+      SENTRY_RELEASE: 'release-cache-test',
+    })
+
+    assert.equal(result, true)
+    assert.deepEqual(calls.captureMessage, ['OCR cache write failed'])
+    assert.deepEqual(calls.flush, [2_000])
+    assert.equal(calls.scopes.length, 1)
+    const scope = calls.scopes[0]
+    assert.equal(scope.level, 'warning')
+    assert.equal(scope.tags['monitoring.signal'], 'ocr_cache_write_failed')
+    assert.equal(scope.tags['ocr.route'], 'analyze')
+    assert.deepEqual(scope.fingerprint, ['ocr_cache_write_failed'])
+    assert.deepEqual(scope.contexts.ocrCacheWrite, {
+      scanId: 'scan-server-generated',
+      route: 'analyze',
+      release: 'release-cache-test',
+    })
+    assert.doesNotMatch(
+      JSON.stringify(calls),
+      /CLIENT_REQUEST_ID_MUST_NOT_LEAK|CLIENT_VERSION_MUST_NOT_LEAK|CACHE_KEY_MUST_NOT_LEAK|RAW_CACHE_ERROR_MUST_NOT_LEAK/
+    )
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
+})
+
+test('captureOcrCacheWriteFailure swallows Sentry scope, capture, and flush failures', async () => {
+  const env = { SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' }
+  const context = { scanId: 'scan-safe', route: 'scan' }
+  const failures = [
+    {
+      withScope() { throw new Error('scope unavailable') },
+      captureMessage() {},
+      flush() { return Promise.resolve(true) },
+    },
+    {
+      withScope(cb) {
+        cb({ setLevel() {}, setTag() {}, setContext() {}, setFingerprint() {} })
+      },
+      captureMessage() { throw new Error('capture unavailable') },
+      flush() { return Promise.resolve(true) },
+    },
+    {
+      withScope(cb) {
+        cb({ setLevel() {}, setTag() {}, setContext() {}, setFingerprint() {} })
+      },
+      captureMessage() {},
+      flush() { return Promise.reject(new Error('flush unavailable')) },
+    },
+  ]
+
+  try {
+    for (const sdk of failures) {
+      setOcrSentrySdkForTests(sdk)
+      assert.equal(await captureOcrCacheWriteFailure(context, env), false)
+    }
   } finally {
     resetOcrSentrySdkForTests()
   }

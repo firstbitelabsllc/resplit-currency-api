@@ -210,6 +210,45 @@ export async function captureOcrLlmFailure(context, env) {
   return sentrySdk.flush(2_000)
 }
 
+/**
+ * Report a failed best-effort OCR cache write without exposing client-controlled
+ * identifiers, cache keys, provider payloads, or error text. The provider result
+ * is already usable at this point, so every observability failure is swallowed:
+ * telemetry must never turn a successful scan into an HTTP error.
+ *
+ * @param {{ scanId: string, route: string }} context
+ * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
+ * @returns {Promise<boolean>} true when Sentry accepted and flushed the signal
+ */
+export async function captureOcrCacheWriteFailure(context, env) {
+  if (!isOcrSentryEnabled(env)) {
+    return false
+  }
+
+  try {
+    const meta = runtimeMetadata(env)
+    sentrySdk.withScope(scope => {
+      scope.setLevel('warning')
+      scope.setTag('surface', SURFACE)
+      scope.setTag('runtime', 'worker')
+      scope.setTag('monitoring.domain', DOMAIN)
+      scope.setTag('monitoring.signal', 'ocr_cache_write_failed')
+      scope.setTag('ocr.route', context.route)
+      scope.setFingerprint(['ocr_cache_write_failed'])
+      scope.setContext('ocrCacheWrite', {
+        scanId: context.scanId,
+        route: context.route,
+        release: meta.release,
+      })
+      sentrySdk.captureMessage('OCR cache write failed')
+    })
+
+    return await sentrySdk.flush(2_000)
+  } catch {
+    return false
+  }
+}
+
 // P8 DONE-test "divergence telemetry is watched (alert wired)": a SUCCEEDED
 // dual scan whose two legs DISAGREE on the money total is the exact signal
 // the endpoint exists to surface — before this it was an info-level log line

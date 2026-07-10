@@ -244,6 +244,78 @@ test('POST /ocr/dual-scan returns dual succeeded envelope for an attested, allow
   assert.equal(calls.anthropicBodies[0].max_tokens, 4096)
 })
 
+test('POST /ocr/dual-scan keeps both successful provider results when the cache write fails and emits one PII-free signal', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key-must-not-leak',
+    AZURE_OCR_KEY: 'azure-key-must-not-leak',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    SENTRY_RELEASE: 'release-cache-test',
+  })
+  const originalPut = env.ATTEST_KV.put.bind(env.ATTEST_KV)
+  env.ATTEST_KV.put = async (key, value, options) => {
+    if (key.startsWith('cache:dualScan:')) throw new Error('cache backend unavailable')
+    return originalPut(key, value, options)
+  }
+  const image = new TextEncoder().encode('DUAL_IMAGE_BYTES_MUST_NOT_LEAK')
+  const warnings = []
+  const logs = []
+  const originalWarn = console.warn
+  const originalLog = console.log
+  console.warn = (line) => warnings.push(line)
+  console.log = (line) => logs.push(line)
+  let res
+  try {
+    res = await handleOcr(dualScanRequest(image, {
+      'x-resplit-attest-key-id': 'device-key-must-not-leak',
+      'x-resplit-client-version': 'cache-failure-test',
+      'x-resplit-trace-id': 'trace-cache-write-dual',
+    }), env)
+  } finally {
+    console.warn = originalWarn
+    console.log = originalLog
+  }
+
+  assert.equal(res.status, 200, 'cache availability must not replace successful OCR results with a 502')
+  const body = await res.json()
+  assert.equal(body.v, 1)
+  assert.equal(body.mode, 'dual')
+  assert.equal(body.status, 'succeeded')
+  assert.equal(body.azure.status, 'succeeded')
+  assert.equal(body.llm.status, 'succeeded')
+  assert.equal(body.azure.raw.analyzeResult.documents[0].fields.Total.valueCurrency.amount, 10)
+  assert.deepEqual(body.llm.scanned, scannedReceipt())
+  assert.deepEqual(body.divergence, {
+    totalsAgree: true,
+    azureTotal: 10,
+    llmTotal: 10,
+    extrasKindsDelta: [],
+    llmRecoveredAmount: 0,
+  })
+  assert.equal(calls.azureSubmit, 1)
+  assert.equal(calls.azurePoll, 1)
+  assert.equal(calls.anthropic, 1)
+
+  const cacheFailureLines = warnings.filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
+    .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
+    .filter((event) => event.signal === 'ocr_cache_write_failed')
+  assert.equal(cacheFailureLines.length, 1, 'one cache-write failure must emit exactly one structured signal')
+  const [event] = cacheFailureLines
+  assert.equal(event.route, 'dual-scan')
+  assert.equal(event.scanId, body.scanId)
+  assert.equal(event.release, 'release-cache-test')
+  assert.equal('requestId' in event, false)
+  assert.equal('client_version' in event, false)
+  assert.equal(Object.keys(event).some((key) => /image|key|device/i.test(key)), false)
+  assert.doesNotMatch(JSON.stringify(event), /DUAL_IMAGE_BYTES_MUST_NOT_LEAK|anthropic-key-must-not-leak|azure-key-must-not-leak|device-key-must-not-leak|cache:/)
+
+  const successEvents = logs.filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
+    .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
+    .filter((event_) => event_.signal === 'dual_scan' && event_.status === 'succeeded')
+  assert.equal(successEvents.length, 1, 'cache degradation must not suppress normal success telemetry')
+  assert.equal(successEvents[0].scanId, body.scanId)
+})
+
 test('POST /ocr/dual-scan soft-fail with an allowlisted keyId is still not_allowed without the unlock flag', async () => {
   // AUTH-BYPASS REGRESSION: kid-1 IS allowlisted, but the request is soft-fail
   // (unverified). The raw x-resplit-attest-key-id header must NOT unlock the paid leg —
