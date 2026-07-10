@@ -25,7 +25,9 @@ test('workflow records whether a stale rerun can safely continue deploy steps', 
 test('workflow syncs Azure OCR key onto the deployed root worker script', () => {
   assert.match(workflow, /AZURE_OCR_KEY: \$\{\{ secrets\.AZURE_OCR_KEY \}\}/)
   assert.match(workflow, /printf "%s" "\$AZURE_OCR_KEY" \| npx wrangler secret put AZURE_OCR_KEY --config wrangler\.jsonc/)
-  assert.match(workflow, /Missing AZURE_OCR_KEY for FX Worker OCR proxy\./)
+  assert.match(workflow, /npx wrangler secret list --config wrangler\.jsonc --env=""/)
+  assert.match(workflow, /node scripts\/worker-secret-continuity\.js AZURE_OCR_KEY/)
+  assert.doesNotMatch(workflow, /::warning::Missing AZURE_OCR_KEY for FX Worker OCR proxy\./)
   assert.match(workflow, /npx wrangler deploy --config wrangler\.jsonc --env=""/)
 })
 
