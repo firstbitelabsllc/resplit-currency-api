@@ -119,6 +119,8 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           AZURE_OCR_KEY: ${{ secrets.AZURE_OCR_KEY }}
         run: |
+          set -euo pipefail
+
           if [ -n "$SENTRY_DSN" ]; then
             printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc
           else
@@ -138,7 +140,12 @@ jobs:
           if [ -n "$AZURE_OCR_KEY" ]; then
             printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc
           else
-            echo "::warning::Missing AZURE_OCR_KEY for FX Worker OCR proxy."
+            if ! deployed_worker_secrets="$(npx wrangler secret list --config wrangler.jsonc --env="")"; then
+              echo "::error::Unable to inspect deployed Worker secret continuity."
+              exit 1
+            fi
+            printf "%s" "$deployed_worker_secrets" | node scripts/worker-secret-continuity.js AZURE_OCR_KEY
+            echo "::notice::GitHub AZURE_OCR_KEY is unset; preserving the verified deployed Worker secret."
           fi
 
       - name: Deploy to Cloudflare Pages
