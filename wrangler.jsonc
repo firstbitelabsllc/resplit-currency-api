@@ -101,6 +101,9 @@
         "LLM_SCAN_MODEL": "claude-sonnet-5",
         "LLM_SCAN_ALLOWED_KEY_IDS": "",
         "LLM_SCAN_DAILY_CAP": "3000",
+        // Mirror the root soft-fail Azure allowance so named production deploys
+        // cannot silently fall back to the lower in-code default.
+        "SOFT_FAIL_DAILY_CAP": "150",
         // pre-launch dev unlock — mirrored from root vars so the two postures don't
         // diverge; set false at public launch (see router readLlmGate).
         "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
