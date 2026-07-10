@@ -34,7 +34,7 @@ async function snapshot(stub) {
       'SELECT day, subject_token, azure_units, anthropic_units, azure_cap, anthropic_cap FROM ocr_subject_daily ORDER BY day, subject_token'
     ).toArray(),
     reservations: state.storage.sql.exec(
-      'SELECT day, reservation_id, subject_token, azure_units, anthropic_units, decision_json FROM ocr_reservations ORDER BY day, reservation_id'
+      'SELECT * FROM ocr_reservations ORDER BY day, reservation_id'
     ).toArray(),
   }))
 }
@@ -97,6 +97,9 @@ describe('OcrAccounting SQLite Durable Object', () => {
         azure: { allowed: false, reason: 'idempotency_conflict' },
         anthropic: { allowed: false, reason: 'idempotency_conflict' },
       })
+      expect(conflict).not.toHaveProperty('usage')
+      expect(conflict).not.toHaveProperty('day')
+      expect(conflict).not.toHaveProperty('reservationId')
       const stored = await snapshot(stub)
       expect(stored.global[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
       expect(stored.subjects).toHaveLength(1)

@@ -1,6 +1,6 @@
 {
   "name": "resplit-fx",
-  "main": "worker/src/index.mjs",
+  "main": "worker/src/worker-entry.mjs",
   "compatibility_date": "2026-03-17",
   "compatibility_flags": ["nodejs_compat"],
   // Daily FX canary — Sentry monitor resplit-currency-api-fx-canary expects 13:00 UTC.
@@ -46,6 +46,9 @@
     "LLM_SCAN_ALLOWED_KEY_IDS": "",
     "LLM_SCAN_DAILY_CAP": "3000",
     "SOFT_FAIL_DAILY_CAP": "150",
+    // DARK foundation only. The OCR router remains on its existing KV accounting
+    // path until a separately proven activation change moves this out of legacy.
+    "OCR_ACCOUNTING_MODE": "legacy",
     // pre-launch dev unlock — set false at public launch (see router readLlmGate)
     "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
   },
@@ -54,6 +57,23 @@
   "secrets": {
     "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "OCR_ACCOUNTING",
+        "class_name": "OcrAccounting"
+      }
+    ]
+  },
+  // Permanent, roll-forward-only migration history. After the next root deploy
+  // applies this tag, rollback builds must retain this migration, class export,
+  // and binding while restoring legacy behavior through mode/routing only.
+  "migrations": [
+    {
+      "tag": "ocr-accounting-sqlite-v1",
+      "new_sqlite_classes": ["OcrAccounting"]
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "ATTEST_KV",
@@ -109,6 +129,8 @@
         // Mirror the root soft-fail Azure allowance so named production deploys
         // cannot silently fall back to the lower in-code default.
         "SOFT_FAIL_DAILY_CAP": "150",
+        // Mirror root dark mode; named environments inherit neither vars nor DO bindings.
+        "OCR_ACCOUNTING_MODE": "legacy",
         // pre-launch dev unlock — mirrored from root vars so the two postures don't
         // diverge; set false at public launch (see router readLlmGate).
         "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
@@ -116,6 +138,14 @@
       // Environments do not inherit this local-dev/type-generation metadata.
       "secrets": {
         "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "OCR_ACCOUNTING",
+            "class_name": "OcrAccounting"
+          }
+        ]
       },
       "kv_namespaces": [
         {
