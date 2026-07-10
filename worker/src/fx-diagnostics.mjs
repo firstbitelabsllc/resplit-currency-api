@@ -1,14 +1,13 @@
 import {
   buildFxHistoryResponse,
   buildFxQuoteResponse,
+  MAX_FX_HISTORY_RANGE_DAYS,
 } from './fx-contract.mjs'
 import {
   dateDaysBefore,
   normalizeISODate,
   todayDateString,
 } from './date-utils.mjs'
-
-const MAX_WINDOW_DAYS = 366
 
 /**
  * @typedef {typeof fetch} FetchLike
@@ -180,5 +179,5 @@ function clampDays(value) {
   if (!Number.isFinite(value) || !Number.isInteger(value)) {
     throw new Error(`Invalid days: ${value}`)
   }
-  return Math.min(MAX_WINDOW_DAYS, Math.max(1, value))
+  return Math.min(MAX_FX_HISTORY_RANGE_DAYS, Math.max(1, value))
 }

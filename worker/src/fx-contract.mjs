@@ -4,6 +4,9 @@ import {
 } from './date-utils.mjs'
 
 const DEFAULT_ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
+const DAY_MS = 86_400_000
+
+export const MAX_FX_HISTORY_RANGE_DAYS = 366
 
 /**
  * @typedef {typeof fetch} FetchLike
@@ -203,6 +206,8 @@ export async function buildFxHistoryResponse({
   if (normalizedStart > normalizedEnd) {
     throw new Error(`Invalid date range: ${normalizedStart} > ${normalizedEnd}`)
   }
+
+  assertHistoryRangeWithinLimit(normalizedStart, normalizedEnd)
 
   if (fromCode === toCode) {
     const dates = enumerateDates(normalizedStart, normalizedEnd)
@@ -444,6 +449,17 @@ function enumerateDates(start, end) {
   }
 
   return dates
+}
+
+/**
+ * @param {string} start
+ * @param {string} end
+ */
+function assertHistoryRangeWithinLimit(start, end) {
+  const inclusiveDays = (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / DAY_MS + 1
+  if (inclusiveDays > MAX_FX_HISTORY_RANGE_DAYS) {
+    throw new Error(`Invalid date range: maximum ${MAX_FX_HISTORY_RANGE_DAYS} days`)
+  }
 }
 
 /**

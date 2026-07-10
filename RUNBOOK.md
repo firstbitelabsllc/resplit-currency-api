@@ -116,6 +116,11 @@ Pass criteria:
 - both history endpoints return full coverage (`requestedDays == availableDays`)
 - Worker `/coverage` reports `mismatchCount = 0`, empty `signals`, and zero lag days
 
+History ranges are inclusive and limited to 366 days on both the Worker and web
+mirror. Larger ranges must return `400 INVALID_QUERY` with
+`message: "Invalid date range: maximum 366 days"` before archive enumeration or
+fetch. Installed iOS 7-day and 30-day windows remain within this contract.
+
 ### 3. iOS consumer gate
 
 ```bash
