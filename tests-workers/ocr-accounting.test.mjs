@@ -71,6 +71,39 @@ describe('OcrAccounting SQLite Durable Object', () => {
     expect(stored.reservations).toHaveLength(1)
   })
 
+  it('fails closed when a reservation ID is reused with different subject, units, or caps', async () => {
+    const mutations = [
+      (request) => ({ ...request, subjectToken: 'b'.repeat(64) }),
+      (request) => ({ ...request, azureUnits: 2 }),
+      (request) => ({
+        ...request,
+        caps: {
+          azure: { globalDaily: 99, subjectDaily: 100 },
+          anthropic: { globalDaily: 100, subjectDaily: 100 },
+        },
+      }),
+    ]
+
+    for (const [index, mutate] of mutations.entries()) {
+      const stub = accountingStub(`idempotency-conflict-${index}`)
+      const original = reservation()
+      expect((await stub.reserve(original)).azure.allowed).toBe(true)
+
+      const conflict = await stub.reserve(mutate(original))
+
+      expect(conflict).toMatchObject({
+        ok: false,
+        error: 'IDEMPOTENCY_CONFLICT',
+        azure: { allowed: false, reason: 'idempotency_conflict' },
+        anthropic: { allowed: false, reason: 'idempotency_conflict' },
+      })
+      const stored = await snapshot(stub)
+      expect(stored.global[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
+      expect(stored.subjects).toHaveLength(1)
+      expect(stored.reservations).toHaveLength(1)
+    }
+  })
+
   it('rejects a two-unit reservation below the boundary and admits it at the exact boundary', async () => {
     const rejectedStub = accountingStub('two-unit-rejected')
     const rejected = await rejectedStub.reserve(reservation({
