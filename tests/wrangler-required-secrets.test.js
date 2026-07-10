@@ -17,19 +17,19 @@ function assertExactRequiredSecrets(config, scope) {
 
   assert.ok(
     exactMatch,
-    `${scope} must require exactly ${requiredOcrSecrets.join(', ')}`
+    `${scope} must declare exactly ${requiredOcrSecrets.join(', ')}`
   )
 }
 
-test('root Worker deploy requires both OCR provider secrets', () => {
+test('root Worker declares both OCR provider secrets for local dev and type generation', () => {
   assertExactRequiredSecrets(wrangler, 'root Worker')
 })
 
-test('named production Worker deploy requires both OCR provider secrets', () => {
+test('named production Worker mirrors the local-dev and type-generation declaration', () => {
   assertExactRequiredSecrets(wrangler.env?.production, 'production Worker')
 })
 
-test('required-secret contract fails closed on omission, substitution, or extras', () => {
+test('required-secret declaration rejects omission, substitution, or extras', () => {
   for (const invalid of [
     ['AZURE_OCR_KEY'],
     ['ANTHROPIC_API_KEY'],
@@ -38,7 +38,7 @@ test('required-secret contract fails closed on omission, substitution, or extras
   ]) {
     assert.throws(
       () => assertExactRequiredSecrets({ secrets: { required: invalid } }, 'mutated Worker'),
-      /must require exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY/
+      /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY/
     )
   }
 })
