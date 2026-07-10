@@ -1,6 +1,7 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
+import { handleRequest } from '../worker/src/index.mjs'
 
 const VALID_HMAC_KEY = 'shadow-accounting-test-key-material-'.repeat(2)
 const RAW_PRINCIPAL = '198.51.100.88'
@@ -252,6 +253,24 @@ test('legacy accounting mode performs zero shadow work', async () => {
   assert.equal(calls.azureReceiptSubmit, 1)
   assert.equal(ctx.tasks.length, 0, 'legacy mode must not hand work to waitUntil')
   assert.deepEqual(accounting.records, { names: [], ids: [], reservations: [] })
+})
+
+test('the real Worker request entrypoint retains shadow work with ExecutionContext', async () => {
+  stubProviders()
+  const accounting = makeAccountingBinding()
+  const env = makeEnv({ accounting })
+  const ctx = makeExecutionContext()
+
+  const response = await handleRequest(
+    ocrRequest('/ocr/scan', new Uint8Array([1, 2, 4])),
+    env,
+    ctx,
+  )
+  await ctx.drain()
+
+  assert.equal(response.status, 200)
+  assert.equal(ctx.tasks.length, 1)
+  assert.equal(accounting.records.reservations.length, 1)
 })
 
 test('shadow accounting starts only after a cache miss and never reserves a cache hit', async () => {
