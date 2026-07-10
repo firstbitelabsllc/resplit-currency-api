@@ -25,6 +25,7 @@ import {
 import { scanReceiptWithAnthropic, LLM_PROVIDER } from './anthropic.mjs'
 import { verifyAssertion, AttestError } from './attest.mjs'
 import { verifyAttestation } from './attestation.mjs'
+import { readOcrImageWithinBudget } from './ingress.mjs'
 
 const RESPONSE_HEADERS = { ...CORS_HEADERS, 'Cache-Control': 'no-store' }
 const ENVELOPE_VERSION = 1
@@ -136,7 +137,11 @@ async function handleScan(request, env, requestId) {
     return scanDisabled(env, { scanId, requestId, clientVersion })
   }
 
-  const imageBytes = new Uint8Array(await request.arrayBuffer())
+  const ingress = await readOcrImageWithinBudget(request, env, {
+    route: 'scan', requestId, clientVersion, responseHeaders: RESPONSE_HEADERS,
+  })
+  if (!ingress.ok) return ingress.response
+  const { imageBytes } = ingress
   if (imageBytes.length === 0) {
     return errorResponse('BAD_REQUEST', 'empty image body', 400, requestId, RESPONSE_HEADERS)
   }
@@ -237,7 +242,11 @@ async function runOcrScan(request, env, requestId, { route, shapeEnvelope }) {
     return scanDisabled(env, { scanId, requestId, clientVersion })
   }
 
-  const imageBytes = new Uint8Array(await request.arrayBuffer())
+  const ingress = await readOcrImageWithinBudget(request, env, {
+    route, requestId, clientVersion, responseHeaders: RESPONSE_HEADERS,
+  })
+  if (!ingress.ok) return ingress.response
+  const { imageBytes } = ingress
   if (imageBytes.length === 0) {
     return errorResponse('BAD_REQUEST', 'empty image body', 400, requestId, RESPONSE_HEADERS)
   }
