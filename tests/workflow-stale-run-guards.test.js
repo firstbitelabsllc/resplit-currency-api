@@ -8,11 +8,11 @@ const workflow = fs.readFileSync(workflowPath, 'utf8')
 const continueGuard =
   "steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true'"
 const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
-const rootWorkerSecretNames = [
-  'SENTRY_DSN',
-  'SENTRY_RELEASE',
-  'CRON_SECRET',
-  'AZURE_OCR_KEY',
+const rootWorkerSecretWrites = [
+  'printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc --env=""',
+  'printf "%s" "$SENTRY_RELEASE" | npx wrangler secret put SENTRY_RELEASE --config wrangler.jsonc --env=""',
+  'printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc --env=""',
+  'printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc --env=""',
 ]
 const publicationSteps = [
   'Deploy to Cloudflare Pages',
@@ -73,22 +73,13 @@ function assertRootWorkerSecretTargets(source) {
   const secretPutLines = sync
     .split('\n')
     .filter((line) => line.includes('npx wrangler secret put'))
+    .map((line) => line.trim())
 
-  assert.equal(
-    secretPutLines.length,
-    rootWorkerSecretNames.length,
-    'runtime-secret sync must retain exactly the four existing Worker secret writes'
+  assert.deepEqual(
+    secretPutLines,
+    rootWorkerSecretWrites,
+    'runtime-secret sync must preserve the exact reviewed root Worker upserts'
   )
-
-  for (const secretName of rootWorkerSecretNames) {
-    const command =
-      `npx wrangler secret put ${secretName} --config wrangler.jsonc --env=""`
-    assert.equal(
-      occurrences(sync, command),
-      1,
-      `${secretName} secret write must explicitly target the root Worker environment`
-    )
-  }
 }
 
 test('workflow keeps both the midnight publish pass and the 03:00 UTC refresh schedule', () => {
@@ -113,22 +104,30 @@ test('workflow syncs Azure and then verifies both OCR provider secrets before pu
   assert.match(workflow, /npx wrangler deploy --config wrangler\.jsonc --env=""/)
 })
 
-test('workflow explicitly targets the root Worker for every runtime secret write', () => {
+test('every runtime secret write targets only the root Worker, including mutations', () => {
   assertRootWorkerSecretTargets(workflow)
-})
 
-test('root Worker secret targeting rejects every omitted environment flag', () => {
-  for (const secretName of rootWorkerSecretNames) {
-    const exactCommand =
-      `npx wrangler secret put ${secretName} --config wrangler.jsonc --env=""`
-    const mutatedCommand = exactCommand.replace(' --env=""', '')
-    const mutatedWorkflow = workflow.replace(exactCommand, mutatedCommand)
+  for (const line of rootWorkerSecretWrites) {
+    const inputName = line.match(/"\$([A-Z0-9_]+)"/)?.[1]
+    assert.ok(inputName, 'reviewed secret write must retain an input variable')
+    const mutations = [
+      line.replace(' --env=""', ''),
+      line.replace('--env=""', '--env=production'),
+      line.replace('--env=""', '--env="" --env=production'),
+      `${line} --name not-resplit-fx`,
+      line.replace(`"$${inputName}"`, '"$WRONG_SECRET"'),
+      `${line}; npx wrangler secret put EXTRA_SECRET --config wrangler.jsonc`,
+    ]
 
-    assert.notEqual(mutatedWorkflow, workflow, 'mutation must alter the workflow fixture')
-    assert.throws(
-      () => assertRootWorkerSecretTargets(mutatedWorkflow),
-      new RegExp(`${secretName} secret write must explicitly target the root Worker environment`)
-    )
+    for (const mutatedLine of mutations) {
+      const mutatedWorkflow = workflow.replace(line, mutatedLine)
+
+      assert.notEqual(mutatedWorkflow, workflow, 'mutation must alter the workflow fixture')
+      assert.throws(
+        () => assertRootWorkerSecretTargets(mutatedWorkflow),
+        /must preserve the exact reviewed root Worker upserts/
+      )
+    }
   }
 })
 
