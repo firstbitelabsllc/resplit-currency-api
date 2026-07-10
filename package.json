@@ -9,6 +9,7 @@
     "validate": "node scripts/validate-package.js",
     "validate:release": "STRICT_HISTORY_COVERAGE=1 node scripts/validate-package.js",
     "test": "node --test tests/*.test.js",
+    "test:workers": "vitest run --config vitest.config.mjs",
     "smoke:deploy": "node scripts/smoke-check-deploy.js",
     "smoke:sideload": "bash scripts/smoke-sideload-staging.sh",
     "observability:otel-smoke": "node scripts/verify-grafana-otel-smoke.js",
@@ -17,7 +18,7 @@
     "source:promotion-packet": "node scripts/source-promotion-packet.js",
     "trust:preflight": "node scripts/trust-preflight.js",
     "check:publish": "npm run generate && npm run validate && npm run test",
-    "check": "npm run generate && npm run validate:release && npm run test"
+    "check": "npm run generate && npm run validate:release && npm run test && npm run test:workers"
   },
   "dependencies": {
     "@peculiar/x509": "^2.0.0",
@@ -27,6 +28,8 @@
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.13.2",
+    "vitest": "4.1.10",
     "wrangler": "4.75.0"
   },
   "overrides": {
