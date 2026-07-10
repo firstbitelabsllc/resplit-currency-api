@@ -14,7 +14,13 @@ import { errorResponse, jsonResponse } from '../http.mjs'
 import { requestCorrelationHeaders, resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
 import { CORS_HEADERS, handlePreflight } from '../sideload/cors.mjs'
-import { logOcrMonitoringEvent, captureOcrProviderFailure, captureOcrLlmFailure, captureOcrTotalsDivergence } from './monitoring.mjs'
+import {
+  logOcrMonitoringEvent,
+  captureOcrProviderFailure,
+  captureOcrLlmFailure,
+  captureOcrCacheWriteFailure,
+  captureOcrTotalsDivergence,
+} from './monitoring.mjs'
 import {
   submitReceiptAnalyze,
   getReceiptAnalyzeResult,
@@ -314,8 +320,6 @@ async function runOcrScan(request, env, requestId, { route, shapeEnvelope }) {
       value: JSON.stringify(result),
       route,
       scanId,
-      requestId,
-      clientVersion,
     })
   }
 
@@ -556,8 +560,6 @@ async function finishScan(env, ctx) {
       value: body,
       route: 'scan',
       scanId: ctx.scanId,
-      requestId: ctx.requestId,
-      clientVersion: ctx.clientVersion,
     })
   }
   const totalMs = Date.now() - ctx.start
@@ -585,20 +587,27 @@ async function finishScan(env, ctx) {
 // produced a usable result. A transient KV outage must not discard that result
 // or make the client pay for a retry. The warning deliberately excludes cache
 // keys, image hashes/bytes, device identity, provider credentials, and raw errors.
-async function writeOcrCacheBestEffort(env, { cacheKey, value, route, scanId, requestId, clientVersion }) {
+async function writeOcrCacheBestEffort(env, { cacheKey, value, route, scanId }) {
   try {
     await env.ATTEST_KV.put(cacheKey, value, { expirationTtl: CACHE_TTL_SECONDS })
     return true
   } catch {
-    logOcrMonitoringEvent('warn', {
-      signal: 'ocr_cache_write_failed',
-      phase: 'scan',
-      route,
-      status: 'degraded',
-      scanId,
-      requestId,
-      client_version: clientVersion,
-    }, env)
+    try {
+      logOcrMonitoringEvent('warn', {
+        signal: 'ocr_cache_write_failed',
+        phase: 'scan',
+        route,
+        status: 'degraded',
+        scanId,
+      }, env)
+    } catch {
+      // A broken log sink cannot mask a provider result the client can use.
+    }
+    try {
+      await captureOcrCacheWriteFailure({ scanId, route }, env)
+    } catch {
+      // Keep this boundary fail-open even if the reporting helper regresses.
+    }
     return false
   }
 }
