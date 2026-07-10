@@ -122,23 +122,23 @@ jobs:
           set -euo pipefail
 
           if [ -n "$SENTRY_DSN" ]; then
-            printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc
+            printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc --env=""
           else
             echo "::warning::Missing SENTRY_DSN for FX Worker. Worker errors will not reach Sentry."
           fi
 
           if [ -n "$SENTRY_RELEASE" ]; then
-            printf "%s" "$SENTRY_RELEASE" | npx wrangler secret put SENTRY_RELEASE --config wrangler.jsonc
+            printf "%s" "$SENTRY_RELEASE" | npx wrangler secret put SENTRY_RELEASE --config wrangler.jsonc --env=""
           fi
 
           if [ -n "$CRON_SECRET" ]; then
-            printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc
+            printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc --env=""
           else
             echo "::warning::Missing CRON_SECRET for FX Worker canary route."
           fi
 
           if [ -n "$AZURE_OCR_KEY" ]; then
-            printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc
+            printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc --env=""
           else
             echo "::notice::GitHub AZURE_OCR_KEY is unset; verifying deployed Worker provider-secret continuity."
           fi
