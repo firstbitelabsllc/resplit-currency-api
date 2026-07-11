@@ -197,8 +197,31 @@ test('Azure timeout preserves the legacy v1 and v2 provider_error/502 route cont
   assert.equal(v2Response.status, 502)
   assert.equal(v2.v, 2)
   assert.equal(v2.status, 'provider_error')
-  assert.equal(v2.engines.find((engine) => engine.id === 'azure').status, 'provider_error')
+  const v2Azure = v2.engines.find((engine) => engine.id === 'azure')
+  assert.equal(v2Azure.status, 'provider_error')
 
   assert.deepEqual(timers.delays, [1, 1])
   assert.equal(timers.active.size, 0)
+})
+
+test('dark accounting preserves the legacy settled fallback for an unexpected Azure exception', { concurrency: false }, async () => {
+  const env = {
+    ATTEST_KV: makeKV(),
+    SENTRY_ENVIRONMENT: 'test',
+  }
+  Object.defineProperty(env, 'AZURE_OCR_ENDPOINT', {
+    get() { throw new Error('synthetic unexpected provider configuration failure') },
+  })
+
+  const response = await handleOcr(scanRequest('/ocr/analyze', 9), env)
+  const body = await response.json()
+  const azure = body.engines.find((engine) => engine.id === 'azure')
+
+  assert.equal(response.status, 502)
+  assert.equal(azure.status, 'provider_error')
+  assert.equal(
+    azure.latencyMs,
+    null,
+    'default-off accounting must not replace the installed rejected-leg sentinel',
+  )
 })
