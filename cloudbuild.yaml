@@ -1,16 +1,16 @@
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     env: ['DOCKER_BUILDKIT=1']
-    args: ['build','-f','Dockerfile.ocr','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/ocr:latest','.']
+    args: ['build','-f','Dockerfile.ocr','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/ocr:$BUILD_ID','.']
   - name: 'gcr.io/cloud-builders/docker'
     env: ['DOCKER_BUILDKIT=1']
-    args: ['build','-f','Dockerfile.sideload','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/sideload:latest','.']
+    args: ['build','-f','Dockerfile.sideload','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/sideload:$BUILD_ID','.']
   - name: 'gcr.io/cloud-builders/docker'
     env: ['DOCKER_BUILDKIT=1']
-    args: ['build','-f','Dockerfile.fx-publish','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/fx-publish:latest','.']
+    args: ['build','-f','Dockerfile.fx-publish','-t','us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/fx-publish:$BUILD_ID','.']
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/ocr:latest'
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/sideload:latest'
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/fx-publish:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/ocr:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/sideload:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/resplit-fx/fx-publish:$BUILD_ID'
 options:
   logging: CLOUD_LOGGING_ONLY

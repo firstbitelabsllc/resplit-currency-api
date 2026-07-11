@@ -4,7 +4,7 @@
 //
 // Routes:
 //
-//	GET  /healthz        liveness/readiness probe
+//	GET  /health         liveness/readiness probe
 //	GET  /ocr/challenge  issue an App Attest challenge (per device)
 //	POST /ocr/attest     one-time device attestation (CBOR attestationObject)
 //	POST /ocr/scan       per-request assertion + OCR over the image body
@@ -153,7 +153,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	// Live Azure DI provider (key from Secret Manager via AZURE_OCR_KEY). Falls
-	// back to the stub when the key/endpoint aren't configured so /healthz stays
+	// back to the stub when the key/endpoint aren't configured so /health stays
 	// green locally.
 	var provider OCRProvider
 	if azClient, err := azure.New(azure.Config{
@@ -230,7 +230,7 @@ func (s *server) routes() http.Handler {
 	// WithRouteTag stamps the low-cardinality matched pattern as the http.route
 	// attribute on the otelhttp span + http.server.* metrics, so the templated
 	// route ("/ocr/scan") is recorded instead of the raw path.
-	mux.Handle("GET /healthz", otelhttp.WithRouteTag("/healthz", http.HandlerFunc(s.handleHealthz)))
+	mux.Handle("GET /health", otelhttp.WithRouteTag("/health", http.HandlerFunc(s.handleHealth)))
 	mux.Handle("GET /ocr/challenge", otelhttp.WithRouteTag("/ocr/challenge", http.HandlerFunc(s.handleChallenge)))
 	mux.Handle("POST /ocr/attest", otelhttp.WithRouteTag("/ocr/attest", http.HandlerFunc(s.handleAttest)))
 	mux.Handle("POST /ocr/scan", otelhttp.WithRouteTag("/ocr/scan", http.HandlerFunc(s.handleScan)))
@@ -243,7 +243,7 @@ func (s *server) routes() http.Handler {
 	return httpx.Middleware(s.logger)(handler)
 }
 
-func (s *server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "ocr"})
 }
 

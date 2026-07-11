@@ -8,7 +8,7 @@
 //
 // Routes:
 //
-//	GET  /healthz       liveness/readiness probe
+//	GET  /health        liveness/readiness probe
 //	POST /fx/reconcile  reconcile N source snapshots into one agreed table
 //	POST /fx/cross      derive a single cross rate from a base table
 package main
@@ -51,7 +51,7 @@ func run(logger *slog.Logger) error {
 	// TODO(gcp): construct a *storage.Client to read source snapshots from the
 	// fx-artifacts bucket and a *firestore.Client for publish-state bookkeeping.
 	// The pure-fx reconcile path below needs neither, so the binary stays
-	// buildable and /healthz green until those clients land.
+	// buildable and /health green until those clients land.
 	srv := newServer(logger)
 
 	port := os.Getenv("PORT")
@@ -102,14 +102,14 @@ func newServer(logger *slog.Logger) *server {
 // routes builds the mux and wraps it in shared middleware.
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /fx/reconcile", s.handleReconcile)
 	mux.HandleFunc("POST /fx/cross", s.handleCross)
 
 	return httpx.Middleware(s.logger)(mux)
 }
 
-func (s *server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"service": "sideload",
