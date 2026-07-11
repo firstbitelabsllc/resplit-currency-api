@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers'
 
 const SUBJECT_TOKEN_PATTERN = /^[0-9a-f]{64}$/
 const RESERVATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const RECEIPT_RETENTION_DAYS = 8
 
 /**
  * Dormant SQLite accounting primitive for future OCR admission control.
@@ -31,6 +32,7 @@ export class OcrAccounting extends DurableObject {
 
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql
+      pruneExpiredAccountingRows(sql, request.day)
       const requestSemantics = canonicalRequestSemantics(request)
       const duplicate = firstRow(sql.exec(
         `SELECT request_semantics, decision_json
@@ -179,9 +181,129 @@ export class OcrAccounting extends DurableObject {
       return decision
     })
   }
+
+  /**
+   * Finalize a reservation with the provider units that actually started.
+   * Any unused allowed units are released in the same SQLite transaction.
+   *
+   * @param {unknown} input
+   * @returns {object}
+   */
+  commit(input) {
+    const settlement = validateSettlement(input)
+    if (!settlement) return invalidSettlementDecision()
+    return this.#settle(settlement, 'committed')
+  }
+
+  /**
+   * Release every allowed unit when no paid provider operation started.
+   *
+   * @param {unknown} input
+   * @returns {object}
+   */
+  refund(input) {
+    const settlement = validateRefund(input)
+    if (!settlement) return invalidSettlementDecision()
+    return this.#settle({ ...settlement, azureUnits: 0, anthropicUnits: 0 }, 'refunded')
+  }
+
+  #settle(settlement, status) {
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql
+      const reservation = firstRow(sql.exec(
+        `SELECT subject_token, azure_units, anthropic_units,
+                azure_allowed, anthropic_allowed
+           FROM ocr_reservations
+          WHERE day = ? AND reservation_id = ?`,
+        settlement.day,
+        settlement.reservationId
+      ))
+      if (!reservation) return missingReservationDecision()
+
+      const reservedAzureUnits = reservation.azure_allowed ? reservation.azure_units : 0
+      const reservedAnthropicUnits = reservation.anthropic_allowed ? reservation.anthropic_units : 0
+      if (
+        settlement.azureUnits > reservedAzureUnits ||
+        settlement.anthropicUnits > reservedAnthropicUnits
+      ) {
+        return settlementExceedsReservationDecision()
+      }
+
+      const semantics = JSON.stringify({
+        status,
+        azureUnits: settlement.azureUnits,
+        anthropicUnits: settlement.anthropicUnits,
+      })
+      const duplicate = firstRow(sql.exec(
+        `SELECT settlement_semantics, result_json
+           FROM ocr_reservation_finalizations
+          WHERE day = ? AND reservation_id = ?`,
+        settlement.day,
+        settlement.reservationId
+      ))
+      if (duplicate) {
+        if (duplicate.settlement_semantics !== semantics) return settlementConflictDecision()
+        return JSON.parse(duplicate.result_json)
+      }
+
+      const refundedAzureUnits = reservedAzureUnits - settlement.azureUnits
+      const refundedAnthropicUnits = reservedAnthropicUnits - settlement.anthropicUnits
+      sql.exec(
+        `UPDATE ocr_global_daily
+            SET azure_units = azure_units - ?,
+                anthropic_units = anthropic_units - ?
+          WHERE day = ?`,
+        refundedAzureUnits,
+        refundedAnthropicUnits,
+        settlement.day
+      )
+      sql.exec(
+        `UPDATE ocr_subject_daily
+            SET azure_units = azure_units - ?,
+                anthropic_units = anthropic_units - ?
+          WHERE day = ? AND subject_token = ?`,
+        refundedAzureUnits,
+        refundedAnthropicUnits,
+        settlement.day,
+        reservation.subject_token
+      )
+
+      const result = {
+        ok: true,
+        status,
+        day: settlement.day,
+        reservationId: settlement.reservationId,
+        azure: {
+          committedUnits: settlement.azureUnits,
+          refundedUnits: refundedAzureUnits,
+        },
+        anthropic: {
+          committedUnits: settlement.anthropicUnits,
+          refundedUnits: refundedAnthropicUnits,
+        },
+      }
+      sql.exec(
+        `INSERT INTO ocr_reservation_finalizations (
+           day, reservation_id, settlement_semantics, result_json, finalized_at_ms
+         ) VALUES (?, ?, ?, ?, ?)`,
+        settlement.day,
+        settlement.reservationId,
+        semantics,
+        JSON.stringify(result),
+        Date.now()
+      )
+      return result
+    })
+  }
 }
 
 function initializeSchema(sql) {
+  sql.exec(
+    `CREATE TABLE IF NOT EXISTS ocr_maintenance (
+       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+       last_pruned_day TEXT NOT NULL CHECK (length(last_pruned_day) = 10)
+     ) STRICT`
+  )
   sql.exec(
     `CREATE TABLE IF NOT EXISTS ocr_global_daily (
        day TEXT PRIMARY KEY,
@@ -224,6 +346,43 @@ function initializeSchema(sql) {
        CHECK (subject_token NOT GLOB '*[^0-9a-f]*')
      ) STRICT`
   )
+  sql.exec(
+    `CREATE TABLE IF NOT EXISTS ocr_reservation_finalizations (
+       day TEXT NOT NULL,
+       reservation_id TEXT NOT NULL,
+       settlement_semantics TEXT NOT NULL,
+       result_json TEXT NOT NULL,
+       finalized_at_ms INTEGER NOT NULL CHECK (finalized_at_ms >= 0),
+       PRIMARY KEY (day, reservation_id),
+       FOREIGN KEY (day, reservation_id)
+         REFERENCES ocr_reservations (day, reservation_id),
+       CHECK (length(day) = 10)
+     ) STRICT`
+  )
+}
+
+function pruneExpiredAccountingRows(sql, currentDay) {
+  const maintenance = firstRow(sql.exec(
+    'SELECT last_pruned_day FROM ocr_maintenance WHERE singleton = 1'
+  ))
+  if (maintenance?.last_pruned_day >= currentDay) return
+
+  const cutoffDay = retentionCutoffDay(currentDay)
+  sql.exec('DELETE FROM ocr_reservation_finalizations WHERE day < ?', cutoffDay)
+  sql.exec('DELETE FROM ocr_reservations WHERE day < ?', cutoffDay)
+  sql.exec('DELETE FROM ocr_subject_daily WHERE day < ?', cutoffDay)
+  sql.exec('DELETE FROM ocr_global_daily WHERE day < ?', cutoffDay)
+  sql.exec(
+    `INSERT INTO ocr_maintenance (singleton, last_pruned_day) VALUES (1, ?)
+     ON CONFLICT(singleton) DO UPDATE SET last_pruned_day = excluded.last_pruned_day`,
+    currentDay
+  )
+}
+
+function retentionCutoffDay(currentDay) {
+  const cutoff = new Date(`${currentDay}T00:00:00.000Z`)
+  cutoff.setUTCDate(cutoff.getUTCDate() - (RECEIPT_RETENTION_DAYS - 1))
+  return cutoff.toISOString().slice(0, 10)
 }
 
 function validateReservation(input) {
@@ -243,6 +402,23 @@ function validateReservation(input) {
     anthropicUnits,
     caps,
   }
+}
+
+function validateSettlement(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const { day, reservationId, azureUnits, anthropicUnits } = input
+  if (!isCalendarDay(day)) return null
+  if (typeof reservationId !== 'string' || !RESERVATION_ID_PATTERN.test(reservationId)) return null
+  if (!isNonNegativeInteger(azureUnits) || !isNonNegativeInteger(anthropicUnits)) return null
+  return { day, reservationId, azureUnits, anthropicUnits }
+}
+
+function validateRefund(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const { day, reservationId } = input
+  if (!isCalendarDay(day)) return null
+  if (typeof reservationId !== 'string' || !RESERVATION_ID_PATTERN.test(reservationId)) return null
+  return { day, reservationId }
 }
 
 function validCaps(caps) {
@@ -296,6 +472,22 @@ function idempotencyConflictDecision() {
     azure: { allowed: false, requestedUnits: 0, reason: 'idempotency_conflict' },
     anthropic: { allowed: false, requestedUnits: 0, reason: 'idempotency_conflict' },
   }
+}
+
+function invalidSettlementDecision() {
+  return { ok: false, error: 'INVALID_REQUEST', status: 'rejected' }
+}
+
+function missingReservationDecision() {
+  return { ok: false, error: 'RESERVATION_NOT_FOUND', status: 'rejected' }
+}
+
+function settlementExceedsReservationDecision() {
+  return { ok: false, error: 'SETTLEMENT_EXCEEDS_RESERVATION', status: 'rejected' }
+}
+
+function settlementConflictDecision() {
+  return { ok: false, error: 'IDEMPOTENCY_CONFLICT', status: 'rejected' }
 }
 
 function canonicalRequestSemantics(request) {

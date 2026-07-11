@@ -36,6 +36,9 @@ async function snapshot(stub) {
     reservations: state.storage.sql.exec(
       'SELECT * FROM ocr_reservations ORDER BY day, reservation_id'
     ).toArray(),
+    finalizations: state.storage.sql.exec(
+      'SELECT * FROM ocr_reservation_finalizations ORDER BY day, reservation_id'
+    ).toArray(),
   }))
 }
 
@@ -69,6 +72,120 @@ describe('OcrAccounting SQLite Durable Object', () => {
     expect(stored.global[0]).toMatchObject({ azure_units: 1, anthropic_units: 1 })
     expect(stored.subjects[0]).toMatchObject({ azure_units: 1, anthropic_units: 1 })
     expect(stored.reservations).toHaveLength(1)
+  })
+
+  it('refunds a failed provider reservation atomically so the released unit can be admitted again', async () => {
+    const stub = accountingStub('refund')
+    const caps = {
+      azure: { globalDaily: 1, subjectDaily: 1 },
+      anthropic: { globalDaily: 1, subjectDaily: 1 },
+    }
+    const failed = reservation({ caps })
+
+    expect((await stub.reserve(failed)).azure.allowed).toBe(true)
+    const refunded = await stub.refund({ day: failed.day, reservationId: failed.reservationId })
+    expect(refunded).toMatchObject({
+      ok: true,
+      status: 'refunded',
+      azure: { committedUnits: 0, refundedUnits: 1 },
+      anthropic: { committedUnits: 0, refundedUnits: 0 },
+    })
+
+    const retry = await stub.reserve(reservation({ caps }))
+    expect(retry.azure).toMatchObject({ allowed: true, requestedUnits: 1 })
+    const stored = await snapshot(stub)
+    expect(stored.global[0].azure_units).toBe(1)
+    expect(stored.subjects[0].azure_units).toBe(1)
+  })
+
+  it('commits only provider units that actually started and refunds the unused reservation remainder', async () => {
+    const stub = accountingStub('partial-commit')
+    const request = reservation({
+      azureUnits: 2,
+      anthropicUnits: 1,
+      caps: {
+        azure: { globalDaily: 2, subjectDaily: 2 },
+        anthropic: { globalDaily: 1, subjectDaily: 1 },
+      },
+    })
+
+    const reserved = await stub.reserve(request)
+    expect(reserved.azure.allowed).toBe(true)
+    expect(reserved.anthropic.allowed).toBe(true)
+
+    const committed = await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })
+    expect(committed).toMatchObject({
+      ok: true,
+      status: 'committed',
+      azure: { committedUnits: 1, refundedUnits: 1 },
+      anthropic: { committedUnits: 0, refundedUnits: 1 },
+    })
+    expect(await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })).toEqual(committed)
+
+    const stored = await snapshot(stub)
+    expect(stored.global[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
+    expect(stored.subjects[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
+  })
+
+  it('rejects over-commit and conflicting finalization without changing reserved usage', async () => {
+    const stub = accountingStub('settlement-guards')
+    const request = reservation({ azureUnits: 1, anthropicUnits: 1 })
+    await stub.reserve(request)
+
+    expect(await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 2,
+      anthropicUnits: 1,
+    })).toMatchObject({
+      ok: false,
+      error: 'SETTLEMENT_EXCEEDS_RESERVATION',
+    })
+    expect((await snapshot(stub)).global[0]).toMatchObject({ azure_units: 1, anthropic_units: 1 })
+
+    const committed = await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })
+    expect(committed.ok).toBe(true)
+    expect(await stub.refund({
+      day: request.day,
+      reservationId: request.reservationId,
+    })).toMatchObject({
+      ok: false,
+      error: 'IDEMPOTENCY_CONFLICT',
+    })
+    expect((await snapshot(stub)).global[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
+  })
+
+  it('fails closed on malformed or missing settlement requests', async () => {
+    const stub = accountingStub('invalid-settlement')
+    const request = reservation()
+    await stub.reserve(request)
+
+    expect(await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: -1,
+      anthropicUnits: 0,
+    })).toMatchObject({ ok: false, error: 'INVALID_REQUEST' })
+    expect(await stub.refund({
+      day: request.day,
+      reservationId: crypto.randomUUID(),
+    })).toMatchObject({ ok: false, error: 'RESERVATION_NOT_FOUND' })
+    expect((await snapshot(stub)).global[0].azure_units).toBe(1)
   })
 
   it('fails closed when a reservation ID is reused with different subject, units, or caps', async () => {
@@ -180,6 +297,29 @@ describe('OcrAccounting SQLite Durable Object', () => {
     expect(JSON.stringify(stored)).not.toContain(rawIdentity)
   })
 
+  it('keeps one week of idempotency receipts and prunes older accounting rows once a new day arrives', async () => {
+    const stub = accountingStub('retention')
+    const expired = reservation({ day: '2026-07-01' })
+    const boundary = reservation({ day: '2026-07-03' })
+    const current = reservation({ day: '2026-07-10' })
+
+    await stub.reserve(expired)
+    await stub.commit({
+      day: expired.day,
+      reservationId: expired.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })
+    await stub.reserve(boundary)
+    await stub.reserve(current)
+
+    const stored = await snapshot(stub)
+    expect(stored.global.map(({ day }) => day)).toEqual(['2026-07-03', '2026-07-10'])
+    expect(stored.subjects.map(({ day }) => day)).toEqual(['2026-07-03', '2026-07-10'])
+    expect(stored.reservations.map(({ day }) => day)).toEqual(['2026-07-03', '2026-07-10'])
+    expect(stored.finalizations).toEqual([])
+  })
+
   it('fails closed on invalid caps or malformed subject tokens without persisting usage', async () => {
     const invalidCases = [
       reservation({ caps: { azure: { globalDaily: -1, subjectDaily: 1 }, anthropic: { globalDaily: 1, subjectDaily: 1 } } }),
@@ -196,7 +336,7 @@ describe('OcrAccounting SQLite Durable Object', () => {
         azure: { allowed: false, reason: 'invalid_request' },
         anthropic: { allowed: false, reason: 'invalid_request' },
       })
-      expect(await snapshot(stub)).toEqual({ global: [], subjects: [], reservations: [] })
+      expect(await snapshot(stub)).toEqual({ global: [], subjects: [], reservations: [], finalizations: [] })
     }
   })
 })

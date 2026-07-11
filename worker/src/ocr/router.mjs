@@ -33,6 +33,12 @@ import { verifyAssertion, AttestError } from './attest.mjs'
 import { verifyAttestation } from './attestation.mjs'
 import { readOcrImageWithinBudget } from './ingress.mjs'
 import { scheduleOcrAccountingShadow } from './accounting-shadow.mjs'
+import {
+  OcrAccountingError,
+  ocrAccountingEnforced,
+  reserveOcrAccounting,
+  settleOcrAccounting,
+} from './accounting-client.mjs'
 
 const RESPONSE_HEADERS = { ...CORS_HEADERS, 'Cache-Control': 'no-store' }
 const ENVELOPE_VERSION = 1
@@ -191,57 +197,60 @@ async function handleScan(request, env, requestId, ctx) {
     return new Response(cached, { status: 200, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
   }
 
-  // The legacy KV cap is denominated in Azure analyzes, not requests. Debit only
-  // after the cache miss proves this request can trigger paid provider work.
-  const admitted = await debitLegacyOcrBudget(env, auth, azureUnits)
-  if (!admitted) return rateLimited(env, { scanId, attest, requestId, clientVersion })
-
-  scheduleOcrAccountingShadow({
-    env,
-    ctx,
-    route: 'scan',
-    requestId,
-    scanId,
-    principalKind: auth.principalKind,
-    principal: auth.principal,
-    azureUnits,
-    anthropicUnits: 0,
-    azureSubjectCap: auth.azureSubjectCap,
-    anthropicSubjectCap: auth.azureSubjectCap,
+  const admission = await admitOcrWork({
+    env, ctx, route: 'scan', requestId, scanId, auth,
+    azureUnits, anthropicUnits: 0,
   })
+  if (admission.status === 'rate_limited') {
+    return rateLimited(env, { scanId, attest, requestId, clientVersion })
+  }
+  if (admission.status === 'unavailable') {
+    return accountingUnavailableRaw(env, { scanId, attest, requestId, clientVersion })
+  }
 
   // --- Azure forward (server-side; key never leaves the Worker) ---
   const azureStart = Date.now()
-  const submit = await submitReceiptAnalyze(imageBytes, contentType, env)
-  if (!submit.ok || !submit.operationId) {
-    return finishScan(env, { scanId, attest, status: azureStatus(submit.httpStatus), raw: null, requestId, clientVersion, start, azureStart, azureStatus: submit.httpStatus, cache: 'miss' })
-  }
+  let azureStartedUnits = 0
+  try {
+    const submit = await submitReceiptAnalyze(imageBytes, contentType, env)
+    azureStartedUnits = submit.ok ? 1 : 0
+    if (!submit.ok || !submit.operationId) {
+      return finishScan(env, { scanId, attest, status: azureStatus(submit.httpStatus), raw: null, requestId, clientVersion, start, azureStart, azureStatus: submit.httpStatus, cache: 'miss' })
+    }
 
-  let result = null
-  let azureHttp = submit.httpStatus
-  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-    const poll = await getReceiptAnalyzeResult(submit.operationId, env)
-    azureHttp = poll.httpStatus
-    if (!poll.ok) break
-    if (poll.status === 'succeeded') { result = poll.body; break }
-    if (poll.status === 'failed') break
-    await sleep(POLL_INTERVAL_MS)
-  }
+    let result = null
+    let azureHttp = submit.httpStatus
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+      const poll = await getReceiptAnalyzeResult(submit.operationId, env)
+      azureHttp = poll.httpStatus
+      if (!poll.ok) break
+      if (poll.status === 'succeeded') { result = poll.body; break }
+      if (poll.status === 'failed') break
+      await sleep(POLL_INTERVAL_MS)
+    }
 
-  let kvExtras = 'off'
-  if (result && keyValueExtrasEnabled(env)) {
-    const merge = await mergeLayoutKeyValuePairs({
-      imageBytes, contentType, env, baseResult: result, scanId, requestId,
+    let kvExtras = 'off'
+    if (result && keyValueExtrasEnabled(env)) {
+      const merge = await mergeLayoutKeyValuePairs({
+        imageBytes, contentType, env, baseResult: result, scanId, requestId,
+        accountingEnforced: admission.enforced,
+      })
+      result = merge.result
+      kvExtras = merge.kvExtras
+      azureStartedUnits += merge.startedUnits
+    }
+
+    const status = result ? 'ok' : 'provider_error'
+    return finishScan(env, {
+      scanId, attest, status, raw: result, requestId, clientVersion, start, azureStart,
+      azureStatus: azureHttp, cache: 'miss', cacheKey, kvExtras,
     })
-    result = merge.result
-    kvExtras = merge.kvExtras
+  } finally {
+    await settleOcrWork(env, {
+      route: 'scan', requestId, scanId, reservation: admission.reservation,
+      azureUnits: azureStartedUnits, anthropicUnits: 0,
+    })
   }
-
-  const status = result ? 'ok' : 'provider_error'
-  return finishScan(env, {
-    scanId, attest, status, raw: result, requestId, clientVersion, start, azureStart,
-    azureStatus: azureHttp, cache: 'miss', cacheKey, kvExtras,
-  })
 }
 
 // The legacy route: serves the EXACT v1 dual envelope shipped TestFlight builds
@@ -308,36 +317,41 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     return renderScan(shapeEnvelope, result, requestId)
   }
 
-  const admitted = await debitLegacyOcrBudget(env, auth, 1)
-  if (!admitted) {
-    return respondRateLimited(env, { route, shapeEnvelope, scanId, attest, requestId, clientVersion, start })
-  }
-
-  scheduleOcrAccountingShadow({
-    env,
-    ctx,
-    route,
-    requestId,
-    scanId,
-    principalKind: auth.principalKind,
-    principal: auth.principal,
+  const admission = await admitOcrWork({
+    env, ctx, route, requestId, scanId, auth,
     azureUnits: 1,
     anthropicUnits: llmGate.status === 'allowed' ? 1 : 0,
-    azureSubjectCap: auth.azureSubjectCap,
-    anthropicSubjectCap: auth.azureSubjectCap,
+  })
+  if (admission.status === 'rate_limited') {
+    return respondRateLimited(env, { route, shapeEnvelope, scanId, attest, requestId, clientVersion, start })
+  }
+  if (admission.status === 'unavailable') {
+    return accountingUnavailableMulti(env, {
+      route, shapeEnvelope, scanId, attest, requestId, clientVersion, start,
+    })
+  }
+
+  const azurePromise = runAzureRawLeg({
+    imageBytes,
+    contentType,
+    env,
+    accountingEnforced: admission.enforced,
+  })
+  const llmPromise = runLlmLeg({
+    imageBytes, contentType, env, gate: llmGate, model,
+    accountingEnforced: admission.enforced,
+    accountingAllowed: admission.anthropicAllowed,
   })
 
-  const azurePromise = runAzureRawLeg({ imageBytes, contentType, env })
-  const llmPromise = runLlmLeg({ imageBytes, contentType, env, gate: llmGate, model })
-
   const [azureSettled, llmSettled] = await Promise.allSettled([azurePromise, llmPromise])
-  const azure = settledValue(azureSettled, () => ({
+  const azureLeg = settledValue(azureSettled, () => ({
     status: 'provider_error',
     raw: null,
     httpStatus: 502,
     latencyMs: null,
+    accountingUnits: 0,
   }))
-  const llm = settledValue(llmSettled, () => ({
+  const llmLeg = settledValue(llmSettled, () => ({
     status: 'provider_error',
     provider: LLM_PROVIDER,
     model,
@@ -345,7 +359,14 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     latencyMs: null,
     httpStatus: 502,
     errorBody: 'llm_leg_threw',
+    accountingUnits: 0,
   }))
+  const { accountingUnits: azureStartedUnits = 0, ...azure } = azureLeg
+  const { accountingUnits: anthropicStartedUnits = 0, ...llm } = llmLeg
+  await settleOcrWork(env, {
+    route, requestId, scanId, reservation: admission.reservation,
+    azureUnits: azureStartedUnits, anthropicUnits: anthropicStartedUnits,
+  })
   const divergence = computeDivergence(azure.raw, llm.scanned, azure.status, llm.status)
   const status = dualScanStatus(azure.status, llm.status)
   const result = { scanId, status, azure, llm, divergence }
@@ -430,6 +451,158 @@ async function authenticateScan({ request, env, imageBytes, softFail, keyId, ass
 
 async function debitLegacyOcrBudget(env, auth, azureUnits) {
   return underCap(env, auth.deviceKey, auth.azureSubjectCap, azureUnits)
+}
+
+// One cache-miss admission seam serves all three OCR routes. Legacy and shadow
+// preserve the installed KV behavior exactly. Enforce uses the global SQLite
+// rendezvous synchronously and fails closed before either paid provider.
+async function admitOcrWork({ env, ctx, route, requestId, scanId, auth, azureUnits, anthropicUnits }) {
+  if (!ocrAccountingEnforced(env)) {
+    const admitted = await debitLegacyOcrBudget(env, auth, azureUnits)
+    if (!admitted) return { status: 'rate_limited', enforced: false, reservation: null }
+
+    scheduleOcrAccountingShadow({
+      env,
+      ctx,
+      route,
+      requestId,
+      scanId,
+      principalKind: auth.principalKind,
+      principal: auth.principal,
+      azureUnits,
+      anthropicUnits,
+      azureSubjectCap: auth.azureSubjectCap,
+      anthropicSubjectCap: auth.azureSubjectCap,
+    })
+    return {
+      status: 'admitted',
+      enforced: false,
+      reservation: null,
+      anthropicAllowed: true,
+    }
+  }
+
+  let reservation
+  try {
+    reservation = await reserveOcrAccounting({
+      env,
+      scanId,
+      principalKind: auth.principalKind,
+      principal: auth.principal,
+      azureUnits,
+      anthropicUnits,
+      azureSubjectCap: auth.azureSubjectCap,
+      anthropicSubjectCap: auth.azureSubjectCap,
+    })
+  } catch (error) {
+    logAccountingEvent(env, 'error', {
+      signal: 'ocr_accounting_enforcement_failure',
+      route,
+      status: 'unavailable',
+      reason: error instanceof OcrAccountingError ? error.reason : 'reservation_failed',
+      requestId,
+      scanId,
+    })
+    return { status: 'unavailable', enforced: true, reservation: null }
+  }
+
+  if (reservation.decision.azure?.allowed !== true) {
+    await settleOcrWork(env, {
+      route, requestId, scanId, reservation,
+      azureUnits: 0, anthropicUnits: 0,
+    })
+    logAccountingEvent(env, 'warn', {
+      signal: 'ocr_accounting_enforcement',
+      route,
+      status: 'blocked',
+      provider: 'azure',
+      requestId,
+      scanId,
+    })
+    return { status: 'rate_limited', enforced: true, reservation: null }
+  }
+
+  const anthropicAllowed = anthropicUnits === 0 || reservation.decision.anthropic?.allowed === true
+  logAccountingEvent(env, anthropicAllowed ? 'info' : 'warn', {
+    signal: 'ocr_accounting_enforcement',
+    route,
+    status: anthropicAllowed ? 'admitted' : 'partially_admitted',
+    azure_allowed: true,
+    anthropic_allowed: anthropicAllowed,
+    requestId,
+    scanId,
+  })
+  return { status: 'admitted', enforced: true, reservation, anthropicAllowed }
+}
+
+async function settleOcrWork(env, { route, requestId, scanId, reservation, azureUnits, anthropicUnits }) {
+  if (!reservation) return null
+  try {
+    const result = await settleOcrAccounting(reservation, { azureUnits, anthropicUnits })
+    logAccountingEvent(env, 'info', {
+      signal: 'ocr_accounting_enforcement',
+      route,
+      status: result.status,
+      azure_units_committed: result.azure?.committedUnits ?? null,
+      azure_units_refunded: result.azure?.refundedUnits ?? null,
+      anthropic_units_committed: result.anthropic?.committedUnits ?? null,
+      anthropic_units_refunded: result.anthropic?.refundedUnits ?? null,
+      requestId,
+      scanId,
+    })
+    return result
+  } catch (error) {
+    // A failed finalization deliberately leaves the original reservation charged.
+    // This can reduce availability but cannot permit extra provider spend.
+    logAccountingEvent(env, 'error', {
+      signal: 'ocr_accounting_enforcement_failure',
+      route,
+      status: 'settlement_failed',
+      reason: error instanceof OcrAccountingError ? error.reason : 'settlement_failed',
+      requestId,
+      scanId,
+    })
+    return null
+  }
+}
+
+function logAccountingEvent(env, level, fields) {
+  try {
+    logOcrMonitoringEvent(level, { phase: 'accounting', enforced: true, ...fields }, env)
+  } catch {
+    // Accounting decisions remain authoritative when a telemetry sink regresses.
+  }
+}
+
+function accountingUnavailableRaw(env, { scanId, attest, requestId, clientVersion }) {
+  logOcrMonitoringEvent('error', {
+    signal: 'scan', phase: 'scan', mode: 'raw', provider: OCR_PROVIDER,
+    status: 'provider_error', accounting: 'unavailable', attest,
+    scanId, requestId, client_version: clientVersion,
+  }, env)
+  const body = JSON.stringify(envelope({ status: 'provider_error', raw: null, scanId, kvExtras: 'off' }))
+  return new Response(body, {
+    status: 502,
+    headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) },
+  })
+}
+
+function accountingUnavailableMulti(env, { route, shapeEnvelope, scanId, attest, requestId, clientVersion, start }) {
+  const result = {
+    scanId,
+    status: 'provider_error',
+    azure: { status: 'provider_error', raw: null, httpStatus: 502, latencyMs: 0 },
+    llm: {
+      status: 'not_started', provider: LLM_PROVIDER, model: llmModel(env),
+      scanned: null, latencyMs: 0, httpStatus: 502, errorBody: null,
+    },
+    divergence: null,
+  }
+  logDualScanMonitoring(env, {
+    result, route, requestId, clientVersion, attest, cache: 'skip',
+    azureLatencyMs: 0, totalMs: Date.now() - start,
+  })
+  return renderScan(shapeEnvelope, result, requestId)
 }
 
 // Serialize a shaped envelope; HTTP status is derived from the scan status so
@@ -565,26 +738,46 @@ function enabledEnvFlag(value) {
 // Returns { result, kvExtras } so the envelope can distinguish "no adjustments on
 // this receipt" (empty) from "the layout call broke" (failed) — without this the
 // add-on degrades silently and field reports are undiagnosable.
-async function mergeLayoutKeyValuePairs({ imageBytes, contentType, env, baseResult, scanId, requestId }) {
-  const failed = () => {
-    logOcrMonitoringEvent('warn', { signal: 'kv_extras_failed', phase: 'scan', scanId, requestId }, env)
-    return { result: baseResult, kvExtras: 'failed' }
-  }
-
-  const submit = await submitLayoutKeyValueAnalyze(imageBytes, contentType, env)
-  if (!submit.ok || !submit.operationId) return failed()
-
-  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-    const poll = await getLayoutKeyValueAnalyzeResult(submit.operationId, env)
-    if (!poll.ok) break
-    if (poll.status === 'succeeded') {
-      return mergeKeyValuePairs(baseResult, poll.body)
+async function mergeLayoutKeyValuePairs({
+  imageBytes,
+  contentType,
+  env,
+  baseResult,
+  scanId,
+  requestId,
+  accountingEnforced = false,
+}) {
+  const failed = (startedUnits) => {
+    try {
+      logOcrMonitoringEvent('warn', { signal: 'kv_extras_failed', phase: 'scan', scanId, requestId }, env)
+    } catch {
+      // Preserve the accounting receipt even if the diagnostic sink regresses.
     }
-    if (poll.status === 'failed') break
-    await sleep(POLL_INTERVAL_MS)
+    return { result: baseResult, kvExtras: 'failed', startedUnits }
   }
 
-  return failed()
+  let startedUnits = 0
+  try {
+    const submit = await submitLayoutKeyValueAnalyze(imageBytes, contentType, env)
+    startedUnits = submit.ok ? 1 : 0
+    if (!submit.ok || !submit.operationId) return failed(startedUnits)
+
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+      const poll = await getLayoutKeyValueAnalyzeResult(submit.operationId, env)
+      if (!poll.ok) break
+      if (poll.status === 'succeeded') {
+        return { ...mergeKeyValuePairs(baseResult, poll.body), startedUnits }
+      }
+      if (poll.status === 'failed') break
+      await sleep(POLL_INTERVAL_MS)
+    }
+  } catch (error) {
+    if (!accountingEnforced) throw error
+    // `startedUnits` is deliberately retained: once Azure accepted the analyze,
+    // a later transport/config exception cannot prove the provider work was free.
+  }
+
+  return failed(startedUnits)
 }
 
 function mergeKeyValuePairs(baseResult, layoutResult) {
@@ -671,38 +864,58 @@ function azureStatus(httpStatus) {
   return 'provider_error'
 }
 
-async function runAzureRawLeg({ imageBytes, contentType, env }) {
+async function runAzureRawLeg({ imageBytes, contentType, env, accountingEnforced = false }) {
   const start = Date.now()
-  const submit = await submitReceiptAnalyze(imageBytes, contentType, env)
-  if (!submit.ok || !submit.operationId) {
-    return {
-      status: azureStatus(submit.httpStatus),
-      raw: null,
-      httpStatus: submit.httpStatus,
-      latencyMs: Date.now() - start,
+  let accountingUnits = 0
+  try {
+    const submit = await submitReceiptAnalyze(imageBytes, contentType, env)
+    accountingUnits = submit.ok ? 1 : 0
+    if (!submit.ok || !submit.operationId) {
+      return {
+        status: azureStatus(submit.httpStatus),
+        raw: null,
+        httpStatus: submit.httpStatus,
+        latencyMs: Date.now() - start,
+        accountingUnits,
+      }
     }
-  }
 
-  let raw = null
-  let httpStatus = submit.httpStatus
-  for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
-    const poll = await getReceiptAnalyzeResult(submit.operationId, env)
-    httpStatus = poll.httpStatus
-    if (!poll.ok) break
-    if (poll.status === 'succeeded') { raw = poll.body; break }
-    if (poll.status === 'failed') break
-    await sleep(POLL_INTERVAL_MS)
-  }
+    let raw = null
+    let httpStatus = submit.httpStatus
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+      const poll = await getReceiptAnalyzeResult(submit.operationId, env)
+      httpStatus = poll.httpStatus
+      if (!poll.ok) break
+      if (poll.status === 'succeeded') { raw = poll.body; break }
+      if (poll.status === 'failed') break
+      await sleep(POLL_INTERVAL_MS)
+    }
 
-  return {
-    status: raw ? 'succeeded' : azureStatus(httpStatus),
-    raw,
-    httpStatus,
-    latencyMs: Date.now() - start,
+    return {
+      status: raw ? 'succeeded' : azureStatus(httpStatus),
+      raw,
+      httpStatus,
+      latencyMs: Date.now() - start,
+      accountingUnits,
+    }
+  } catch (error) {
+    if (!accountingEnforced) throw error
+    // Preserve the conservative provider-start receipt if polling throws after
+    // Azure accepted the analyze request.
+    return {
+      status: 'provider_error',
+      raw: null,
+      httpStatus: 502,
+      latencyMs: Date.now() - start,
+      accountingUnits,
+    }
   }
 }
 
-async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
+async function runLlmLeg({
+  imageBytes, contentType, env, gate, model,
+  accountingEnforced = false, accountingAllowed = true,
+}) {
   if (gate.status !== 'allowed') {
     return {
       status: gate.status,
@@ -712,10 +925,11 @@ async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
       latencyMs: 0,
       httpStatus: gate.httpStatus,
       errorBody: null,
+      accountingUnits: 0,
     }
   }
 
-  const underDailyCap = await underLlmDailyCap(env)
+  const underDailyCap = accountingEnforced ? accountingAllowed : await underLlmDailyCap(env)
   if (!underDailyCap) {
     return {
       status: 'rate_limited',
@@ -725,6 +939,7 @@ async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
       latencyMs: 0,
       httpStatus: 429,
       errorBody: null,
+      accountingUnits: 0,
     }
   }
 
@@ -739,6 +954,7 @@ async function runLlmLeg({ imageBytes, contentType, env, gate, model }) {
     // Carries 'llm_truncated' / 'llm_schema_violation:…' / provider error text so the
     // Sentry capture below can tag WHY the paid leg failed, not just that it did.
     errorBody: result.errorBody ?? null,
+    accountingUnits: result.providerStarted === true ? 1 : 0,
   }
 }
 

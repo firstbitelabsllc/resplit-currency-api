@@ -11,6 +11,10 @@ const expectedBinding = {
   name: 'OCR_ACCOUNTING',
   class_name: 'OcrAccounting',
 }
+const expectedCaps = {
+  OCR_AZURE_GLOBAL_DAILY_CAP: '6000',
+  OCR_ANTHROPIC_GLOBAL_DAILY_CAP: '3000',
+}
 
 function assertAccountingConfig(config) {
   assert.equal(
@@ -24,6 +28,14 @@ function assertAccountingConfig(config) {
     'legacy',
     'named production accounting mode must stay dark'
   )
+  for (const [name, expected] of Object.entries(expectedCaps)) {
+    assert.equal(config.vars?.[name], expected, `root ${name} must keep the source-owned ceiling`)
+    assert.equal(
+      config.env?.production?.vars?.[name],
+      expected,
+      `named production ${name} must mirror the root ceiling`
+    )
+  }
 
   const rootBindings = config.durable_objects?.bindings
   const productionBindings = config.env?.production?.durable_objects?.bindings
@@ -63,6 +75,8 @@ test('accounting config contract rejects mode, binding, entrypoint, and migratio
     (config) => { config.main = 'worker/src/index.mjs' },
     (config) => { config.vars.OCR_ACCOUNTING_MODE = 'enforce' },
     (config) => { config.env.production.vars.OCR_ACCOUNTING_MODE = 'shadow' },
+    (config) => { config.vars.OCR_AZURE_GLOBAL_DAILY_CAP = '6001' },
+    (config) => { config.env.production.vars.OCR_ANTHROPIC_GLOBAL_DAILY_CAP = '2999' },
     (config) => { config.durable_objects.bindings = [] },
     (config) => { config.env.production.durable_objects.bindings[0].class_name = 'OtherClass' },
     (config) => { config.migrations[0].new_sqlite_classes = [] },
