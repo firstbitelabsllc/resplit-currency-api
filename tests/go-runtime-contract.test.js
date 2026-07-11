@@ -204,6 +204,17 @@ function assertCanonicalFxUpdate(source) {
     2,
     'publisher must have one update and one transactional rollback'
   )
+  assert.equal(
+    occurrences(source, '--image="$EXPECTED_RUNTIME_IMAGE"'),
+    1,
+    'publisher must pin the sole reviewed linux/amd64 child, not an OCI index'
+  )
+  assert.equal(
+    occurrences(source, '--image="$IMAGE"'),
+    0,
+    'publisher must not leave future runtime selection to the reviewed parent index'
+  )
+  assert.match(source, /resolve_artifact_linux_amd64_image "\$GCLOUD" "\$IMAGE"/)
   assert.match(source, /trap rollback_fx_image EXIT/)
   assert.match(source, /rollback readback failed/)
   assert.match(source, /latestCreatedExecution\.name/)
@@ -432,6 +443,7 @@ test('manual GCP deploy follows the real topology and immutable path, including 
       '.spec.template.spec.template.spec.containers[0].env'
     )],
     ['rollback trap', fxScript.replace('trap rollback_fx_image EXIT', '# rollback removed')],
+    ['runtime child pin', fxScript.replace('--image="$EXPECTED_RUNTIME_IMAGE"', '--image="$IMAGE"')],
     ['execution safety', `${fxScript}\n"$GCLOUD" run jobs execute "$JOB"\n`],
   ]) {
     assert.notEqual(mutation, fxScript, `${label} mutation must alter the FX fixture`)
