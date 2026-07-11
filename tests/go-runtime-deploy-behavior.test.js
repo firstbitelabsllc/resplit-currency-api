@@ -108,6 +108,22 @@ test('OCR success leaves only the proven candidate at 100% with no public candid
   assert.deepEqual(state.events, ['deploy-candidate', 'promote-candidate', 'remove-candidate-tag'])
 })
 
+test('OCR accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
+  const harness = makeHarness('ocr', 'manifest_index_success')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(ocrScript, harness, {
+    IMAGE: `${ocrPrefix}${'b'.repeat(64)}`,
+    SERVICE: 'ocr',
+    SCAN_FIXTURE: harness.fixture,
+    DEPLOY_TRACE_ID: 'deploy-manifest-index-success',
+  })
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.current, 'ocr-candidate')
+  assert.equal(state.candidateCreated, false)
+  assert.deepEqual(state.events, ['deploy-candidate', 'promote-candidate', 'remove-candidate-tag'])
+})
+
 for (const scenario of ['contract_fail', 'readback_mismatch']) {
   test(`FX ${scenario} restores the last completed digest and the whole non-image contract`, (t) => {
     const harness = makeHarness('fx', scenario)
@@ -179,7 +195,9 @@ if (state.mode === 'ocr') {
   if (args[0] === 'run' && args[1] === 'revisions' && args[2] === 'describe') {
     const revision = args[3]
     output(revision === 'ocr-candidate'
-      ? process.env.IMAGE
+      ? (state.scenario === 'manifest_index_success'
+        ? 'us-central1-docker.pkg.dev/test-project/resplit-fx/ocr@sha256:' + 'c'.repeat(64)
+        : process.env.IMAGE)
       : 'us-central1-docker.pkg.dev/test-project/resplit-fx/ocr@sha256:' + 'a'.repeat(64))
     process.exit(0)
   }
