@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers'
 
 const SUBJECT_TOKEN_PATTERN = /^[0-9a-f]{64}$/
 const RESERVATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const RECEIPT_RETENTION_DAYS = 8
 
 /**
  * Dormant SQLite accounting primitive for future OCR admission control.
@@ -31,6 +32,7 @@ export class OcrAccounting extends DurableObject {
 
     return this.ctx.storage.transactionSync(() => {
       const sql = this.ctx.storage.sql
+      pruneExpiredAccountingRows(sql, request.day)
       const requestSemantics = canonicalRequestSemantics(request)
       const duplicate = firstRow(sql.exec(
         `SELECT request_semantics, decision_json
@@ -297,6 +299,12 @@ export class OcrAccounting extends DurableObject {
 
 function initializeSchema(sql) {
   sql.exec(
+    `CREATE TABLE IF NOT EXISTS ocr_maintenance (
+       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+       last_pruned_day TEXT NOT NULL CHECK (length(last_pruned_day) = 10)
+     ) STRICT`
+  )
+  sql.exec(
     `CREATE TABLE IF NOT EXISTS ocr_global_daily (
        day TEXT PRIMARY KEY,
        azure_units INTEGER NOT NULL CHECK (azure_units >= 0),
@@ -351,6 +359,30 @@ function initializeSchema(sql) {
        CHECK (length(day) = 10)
      ) STRICT`
   )
+}
+
+function pruneExpiredAccountingRows(sql, currentDay) {
+  const maintenance = firstRow(sql.exec(
+    'SELECT last_pruned_day FROM ocr_maintenance WHERE singleton = 1'
+  ))
+  if (maintenance?.last_pruned_day >= currentDay) return
+
+  const cutoffDay = retentionCutoffDay(currentDay)
+  sql.exec('DELETE FROM ocr_reservation_finalizations WHERE day < ?', cutoffDay)
+  sql.exec('DELETE FROM ocr_reservations WHERE day < ?', cutoffDay)
+  sql.exec('DELETE FROM ocr_subject_daily WHERE day < ?', cutoffDay)
+  sql.exec('DELETE FROM ocr_global_daily WHERE day < ?', cutoffDay)
+  sql.exec(
+    `INSERT INTO ocr_maintenance (singleton, last_pruned_day) VALUES (1, ?)
+     ON CONFLICT(singleton) DO UPDATE SET last_pruned_day = excluded.last_pruned_day`,
+    currentDay
+  )
+}
+
+function retentionCutoffDay(currentDay) {
+  const cutoff = new Date(`${currentDay}T00:00:00.000Z`)
+  cutoff.setUTCDate(cutoff.getUTCDate() - (RECEIPT_RETENTION_DAYS - 1))
+  return cutoff.toISOString().slice(0, 10)
 }
 
 function validateReservation(input) {

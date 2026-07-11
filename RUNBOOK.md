@@ -259,7 +259,9 @@ change the mode until all of these are independently true:
 - the exact-version compatibility mapper for still-active builds 3798, 3801,
   and 3811 has completed its shadow-first proof;
 - `OCR_ACCOUNTING_HMAC_KEY` is provisioned as a Worker secret with at least 32
-  bytes, and root/named global caps match the reviewed source values;
+  bytes, and root/named global caps match the reviewed source values; rotate the
+  HMAC key only at a clean UTC-day boundary because a mid-day rotation changes
+  per-subject tokens (the global provider ceiling remains authoritative);
 - the Durable Object migration and class export are live while legacy responses
   remain healthy;
 - activation starts at a clean UTC-day boundary if accounting shadow mode wrote
@@ -273,6 +275,12 @@ paid Azure analyze, a cache replay spends zero additional units, an accounting
 store failure calls no provider, and the structured accounting signals contain no
 raw IP/App Attest principal. Roll back by restoring `OCR_ACCOUNTING_MODE=legacy`;
 retain the binding, class export, and permanent migration history.
+
+The accounting object retains the current UTC day plus the prior seven days of
+daily totals, pseudonymous subject totals, reservations, and finalizations. The
+first valid reservation on each new UTC day prunes older rows transactionally;
+this bounds SQLite growth while preserving a week of idempotency and incident
+evidence. Do not treat the object as a permanent billing ledger.
 
 ### 5. Cloudflare token expired or revoked
 

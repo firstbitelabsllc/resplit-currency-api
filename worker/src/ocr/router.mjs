@@ -233,6 +233,7 @@ async function handleScan(request, env, requestId, ctx) {
     if (result && keyValueExtrasEnabled(env)) {
       const merge = await mergeLayoutKeyValuePairs({
         imageBytes, contentType, env, baseResult: result, scanId, requestId,
+        accountingEnforced: admission.enforced,
       })
       result = merge.result
       kvExtras = merge.kvExtras
@@ -330,7 +331,12 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     })
   }
 
-  const azurePromise = runAzureRawLeg({ imageBytes, contentType, env })
+  const azurePromise = runAzureRawLeg({
+    imageBytes,
+    contentType,
+    env,
+    accountingEnforced: admission.enforced,
+  })
   const llmPromise = runLlmLeg({
     imageBytes, contentType, env, gate: llmGate, model,
     accountingEnforced: admission.enforced,
@@ -732,7 +738,15 @@ function enabledEnvFlag(value) {
 // Returns { result, kvExtras } so the envelope can distinguish "no adjustments on
 // this receipt" (empty) from "the layout call broke" (failed) — without this the
 // add-on degrades silently and field reports are undiagnosable.
-async function mergeLayoutKeyValuePairs({ imageBytes, contentType, env, baseResult, scanId, requestId }) {
+async function mergeLayoutKeyValuePairs({
+  imageBytes,
+  contentType,
+  env,
+  baseResult,
+  scanId,
+  requestId,
+  accountingEnforced = false,
+}) {
   const failed = (startedUnits) => {
     try {
       logOcrMonitoringEvent('warn', { signal: 'kv_extras_failed', phase: 'scan', scanId, requestId }, env)
@@ -757,7 +771,8 @@ async function mergeLayoutKeyValuePairs({ imageBytes, contentType, env, baseResu
       if (poll.status === 'failed') break
       await sleep(POLL_INTERVAL_MS)
     }
-  } catch {
+  } catch (error) {
+    if (!accountingEnforced) throw error
     // `startedUnits` is deliberately retained: once Azure accepted the analyze,
     // a later transport/config exception cannot prove the provider work was free.
   }
@@ -849,7 +864,7 @@ function azureStatus(httpStatus) {
   return 'provider_error'
 }
 
-async function runAzureRawLeg({ imageBytes, contentType, env }) {
+async function runAzureRawLeg({ imageBytes, contentType, env, accountingEnforced = false }) {
   const start = Date.now()
   let accountingUnits = 0
   try {
@@ -883,7 +898,8 @@ async function runAzureRawLeg({ imageBytes, contentType, env }) {
       latencyMs: Date.now() - start,
       accountingUnits,
     }
-  } catch {
+  } catch (error) {
+    if (!accountingEnforced) throw error
     // Preserve the conservative provider-start receipt if polling throws after
     // Azure accepted the analyze request.
     return {
