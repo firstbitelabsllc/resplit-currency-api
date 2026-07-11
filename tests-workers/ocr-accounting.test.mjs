@@ -71,6 +71,69 @@ describe('OcrAccounting SQLite Durable Object', () => {
     expect(stored.reservations).toHaveLength(1)
   })
 
+  it('refunds a failed provider reservation atomically so the released unit can be admitted again', async () => {
+    const stub = accountingStub('refund')
+    const caps = {
+      azure: { globalDaily: 1, subjectDaily: 1 },
+      anthropic: { globalDaily: 1, subjectDaily: 1 },
+    }
+    const failed = reservation({ caps })
+
+    expect((await stub.reserve(failed)).azure.allowed).toBe(true)
+    const refunded = await stub.refund({ day: failed.day, reservationId: failed.reservationId })
+    expect(refunded).toMatchObject({
+      ok: true,
+      status: 'refunded',
+      azure: { committedUnits: 0, refundedUnits: 1 },
+      anthropic: { committedUnits: 0, refundedUnits: 0 },
+    })
+
+    const retry = await stub.reserve(reservation({ caps }))
+    expect(retry.azure).toMatchObject({ allowed: true, requestedUnits: 1 })
+    const stored = await snapshot(stub)
+    expect(stored.global[0].azure_units).toBe(1)
+    expect(stored.subjects[0].azure_units).toBe(1)
+  })
+
+  it('commits only provider units that actually started and refunds the unused reservation remainder', async () => {
+    const stub = accountingStub('partial-commit')
+    const request = reservation({
+      azureUnits: 2,
+      anthropicUnits: 1,
+      caps: {
+        azure: { globalDaily: 2, subjectDaily: 2 },
+        anthropic: { globalDaily: 1, subjectDaily: 1 },
+      },
+    })
+
+    const reserved = await stub.reserve(request)
+    expect(reserved.azure.allowed).toBe(true)
+    expect(reserved.anthropic.allowed).toBe(true)
+
+    const committed = await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })
+    expect(committed).toMatchObject({
+      ok: true,
+      status: 'committed',
+      azure: { committedUnits: 1, refundedUnits: 1 },
+      anthropic: { committedUnits: 0, refundedUnits: 1 },
+    })
+    expect(await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })).toEqual(committed)
+
+    const stored = await snapshot(stub)
+    expect(stored.global[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
+    expect(stored.subjects[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
+  })
+
   it('fails closed when a reservation ID is reused with different subject, units, or caps', async () => {
     const mutations = [
       (request) => ({ ...request, subjectToken: 'b'.repeat(64) }),
