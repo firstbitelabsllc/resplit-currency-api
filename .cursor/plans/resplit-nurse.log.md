@@ -1,22 +1,23 @@
 # Resplit Nurse Log
 
-## 2026-07-11 04:02 EDT / 2026-07-11 08:02 UTC
+## 2026-07-11 07:33 EDT / 2026-07-11 11:33 UTC
 
-- `GO/source-dark-proven`, `NO-GO/activation-pending` for global OCR provider accounting on branch `codex/ocr-atomic-accounting-20260711` from fresh `origin/main` `89bedcd038fd8cab8785cd21f05f8ea28bf7f254`; root and named production config remain exactly `OCR_ACCOUNTING_MODE=legacy`, and no push, PR, workflow dispatch, secret write, or deployment happened.
-- Branch delta: a single SQLite Durable Object now performs atomic global and per-subject Azure/Anthropic admission, idempotent commit/refund finalization, all-or-nothing two-unit Azure reservation, and fail-safe settlement. The dark router seam stays cache-first, HMACs raw principals before the object boundary, calls no provider when accounting is unavailable, preserves independent Azure/Anthropic ceilings, and leaves admitted work charged if settlement becomes unavailable.
+- `GO/branch-proven`, `NO-GO/source-runtime-activation-pending` for global OCR provider accounting on branch `codex/ocr-atomic-accounting-20260711`, rebased onto compatibility source `e88b4fb05a817ef7706a9887aca064039576eb1c`; root and named production config remain exactly `OCR_ACCOUNTING_MODE=legacy`, compatibility shadow remains `false`, and no workflow dispatch, secret write, or deployment happened.
+- Branch delta: a single SQLite Durable Object now performs atomic global and per-subject Azure/Anthropic admission, idempotent commit/refund finalization, all-or-nothing two-unit Azure reservation, and fail-safe settlement. The dark router seam stays cache-first, HMACs raw principals before the object boundary, calls no provider when accounting is unavailable, preserves independent Azure/Anthropic ceilings, and leaves admitted work charged if settlement becomes unavailable. A once-per-UTC-day transaction retains eight days of pseudonymous receipts and prunes older rows so configured traffic cannot grow SQLite forever.
 - Fresh proof:
-  - RED commit `688a567a` reproduces the legacy cap-one race: `12/12` concurrent unique cache misses reached the Azure stub when only one paid admission was allowed; missing `commit`/`refund` Worker RPCs also failed before implementation.
-  - GREEN commit `73f3fe5e` closes admission and finalization. The focused enforcement oracle is `11/11`; a deliberate mutation forcing the mode check false made all `11/11` fail and restored the `12`-admission race, then the restored source returned `11/11` green.
-  - `npm run generate` plus `npm run validate:release` -> `166` currencies, strict history coverage OK; full Node suite -> `432/432`; SQLite Worker suite -> `12/12`; focused config/workflow/deploy guards -> `56/56`.
-  - `actionlint` on all three workflows -> clean; Wrangler `4.110.0` root and named-production dry-runs -> bundle OK with the same Durable Object binding, `legacy` mode, global caps `6000`/`3000`, and `LLM_SCAN_ALLOW_SOFT_FAIL=true`.
+  - RED commit `a525fb7d` reproduces the legacy cap-one race: `12/12` concurrent unique cache misses reached the Azure stub when only one paid admission was allowed. RED commits `e0c7e291` and `43e4ae95` separately catch default-dark response drift and unbounded receipt retention.
+  - GREEN commits `bc6f9525` and `2603906f` close atomic admission/finalization, preserve the installed legacy fallback, and retain the current plus seven prior UTC days. Focused compatibility/accounting integration is `25/25`.
+  - `npm run check` -> `166` currencies, strict history coverage OK, full Node suite `439/439`, SQLite Worker suite `13/13`.
+  - `actionlint` on all three workflows -> clean; Wrangler `4.110.0` root and named-production dry-runs -> bundle OK with both dark controls, the same Durable Object binding, global caps `6000`/`3000`, and `LLM_SCAN_ALLOW_SOFT_FAIL=true`.
   - `npm run smoke:deploy` -> `OK (date=2026-07-11, historyPoints=30)`; read-only `https://fx.resplit.app/health` -> healthy production release `094801ebe8c77862f16ecf8d9492920564c09d3c`, explicitly predating this branch.
 - Known / unknown / forgotten work surfaced:
-  - known: still-active builds `3798`, `3801`, and `3811` need the separate exact-version compatibility mapper shadow-proven before atomic enforcement can activate; this branch does not implement or overlap that mapper.
+  - known: exact-version compatibility source for still-active builds `3798`, `3801`, and `3811` is merged but default-off; its production deploy and shadow proof still precede atomic enforcement.
   - known: activation also requires a provisioned `OCR_ACCOUNTING_HMAC_KEY` of at least 32 bytes and a clean UTC-day boundary if shadow accounting has written reservations; the required secret is deliberately absent from legacy config so past builds cannot be bricked by this source-dark merge.
+  - known: rotate the HMAC key only at a UTC-day boundary; a mid-day rotation changes the per-subject token, while the independent global cap still prevents aggregate overspend.
   - known: interruption after provider start but before finalization can conservatively hold a reservation until the UTC day rolls over. That may reduce availability but cannot overspend the provider cap.
   - unknown: real production admission and PII-free telemetry proof until compatibility, secret provisioning, reviewed activation, and a controlled cap-one burst occur.
-- Exact next slice: integrate the atomic source behind `legacy`, land and shadow-prove the exact-version mapper separately, provision the HMAC secret, activate only at a reviewed UTC boundary, then correlate a cap-one burst, cache replay, accounting-store failure, structured Worker telemetry, and provider-side call counts before retaining `enforce`.
-- Current boundary: RED `688a567a`; source-dark GREEN `73f3fe5e`; production `094801eb`; no Resplit-web PLAN or dirty primary checkout was mutated.
+- Exact next slice: land this branch behind `legacy`, wait for the normal scheduled deployment, shadow-prove the exact-version mapper, provision the HMAC secret, then activate only at a clean UTC boundary and correlate a controlled cap-one burst, cache replay, accounting-store failure, structured Worker telemetry, and provider-side call counts before retaining `enforce`.
+- Current boundary: branch head `2603906f`; source main `e88b4fb0`; production `094801eb`; no Resplit-web PLAN or dirty primary checkout was mutated.
 
 <promise>KEEP-GOING: compatibility shadow proof, secret provisioning, controlled atomic activation</promise>
 
