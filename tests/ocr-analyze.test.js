@@ -344,6 +344,85 @@ test('cache-first accounting: analyze to dual replay uses one paid provider pair
   assert.equal((await dual.json()).v, 1, 'the replay still renders the requested legacy envelope')
 })
 
+test('cache-first accounting: cap-zero multi-engine misses reject before providers or shadow work', async () => {
+  stubProviders()
+  let shadowCalls = 0
+  const ctx = { waitUntil() { shadowCalls++ } }
+  const cases = [
+    {
+      request: analyzeRequest,
+      image: new Uint8Array([0, 2, 0, 2, 6]),
+      expected: {
+        v: 2,
+        status: 'rate_limited',
+        llmReasoning: false,
+        aiModels: [],
+        engines: [
+          { id: 'azure', kind: 'ocr', provider: 'azure-di', model: 'prebuilt-receipt', status: 'rate_limited', latencyMs: 0, raw: null },
+          { id: 'llm', kind: 'vision-llm', provider: 'anthropic', model: 'claude-sonnet-5', status: 'not_started', latencyMs: 0, scanned: null },
+        ],
+        consensus: null,
+      },
+    },
+    {
+      request: dualScanRequest,
+      image: new Uint8Array([0, 2, 0, 2, 7]),
+      expected: {
+        v: 1,
+        mode: 'dual',
+        status: 'rate_limited',
+        azure: { status: 'rate_limited', raw: null },
+        llm: { status: 'not_started', provider: 'anthropic', model: 'claude-sonnet-5', scanned: null, latencyMs: 0 },
+        divergence: null,
+        llmReasoning: false,
+        aiModels: [],
+      },
+    },
+  ]
+
+  for (const entry of cases) {
+    const env = makeEnv({
+      ANTHROPIC_API_KEY: 'anthropic-key',
+      LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+      SOFT_FAIL_DAILY_CAP: '0',
+      OCR_ACCOUNTING_MODE: 'shadow',
+    })
+    const response = await handleOcr(entry.request(entry.image), env, ctx)
+    const { scanId, ...body } = await response.json()
+
+    assert.equal(response.status, 429)
+    assert.equal(typeof scanId, 'string')
+    assert.deepEqual(body, entry.expected)
+  }
+
+  assert.equal(calls.azureSubmit, 0, 'a rejected cache miss cannot start Azure')
+  assert.equal(calls.anthropic, 0, 'a rejected cache miss cannot start Anthropic')
+  assert.equal(shadowCalls, 0, 'a rejected cache miss cannot reserve dark accounting')
+})
+
+test('cache-first accounting: invalid App Attest cannot read the shared multi-engine cache', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+  })
+  const image = new Uint8Array([4, 0, 4, 0, 4])
+
+  const seed = await handleOcr(analyzeRequest(image), env)
+  assert.equal(seed.status, 200)
+  assert.equal([...env.ATTEST_KV.store.keys()].some((key) => key.startsWith('cache:dualScan:v2core:')), true)
+
+  const rejected = await handleOcr(dualScanRequest(image, {
+    'x-resplit-attest-soft-fail': 'false',
+    'x-resplit-attest-key-id': 'unregistered-key',
+    'x-resplit-attest-assertion': 'AA==',
+  }), env)
+
+  assert.equal(rejected.status, 401)
+  assert.equal(calls.azureSubmit, 1, 'the rejected replay cannot start another Azure scan')
+  assert.equal(calls.anthropic, 1, 'the rejected replay cannot start another Anthropic scan')
+})
+
 test('POST /ocr/analyze dark mode (no ANTHROPIC_API_KEY) is partial with an azure-only aiModels', async () => {
   stubProviders()
   const env = makeEnv()
