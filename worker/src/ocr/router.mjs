@@ -154,30 +154,13 @@ async function handleScan(request, env, requestId, ctx) {
   }
 
   // --- Auth gate ---
-  // The daily caps bound Azure ANALYZE CALLS, not HTTP requests: with the opt-in
-  // key-value add-on enabled every scan fires a second layout analyze, so each
-  // request charges the counter for the Azure work it can trigger.
+  // Authenticate (or resolve the bounded soft-fail principal) before reading the
+  // cache. A valid cache entry is still protected by the same App Attest boundary,
+  // but it performs no Azure work and therefore must not spend another provider
+  // budget unit.
   const azureUnits = keyValueExtrasEnabled(env) ? 2 : 1
-  let attest = 'reject'
-  let deviceKey = keyId
-  let principalKind = 'attested'
-  let principal = keyId
-  let azureSubjectCap = PER_DEVICE_DAILY_CAP
-  if (softFail || !keyId || !assertionB64) {
-    // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
-    attest = 'soft_fail'
-    principalKind = 'soft_fail'
-    principal = request.headers.get('cf-connecting-ip') || 'unknown'
-    deviceKey = `ip:${principal}`
-    azureSubjectCap = resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP)
-    const ok = await underCap(env, deviceKey, azureSubjectCap, azureUnits)
-    if (!ok) return rateLimited(env, { scanId, attest, requestId, clientVersion })
-  } else {
-    await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
-    attest = 'pass'
-    const ok = await underCap(env, deviceKey, PER_DEVICE_DAILY_CAP, azureUnits)
-    if (!ok) return rateLimited(env, { scanId, attest, requestId, clientVersion })
-  }
+  const auth = await authenticateScan({ request, env, imageBytes, softFail, keyId, assertionB64 })
+  const { attest } = auth
 
   // --- Idempotency (don't re-bill Azure for the same image) ---
   const imageHash = await sha256Hex(imageBytes)
@@ -191,18 +174,23 @@ async function handleScan(request, env, requestId, ctx) {
     return new Response(cached, { status: 200, headers: { ...RESPONSE_HEADERS, 'content-type': 'application/json', ...requestCorrelationHeaders(requestId) } })
   }
 
+  // The legacy KV cap is denominated in Azure analyzes, not requests. Debit only
+  // after the cache miss proves this request can trigger paid provider work.
+  const admitted = await debitLegacyOcrBudget(env, auth, azureUnits)
+  if (!admitted) return rateLimited(env, { scanId, attest, requestId, clientVersion })
+
   scheduleOcrAccountingShadow({
     env,
     ctx,
     route: 'scan',
     requestId,
     scanId,
-    principalKind,
-    principal,
+    principalKind: auth.principalKind,
+    principal: auth.principal,
     azureUnits,
     anthropicUnits: 0,
-    azureSubjectCap,
-    anthropicSubjectCap: azureSubjectCap,
+    azureSubjectCap: auth.azureSubjectCap,
+    anthropicSubjectCap: auth.azureSubjectCap,
   })
 
   // --- Azure forward (server-side; key never leaves the Worker) ---
@@ -278,12 +266,9 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     return errorResponse('BAD_REQUEST', 'empty image body', 400, requestId, RESPONSE_HEADERS)
   }
 
-  // --- Auth gate (shared) --- the daily caps bound Azure ANALYZE CALLS; both
-  // routes fire exactly one Azure receipt analyze, so one unit per request.
-  const auth = await authorizeScan({ request, env, imageBytes, softFail, keyId, assertionB64, azureUnits: 1 })
-  if (!auth.ok) {
-    return respondRateLimited(env, { route, shapeEnvelope, scanId, attest: auth.attest, requestId, clientVersion, start })
-  }
+  // Authenticate before cache access. The daily provider cap is debited below only
+  // when the shared cache misses and this request can perform paid work.
+  const auth = await authenticateScan({ request, env, imageBytes, softFail, keyId, assertionB64 })
   const attest = auth.attest
 
   const imageHash = await sha256Hex(imageBytes)
@@ -303,6 +288,11 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
       azureLatencyMs: null, totalMs: Date.now() - start,
     })
     return renderScan(shapeEnvelope, result, requestId)
+  }
+
+  const admitted = await debitLegacyOcrBudget(env, auth, 1)
+  if (!admitted) {
+    return respondRateLimited(env, { route, shapeEnvelope, scanId, attest, requestId, clientVersion, start })
   }
 
   scheduleOcrAccountingShadow({
@@ -399,20 +389,28 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   return renderScan(shapeEnvelope, result, requestId)
 }
 
-// Shared App Attest + daily-cap gate. Returns { ok, attest }; a verifyAssertion
-// rejection throws AttestError, caught by handleOcr and mapped to 401 (unchanged).
-async function authorizeScan({ request, env, imageBytes, softFail, keyId, assertionB64, azureUnits }) {
+// Shared App Attest boundary. It intentionally does not mutate accounting: both
+// route families must authenticate before cache access, then debit only on a miss.
+// A verifyAssertion rejection throws AttestError, caught by handleOcr as a 401.
+async function authenticateScan({ request, env, imageBytes, softFail, keyId, assertionB64 }) {
   if (softFail || !keyId || !assertionB64) {
-    // Soft-fail / dev path: tighter cap keyed on IP, no hard block.
     const principal = request.headers.get('cf-connecting-ip') || 'unknown'
     const deviceKey = `ip:${principal}`
     const azureSubjectCap = resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP)
-    const ok = await underCap(env, deviceKey, azureSubjectCap, azureUnits)
-    return { ok, attest: 'soft_fail', principalKind: 'soft_fail', principal, azureSubjectCap }
+    return { attest: 'soft_fail', deviceKey, principalKind: 'soft_fail', principal, azureSubjectCap }
   }
   await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
-  const ok = await underCap(env, keyId, PER_DEVICE_DAILY_CAP, azureUnits)
-  return { ok, attest: 'pass', principalKind: 'attested', principal: keyId, azureSubjectCap: PER_DEVICE_DAILY_CAP }
+  return {
+    attest: 'pass',
+    deviceKey: keyId,
+    principalKind: 'attested',
+    principal: keyId,
+    azureSubjectCap: PER_DEVICE_DAILY_CAP,
+  }
+}
+
+async function debitLegacyOcrBudget(env, auth, azureUnits) {
+  return underCap(env, auth.deviceKey, auth.azureSubjectCap, azureUnits)
 }
 
 // Serialize a shaped envelope; HTTP status is derived from the scan status so
