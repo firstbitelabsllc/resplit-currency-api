@@ -7,7 +7,7 @@ import (
 )
 
 // MemStore is an in-memory Store used to keep the OCR service buildable and
-// runnable (e.g. /healthz) before Firestore is wired in. It implements the
+// runnable (e.g. /health) before Firestore is wired in. It implements the
 // free-function Store interface: keyID -> (SPKI public key, signCount).
 //
 // TODO(gcp): replace with a *firestore.Client-backed Store reading/writing the

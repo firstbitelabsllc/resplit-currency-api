@@ -14,10 +14,10 @@ func newTestServer(t *testing.T) http.Handler {
 	return newServer(slog.Default()).routes()
 }
 
-func TestHealthz(t *testing.T) {
+func TestHealth(t *testing.T) {
 	handler := newTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 

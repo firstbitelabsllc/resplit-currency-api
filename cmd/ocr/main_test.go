@@ -38,9 +38,9 @@ func TestRoutes(t *testing.T) {
 		check func(t *testing.T, body map[string]any)
 	}{
 		{
-			name:       "healthz ok",
+			name:       "health ok",
 			method:     http.MethodGet,
-			path:       "/healthz",
+			path:       "/health",
 			wantStatus: http.StatusOK,
 			check: func(t *testing.T, body map[string]any) {
 				if body["status"] != "ok" {

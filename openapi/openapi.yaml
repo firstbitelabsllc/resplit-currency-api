@@ -17,7 +17,7 @@ info:
         in Secret Manager). App Attest gate, Firestore state, budget kill-switch.
       - `/sideload/*` — dedicated Cloud Run service; V4 signed URLs, App Attest
         gate, own GCS bucket.
-      - `/healthz` — liveness for the FX shim.
+      - `/health` — liveness for the FX shim.
   license:
     name: Proprietary
   contact:
@@ -39,10 +39,10 @@ tags:
     description: App Attest-gated photo sideload via V4 signed URLs.
 
 paths:
-  /healthz:
+  /health:
     get:
       tags: [health]
-      operationId: getHealthz
+      operationId: getHealth
       summary: Liveness probe.
       description: Returns service identity and a timestamp. No auth, no state.
       responses:

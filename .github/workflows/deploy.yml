@@ -1,43 +1,42 @@
 name: Deploy (GCP / Cloud Run)
 
-# Keyless deploy of the ocr + sideload Cloud Run services. Authentication is via
-# Workload Identity Federation (no JSON service-account key) — the GitHub OIDC
-# token is exchanged for short-lived credentials on the deployer SA. WIF pool +
-# provider + deployer SA were bootstrapped out-of-band (bootstrap/setup-gcp.sh);
-# this workflow only consumes them through the repo secrets/vars.
-#
-# Required repo configuration (already set per slice-2 brief):
-#   secrets.GCP_WORKLOAD_IDENTITY_PROVIDER  full provider resource name
-#   secrets.GCP_DEPLOYER_SERVICE_ACCOUNT    deployer SA email (impersonated via WIF)
-#   vars.GCP_PROJECT_ID                     resplit-fx-prod
-#   vars.GCP_REGION                         us-central1
+# Manual, keyless deployment for the two existing Go runtime targets:
+#   - Cloud Run service: ocr
+#   - dormant Cloud Run job: fx-publish (image update only; this does not run it)
+# Sideload has no live service and is deliberately excluded.
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Existing runtime target to update by immutable digest
+        required: true
+        type: choice
+        options:
+          - ocr
+          - fx-publish
 
-# OIDC token is required for WIF; contents:read for checkout.
 permissions:
   contents: read
   id-token: write
 
-# One in-flight deploy per branch; cancel superseded pushes.
 concurrency:
-  group: deploy-${{ github.ref }}
+  # Both dispatch targets mutate the same production control plane. A fixed
+  # group prevents two refs (or OCR + publisher) racing rollback state.
+  group: resplit-fx-production-deploy
   cancel-in-progress: false
-
-env:
-  GO_VERSION: '1.26'
 
 jobs:
   deploy:
     name: build + deploy
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       REGION: ${{ vars.GCP_REGION }}
-      # Artifact Registry docker repo from terraform/modules/artifact-registry
-      # (name_prefix "resplit-fx" + repository_id "containers").
-      REPO: resplit-fx-containers
+      REPO: resplit-fx
+      OCR_SERVICE: ocr
+      FX_PUBLISH_JOB: fx-publish
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -49,74 +48,126 @@ jobs:
           echo "  resplit_currency_api_integration"
           echo "  resplit_currency_api_trust_preflight"
 
-      # Keyless auth: exchange the GitHub OIDC token for credentials on the
-      # deployer SA. NO json_key / credentials_json is supplied.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Authenticate to Google Cloud (WIF)
         id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}
 
       - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
       - name: Configure docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-      - name: Compute image refs
+      - name: Compute image tags
         id: img
         run: |
           REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
           {
             echo "registry=${REGISTRY}"
             echo "ocr=${REGISTRY}/ocr:${GITHUB_SHA}"
-            echo "sideload=${REGISTRY}/sideload:${GITHUB_SHA}"
+            echo "fx_publish=${REGISTRY}/fx-publish:${GITHUB_SHA}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Build + push ocr image
+        if: inputs.target == 'ocr'
+        id: build_ocr
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
           file: Dockerfile.ocr
+          platforms: linux/amd64
           push: true
-          tags: |
-            ${{ steps.img.outputs.ocr }}
-            ${{ steps.img.outputs.registry }}/ocr:latest
+          tags: ${{ steps.img.outputs.ocr }}
           cache-from: type=gha,scope=ocr
           cache-to: type=gha,scope=ocr,mode=max
 
-      - name: Build + push sideload image
+      - name: Build + push fx-publish image
+        if: inputs.target == 'fx-publish'
+        id: build_fx_publish
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
-          file: Dockerfile.sideload
+          file: Dockerfile.fx-publish
+          platforms: linux/amd64
           push: true
-          tags: |
-            ${{ steps.img.outputs.sideload }}
-            ${{ steps.img.outputs.registry }}/sideload:latest
-          cache-from: type=gha,scope=sideload
-          cache-to: type=gha,scope=sideload,mode=max
+          tags: ${{ steps.img.outputs.fx_publish }}
+          cache-from: type=gha,scope=fx-publish
+          cache-to: type=gha,scope=fx-publish,mode=max
 
-      # Deploy the freshly-pushed, immutable per-SHA images. Cloud Run service
-      # shape (scaling, runtime SA, secrets) is owned by Terraform; this step
-      # only advances the live revision's image, which the cloudrun module's
-      # lifecycle.ignore_changes[image] tolerates without drift.
-      - name: Deploy ocr to Cloud Run
+      - name: Record immutable image references
+        id: immutable_images
         run: |
-          gcloud run deploy resplit-fx-ocr \
-            --image="${{ steps.img.outputs.ocr }}" \
-            --region="${REGION}" \
-            --project="${PROJECT_ID}" \
-            --quiet
+          set -euo pipefail
+          REGISTRY="${{ steps.img.outputs.registry }}"
+          if [[ "${{ inputs.target }}" == "ocr" ]]; then
+            echo "ocr=${REGISTRY}/ocr@${{ steps.build_ocr.outputs.digest }}"
+          else
+            echo "fx_publish=${REGISTRY}/fx-publish@${{ steps.build_fx_publish.outputs.digest }}"
+          fi >> "$GITHUB_OUTPUT"
 
-      - name: Deploy sideload to Cloud Run
+      - name: Verify built OCR runtime
+        if: inputs.target == 'ocr'
+        env:
+          OCR_IMAGE: ${{ steps.immutable_images.outputs.ocr }}
         run: |
-          gcloud run deploy resplit-fx-sideload \
-            --image="${{ steps.img.outputs.sideload }}" \
-            --region="${REGION}" \
-            --project="${PROJECT_ID}" \
-            --quiet
+          set -euo pipefail
+          docker pull "$OCR_IMAGE"
+          container="$(docker create "$OCR_IMAGE")"
+          docker cp "${container}:/ocr" /tmp/ocr
+          docker rm "$container"
+          go version -m /tmp/ocr | tee /tmp/ocr.buildinfo
+          awk 'NR == 1 { exit ($2 == "go1.26.5" ? 0 : 1) }' /tmp/ocr.buildinfo
+          grep -F $'\tbuild\tCGO_ENABLED=0' /tmp/ocr.buildinfo
+          grep -F $'\tbuild\tGOOS=linux' /tmp/ocr.buildinfo
+          grep -F $'\tbuild\tGOARCH=amd64' /tmp/ocr.buildinfo
+          grep -F $'\tdep\tgolang.org/x/crypto\tv0.52.0\t' /tmp/ocr.buildinfo
+
+      - name: Verify built fx-publish runtime
+        if: inputs.target == 'fx-publish'
+        env:
+          FX_PUBLISH_IMAGE: ${{ steps.immutable_images.outputs.fx_publish }}
+        run: |
+          set -euo pipefail
+          docker pull "$FX_PUBLISH_IMAGE"
+          container="$(docker create "$FX_PUBLISH_IMAGE")"
+          docker cp "${container}:/fx-publish" /tmp/fx-publish
+          docker rm "$container"
+          go version -m /tmp/fx-publish | tee /tmp/fx-publish.buildinfo
+          awk 'NR == 1 { exit ($2 == "go1.26.5" ? 0 : 1) }' /tmp/fx-publish.buildinfo
+          grep -F $'\tbuild\tCGO_ENABLED=0' /tmp/fx-publish.buildinfo
+          grep -F $'\tbuild\tGOOS=linux' /tmp/fx-publish.buildinfo
+          grep -F $'\tbuild\tGOARCH=amd64' /tmp/fx-publish.buildinfo
+          grep -F $'\tdep\tgolang.org/x/crypto\tv0.52.0\t' /tmp/fx-publish.buildinfo
+
+      - name: Deploy ocr through canonical service-shape script
+        if: inputs.target == 'ocr'
+        env:
+          IMAGE: ${{ steps.immutable_images.outputs.ocr }}
+          PROJECT: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          SERVICE: ${{ env.OCR_SERVICE }}
+          GCLOUD: gcloud
+          DEPLOY_TRACE_ID: deploy-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bootstrap/deploy-ocr.sh
+
+      - name: Update dormant fx-publish job image
+        if: inputs.target == 'fx-publish'
+        env:
+          IMAGE: ${{ steps.immutable_images.outputs.fx_publish }}
+          PROJECT: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          REPO: ${{ env.REPO }}
+          JOB: ${{ env.FX_PUBLISH_JOB }}
+          GCLOUD: gcloud
+        run: bootstrap/update-fx-publish-image.sh
