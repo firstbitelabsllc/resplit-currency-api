@@ -27,15 +27,37 @@ than widening or exposing a token.
 The sink is created disabled. Updates are staged with a digest-derived traffic
 tag and `--no-traffic`; unknown environment variables are preserved. If an
 existing sink is enabled or drifted, staging stops before Cloud Run is touched.
+Staging and verification share one atomic, expiring Pub/Sub lease so a local
+verifier and the deploy workflow cannot overwrite each other's traffic state.
 
-`bootstrap/verify-ocr-loki-export.sh` is the only promotion path. It generates
-fresh 32-hex proof IDs itself, temporarily points the push subscription at the
-tagged candidate, publishes a sanitized fixture, and requires that exact ID in
-Loki before promoting. With `ENABLE_SINK=1`, it then enables the sink, writes a
-second fixture through the real Cloud Logging API, and requires the second
-exact Loki result. Its failure trap disables the sink, restores the stable push
-endpoint, and restores the previous 100% revision. A typed proof string alone
-cannot enable export.
+`bootstrap/verify-ocr-loki-export.sh` is the only promotion path. It performs no
+cloud reads or mutations unless explicitly invoked with `ACTIVATE=1`. When
+activated, it generates fresh 32-hex proof IDs itself and creates a unique,
+expiring proof subscription
+whose endpoint is the tagged candidate but whose OIDC audience remains the
+stable Cloud Run service URL. The production subscription is never redirected.
+Promotion requires a Loki record matching both the exact request ID and the
+candidate's validated `K_REVISION`, followed by deletion readback for the proof
+subscription. With `ENABLE_SINK=1`, the verifier revalidates the exact sink,
+topic, retry, retention, and DLQ topology, enables the sink, writes a second
+fixture through the real Cloud Logging API, and requires the second exact,
+revision-bound Loki result. It validates the topology again after enablement.
+
+The failure trap retries and reads back sink disablement, proof-subscription
+cleanup, and traffic restoration. It restores traffic only while the candidate
+still owns 100%; third-party traffic is never overwritten. An incomplete
+rollback is a distinct hard failure and deliberately retains the expiring lease
+for manual recovery. A typed proof string alone cannot enable export.
+
+Both staging and promotion fail closed unless Cloud Run still uses internal
+ingress, the push service account is the only reviewed invoker, no public
+principal is bound, the Logging sink can publish to the source topic, Pub/Sub
+can publish to the dead-letter topic and consume the source subscription, and
+the Pub/Sub service agent can mint the push identity token. Sink exclusions are
+also rejected so the source cannot silently omit OCR records. Loki reads use
+bounded connect and request deadlines, and the overall convergence proof stops
+after 90 seconds; an unavailable dashboard can therefore never hold the shared
+lease indefinitely.
 
 Before running the verifier with `ENABLE_SINK=1`:
 
