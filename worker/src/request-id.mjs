@@ -2,14 +2,29 @@ export const REQUEST_ID_HEADER = 'x-request-id'
 export const RESPLIT_TRACE_ID_HEADER = 'x-resplit-trace-id'
 export const CORRELATION_EXPOSE_HEADERS = `${REQUEST_ID_HEADER}, ${RESPLIT_TRACE_ID_HEADER}, cf-ray`
 
+const MAX_CORRELATION_ID_LENGTH = 96
+const CORRELATION_ID_PATTERN = /^[A-Za-z0-9._:-]+$/
+
+/**
+ * @param {string} value
+ * @returns {boolean}
+ */
+export function isValidCorrelationId(value) {
+  return (
+    value.length > 0 &&
+    value.length <= MAX_CORRELATION_ID_LENGTH &&
+    CORRELATION_ID_PATTERN.test(value)
+  )
+}
+
 /**
  * @param {Request} request
  * @returns {string}
  */
 export function resolveRequestId(request) {
   return (
-    trimmedHeader(request, RESPLIT_TRACE_ID_HEADER) ??
-    trimmedHeader(request, REQUEST_ID_HEADER) ??
+    validatedHeader(request, RESPLIT_TRACE_ID_HEADER) ??
+    validatedHeader(request, REQUEST_ID_HEADER) ??
     crypto.randomUUID()
   )
 }
@@ -43,7 +58,14 @@ export function attachRequestCorrelationHeaders(response, requestId) {
  * @param {string} header
  * @returns {string | undefined}
  */
-function trimmedHeader(request, header) {
+function validatedHeader(request, header) {
   const value = request.headers.get(header)?.trim()
-  return value || undefined
+  if (
+    !value ||
+    !isValidCorrelationId(value)
+  ) {
+    return undefined
+  }
+
+  return value
 }

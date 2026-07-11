@@ -135,6 +135,49 @@ test('worker routes prefer x-resplit-trace-id as the cross-service request id', 
   assert.equal(response.headers.get('x-resplit-trace-id'), 'trace-health')
 })
 
+test('worker health route ignores an invalid trace id and preserves a valid request id', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      headers: {
+        'x-request-id': 'valid-health-request',
+        'x-resplit-trace-id': 'rejected trace id',
+      },
+    }),
+    {}
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-request-id'), 'valid-health-request')
+  assert.equal(response.headers.get('x-resplit-trace-id'), 'valid-health-request')
+  assert.ok(![...response.headers.values()].some(value => value.includes('rejected trace id')))
+})
+
+test('worker health route never reflects invalid caller correlation ids', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  const rejectedTraceId = 'rejected trace id'
+  const rejectedRequestId = 'rejected/request/id'
+  const response = await handleRequest(
+    new Request('https://example.workers.dev/health', {
+      headers: {
+        'x-request-id': rejectedRequestId,
+        'x-resplit-trace-id': rejectedTraceId,
+      },
+    }),
+    {}
+  )
+
+  const requestId = response.headers.get('x-request-id')
+  assert.equal(response.status, 200)
+  assert.match(requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  assert.equal(response.headers.get('x-resplit-trace-id'), requestId)
+  assert.ok(![...response.headers.values()].some(value => (
+    value.includes(rejectedTraceId) || value.includes(rejectedRequestId)
+  )))
+})
+
 test('worker health route rejects non-probe methods', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 

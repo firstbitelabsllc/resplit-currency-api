@@ -90,10 +90,162 @@ test('getSentryWorkerOptions returns dedicated worker config when DSN is present
       /\/\/([a-z0-9-]+\.)*resplit-currency-api\.pages\.dev(\/|:|$)/,
     ],
     sendDefaultPii: false,
+    beforeSend: monitoring.applySentryCorrelationRequestFilter,
+    beforeSendSpan: monitoring.applySentryCorrelationSpanFilter,
+    beforeSendTransaction: monitoring.applySentryCorrelationRequestFilter,
     initialScope: {
       tags: {
         surface: 'resplit-currency-api',
         runtime: 'worker',
+      },
+    },
+  })
+})
+
+test('Sentry options remove only unsafe inbound correlation headers from automatic request context', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+
+  assert.equal(typeof options.beforeSend, 'function')
+  const event = {
+    message: 'automatic request proof',
+    request: {
+      method: 'GET',
+      url: 'https://fx.resplit.app/health',
+      headers: {
+        'X-Resplit-Trace-Id': 'rejected trace id',
+        'x-request-id': 'safe-request-123',
+        'user-agent': 'proof-agent',
+      },
+    },
+  }
+
+  assert.equal(options.beforeSend(event, {}), event)
+  assert.deepEqual(event.request, {
+    method: 'GET',
+    url: 'https://fx.resplit.app/health',
+    headers: {
+      'x-request-id': 'safe-request-123',
+      'user-agent': 'proof-agent',
+    },
+  })
+})
+
+test('Sentry options remove non-ASCII and overlong correlation values from every automatic SDK path', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+  const event = {
+    request: {
+      headers: {
+        'x-resplit-trace-id': 'trace-über',
+        'x-request-id': 'r'.repeat(97),
+        accept: 'application/json',
+      },
+    },
+  }
+  const transaction = {
+    request: {
+      headers: {
+        'x-resplit-trace-id': 't'.repeat(97),
+        'x-request-id': 'request-über',
+        accept: 'application/json',
+      },
+    },
+  }
+  const span = {
+    data: {
+      'http.request.header.x_resplit_trace_id': 'trace-über',
+      'http.request.header.x_request_id': 'r'.repeat(97),
+      'http.response.status_code': 500,
+    },
+  }
+
+  assert.equal(options.beforeSend(event, {}), event)
+  assert.equal(options.beforeSendTransaction(transaction, {}), transaction)
+  assert.equal(options.beforeSendSpan(span), span)
+  assert.deepEqual(event.request.headers, { accept: 'application/json' })
+  assert.deepEqual(transaction.request.headers, { accept: 'application/json' })
+  assert.deepEqual(span.data, { 'http.response.status_code': 500 })
+})
+
+test('Sentry options retain and normalize safe correlation headers in automatic request context', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+  const event = {
+    request: {
+      headers: {
+        'x-resplit-trace-id': '  safe.trace:123  ',
+        'x-request-id': 'safe_request-456',
+      },
+    },
+  }
+
+  assert.equal(options.beforeSend(event, {}), event)
+  assert.deepEqual(event.request.headers, {
+    'x-resplit-trace-id': 'safe.trace:123',
+    'x-request-id': 'safe_request-456',
+  })
+})
+
+test('Sentry options remove unsafe correlation values from automatic HTTP span attributes only', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+
+  assert.equal(typeof options.beforeSendSpan, 'function')
+  const span = {
+    data: {
+      'http.request.header.x_resplit_trace_id': 'rejected trace id',
+      'http.request.header.x_request_id': '  safe-request-123  ',
+      'http.request.header.user_agent': 'proof-agent',
+      'http.response.status_code': 500,
+    },
+  }
+
+  assert.equal(options.beforeSendSpan(span), span)
+  assert.deepEqual(span.data, {
+    'http.request.header.x_request_id': 'safe-request-123',
+    'http.request.header.user_agent': 'proof-agent',
+    'http.response.status_code': 500,
+  })
+})
+
+test('Sentry options scrub the distinct transaction request path without dropping transaction metadata', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+
+  assert.equal(typeof options.beforeSendTransaction, 'function')
+  const transaction = {
+    type: 'transaction',
+    transaction: 'GET /health',
+    request: {
+      method: 'GET',
+      headers: {
+        'x-resplit-trace-id': '  safe-trace-123  ',
+        'x-request-id': 'rejected request id',
+        accept: 'application/json',
+      },
+    },
+  }
+
+  assert.equal(options.beforeSendTransaction(transaction, {}), transaction)
+  assert.deepEqual(transaction, {
+    type: 'transaction',
+    transaction: 'GET /health',
+    request: {
+      method: 'GET',
+      headers: {
+        'x-resplit-trace-id': 'safe-trace-123',
+        accept: 'application/json',
       },
     },
   })

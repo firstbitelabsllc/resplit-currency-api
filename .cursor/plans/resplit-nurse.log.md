@@ -1,5 +1,26 @@
 # Resplit Nurse Log
 
+## 2026-07-11 03:12 EDT / 2026-07-11 07:12 UTC
+
+- `GO/source-proven`, `NO-GO/runtime-pending` for correlation-ID validation on branch `codex/correlation-sentry-scrub-20260711` from `origin/main` `094801ebe8c77862f16ecf8d9492920564c09d3c`; production still serves that base release until the normal scheduled workflow deploys a merged change.
+- Shipped delta: the Worker now accepts only trimmed 1–96 character `[A-Za-z0-9._:-]+` caller correlation IDs, falls back from an invalid trace ID to a valid request ID, and mints a UUID when neither is valid. The same exported validator removes invalid raw correlation values from Sentry error events, transactions, and span attributes while retaining normalized valid IDs and unrelated request/span metadata. Rejections are deliberately silent so attacker input cannot amplify paid logs.
+- Fresh proof:
+  - Installed `@sentry/cloudflare` / `@sentry/core` `10.44.0` mechanically preserved both raw inbound headers in automatic `event.request.headers` and `http.request.header.*` span attributes even with `sendDefaultPii=false`; the new `beforeSend`, `beforeSendTransaction`, and `beforeSendSpan` behavioral oracles cover each distinct SDK path.
+  - RED commits `0f4ade98`, `62d7c7de`, and `e98a4c27` failed on resolver/route reflection, event/span capture, and transaction capture respectively; GREEN commits `cc7e086a` and `ce33526c` close those paths.
+  - Focused request/real-route/monitoring set -> `48/48` green.
+  - `npm run check` -> generated `2026-07-11`, strict package validation OK, `420/420` Node tests and `8/8` Worker tests green.
+  - `npm run smoke:deploy` -> `OK (date=2026-07-11, historyPoints=30, cf=https://resplit-currency-api.pages.dev)`.
+  - `npx wrangler deploy --config wrangler.jsonc --env="" --dry-run` -> bundle OK on Wrangler `4.110.0`; canonical Worker bindings intact.
+  - `git diff --check` -> clean.
+- Known / unknown / forgotten work surfaced:
+  - known: production `/health` is healthy on release `094801ebe8c77862f16ecf8d9492920564c09d3c`, but that runtime still predates the validation/Sentry containment change.
+  - unknown: the exact first scheduled deployment run and resulting production release SHA after merge; source truth and runtime truth remain separate until `/health` reports the merged SHA.
+  - forgotten: `sendDefaultPii=false` does not suppress these correlation headers in the installed Sentry SDK; all three SDK hooks are required because error events, transaction events, and spans take distinct callback paths.
+- Exact next slice: push and merge the findable PR, let the normal scheduled workflow deploy it without manual dispatch, then verify `/health` reports the merged release and harmless invalid-primary/valid-secondary plus both-invalid probes return only normalized/generated correlation headers. Recheck Sentry for the test sentinel and new release separately.
+- Current boundary: product implementation head `ce33526c`; `origin/main` and production release `094801ebe8c77862f16ecf8d9492920564c09d3c`; no runtime deployment claimed.
+
+<promise>KEEP-GOING: merge, scheduled deploy, production correlation proof</promise>
+
 ## 2026-06-22 22:21 EDT / 2026-06-23 02:21 UTC
 
 - `GO/code-proven-pr-pending` for OCR G3 spend guard on branch
