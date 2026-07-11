@@ -186,6 +186,20 @@ test('FX success updates only the image and never executes the dormant job', (t)
   assert.deepEqual(state.events, ['update-target'])
 })
 
+test('FX accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
+  const harness = makeHarness('fx', 'manifest_index_success')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(fxScript, harness, {
+    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
+    JOB: 'fx-publish',
+  })
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.image, `${fxPrefix}${'c'.repeat(64)}`)
+  assert.equal(state.drift, false)
+  assert.deepEqual(state.events, ['update-target'])
+})
+
 function fakeGcloudSource() {
   return `#!/usr/bin/env node
 const fs = require('node:fs')
@@ -295,7 +309,9 @@ if (state.mode === 'fx') {
   if (args[0] === 'run' && args[1] === 'jobs' && args[2] === 'update') {
     const image = arg('--image=').slice('--image='.length)
     const rollback = image.endsWith('a'.repeat(64))
-    state.image = image
+    state.image = !rollback && state.scenario === 'manifest_index_success'
+      ? 'us-central1-docker.pkg.dev/test-project/resplit-fx/fx-publish@sha256:' + 'c'.repeat(64)
+      : image
     state.drift = rollback ? false : state.scenario === 'contract_fail'
     state.events.push(rollback ? 'rollback-image' : 'update-target')
     save()
