@@ -186,6 +186,48 @@ test('FX success updates only the image and never executes the dormant job', (t)
   assert.deepEqual(state.events, ['update-target'])
 })
 
+test('FX accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
+  const harness = makeHarness('fx', 'manifest_index_success')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(fxScript, harness, {
+    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
+    JOB: 'fx-publish',
+  })
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.image, `${fxPrefix}${'c'.repeat(64)}`)
+  assert.equal(state.drift, false)
+  assert.deepEqual(state.events, ['update-target'])
+})
+
+test('FX rejects an ambiguous OCI index before mutating the dormant job', (t) => {
+  const harness = makeHarness('fx', 'manifest_index_ambiguous')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(fxScript, harness, {
+    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
+    JOB: 'fx-publish',
+  })
+  assert.notEqual(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
+  assert.equal(state.drift, false)
+  assert.deepEqual(state.events, [])
+})
+
+test('FX rejects a parseable manifest delivered by a failed registry transport', (t) => {
+  const harness = makeHarness('fx', 'manifest_transport_fail')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(fxScript, harness, {
+    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
+    JOB: 'fx-publish',
+  })
+  assert.notEqual(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
+  assert.equal(state.drift, false)
+  assert.deepEqual(state.events, [])
+})
+
 function fakeGcloudSource() {
   return `#!/usr/bin/env node
 const fs = require('node:fs')
@@ -323,6 +365,42 @@ const valueAfter = flag => {
   return index >= 0 ? args[index + 1] : null
 }
 if (url.includes('.pkg.dev/v2/test-project/resplit-fx/ocr/manifests/sha256:')) {
+  if (state.scenario === 'manifest_index_success' || state.scenario === 'manifest_index_ambiguous') {
+    const manifests = [
+      {
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        digest: 'sha256:' + 'c'.repeat(64),
+        platform: { architecture: 'amd64', os: 'linux' },
+      },
+      {
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        digest: 'sha256:' + 'd'.repeat(64),
+        platform: { architecture: 'unknown', os: 'unknown' },
+        annotations: { 'vnd.docker.reference.type': 'attestation-manifest' },
+      },
+    ]
+    if (state.scenario === 'manifest_index_ambiguous') {
+      manifests.push({
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        digest: 'sha256:' + 'e'.repeat(64),
+        platform: { architecture: 'amd64', os: 'linux' },
+      })
+    }
+    process.stdout.write(JSON.stringify({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.index.v1+json',
+      manifests,
+    }))
+  } else {
+    process.stdout.write(JSON.stringify({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+    }))
+    if (state.scenario === 'manifest_transport_fail') process.exit(18)
+  }
+  process.exit(0)
+}
+if (url.includes('.pkg.dev/v2/test-project/resplit-fx/fx-publish/manifests/sha256:')) {
   if (state.scenario === 'manifest_index_success' || state.scenario === 'manifest_index_ambiguous') {
     const manifests = [
       {

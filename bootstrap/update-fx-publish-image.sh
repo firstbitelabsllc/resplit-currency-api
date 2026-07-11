@@ -11,6 +11,11 @@ JOB="${JOB:-fx-publish}"
 IMAGE="${IMAGE:?set IMAGE to an immutable resplit-fx/fx-publish@sha256: digest}"
 GCLOUD="${GCLOUD:-gcloud}"
 command -v "$GCLOUD" >/dev/null 2>&1 || GCLOUD=gcloud
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=resolve-artifact-runtime-image.sh
+# The helper is shellchecked separately from this dynamic source path.
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/resolve-artifact-runtime-image.sh"
 
 EXPECTED_PREFIX="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/fx-publish@sha256:"
 TARGET_DIGEST="${IMAGE#"$EXPECTED_PREFIX"}"
@@ -18,6 +23,10 @@ if [[ "$IMAGE" != "${EXPECTED_PREFIX}"* ]] ||
    [[ ! "$TARGET_DIGEST" =~ ^[0-9a-f]{64}$ ]]; then
   echo ">> refusing non-canonical FX publisher image" >&2
   exit 2
+fi
+if ! EXPECTED_RUNTIME_IMAGE="$(resolve_artifact_linux_amd64_image "$GCLOUD" "$IMAGE")"; then
+  echo ">> unable to resolve the reviewed FX publisher image to one linux/amd64 runtime" >&2
+  exit 1
 fi
 
 normalize_contract() {
@@ -77,14 +86,14 @@ trap rollback_fx_image EXIT
 
 rollback_armed=true
 "$GCLOUD" run jobs update "$JOB" \
-  --image="$IMAGE" \
+  --image="$EXPECTED_RUNTIME_IMAGE" \
   --region="$REGION" --project="$PROJECT" --quiet
 
 after="$("$GCLOUD" run jobs describe "$JOB" \
   --region="$REGION" --project="$PROJECT" --format=json)"
 actual="$(printf '%s' "$after" | jq -r \
   '.spec.template.spec.template.spec.containers[0].image')"
-test "$actual" = "$IMAGE"
+test "$actual" = "$EXPECTED_RUNTIME_IMAGE"
 after_contract="$(printf '%s' "$after" | normalize_contract)"
 if [[ "$after_contract" != "$before_contract" ]]; then
   echo ">> FX publisher non-image contract drifted; restoring last proven digest" >&2
