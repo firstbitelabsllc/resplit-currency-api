@@ -6,3 +6,6 @@
 !internal/
 !internal/**
 !Dockerfile.*
+!infra/
+!infra/ocr-loki-forwarder/
+!infra/ocr-loki-forwarder/Dockerfile

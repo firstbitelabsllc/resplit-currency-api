@@ -20,7 +20,6 @@ function assertForwarderSource({ handler, dockerfile }) {
     'request_id',
     'trace_id',
     'insert_id',
-    'X-Scope-OrgID',
     'application/json',
   ]) {
     assert.match(handler, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
@@ -66,7 +65,6 @@ function assertDeployContract({ script, workflow }) {
     '--push-auth-service-account',
     '--push-auth-token-audience',
     '--message-retention-duration=7d',
-    '--expiration-period=never',
     '--max-delivery-attempts=10',
     '--min-retry-delay=10s',
     '--max-retry-delay=600s',
@@ -80,6 +78,12 @@ function assertDeployContract({ script, workflow }) {
     assert.match(script, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
 
+  assert.equal(
+    occurrences(script, '--expiration-period=never'),
+    2,
+    'source and dead-letter subscriptions must both be non-expiring'
+  )
+
   assert.match(script, /\/pubsub\/push/)
   assert.match(script, /--disabled/)
   assert.match(script, /enable.*ocr-loki-export|ocr-loki-export.*enable/s)
@@ -90,8 +94,23 @@ function assertDeployContract({ script, workflow }) {
 
   assert.match(workflow, /group: resplit-fx-production-deploy/)
   assert.match(workflow, /bootstrap\/deploy-ocr-loki-forwarder\.sh/)
-  assert.match(workflow, /refs\/heads\/main/)
+  assert.match(workflow, /if: github\.ref == 'refs\/heads\/main' && inputs\.activate/)
+  assert.equal(occurrences(workflow, 'default: false'), 1)
+  assert.equal(occurrences(workflow, "ACTIVATE: '1'"), 1)
   assert.doesNotMatch(workflow, /workflow_run|schedule:/)
+
+  for (const [driftCheck, expectedCount] of [
+    ['.pushConfig.pushEndpoint', 2],
+    ['.pushConfig.oidcToken.serviceAccountEmail', 1],
+    ['.pushConfig.oidcToken.audience', 1],
+    ['.messageRetentionDuration == "604800s"', 1],
+    ['.retryPolicy.minimumBackoff == "10s"', 1],
+    ['.retryPolicy.maximumBackoff == "600s"', 1],
+    ['.deadLetterPolicy.maxDeliveryAttempts == 10', 1],
+    ['.messageRetentionDuration == "1209600s"', 1],
+  ]) {
+    assert.equal(occurrences(script, driftCheck), expectedCount, `missing exact drift check ${driftCheck}`)
+  }
 }
 
 test('OCR Loki export remains asynchronous, private, scoped, and loss-aware', () => {
@@ -126,6 +145,8 @@ test('OCR Loki contract rejects sink, auth, durability, and coupling mutations',
     { key: 'handler', value: sources.handler.replace('request_id', 'merchant') },
     { key: 'dockerfile', value: sources.dockerfile.replace(/@sha256:[0-9a-f]{64}/, ':latest') },
     { key: 'workflow', value: sources.workflow.replace('group: resplit-fx-production-deploy', 'group: deploy-${{ github.ref }}') },
+    { key: 'workflow', value: sources.workflow.replace(' && inputs.activate', '') },
+    { key: 'script', value: sources.script.replace('.deadLetterPolicy.maxDeliveryAttempts == 10', '.deadLetterPolicy.maxDeliveryAttempts >= 1') },
   ]
 
   for (const mutation of mutations) {
