@@ -6,6 +6,18 @@ const MAX_CORRELATION_ID_LENGTH = 96
 const CORRELATION_ID_PATTERN = /^[A-Za-z0-9._:-]+$/
 
 /**
+ * @param {string} value
+ * @returns {boolean}
+ */
+export function isValidCorrelationId(value) {
+  return (
+    value.length > 0 &&
+    value.length <= MAX_CORRELATION_ID_LENGTH &&
+    CORRELATION_ID_PATTERN.test(value)
+  )
+}
+
+/**
  * @param {Request} request
  * @returns {string}
  */
@@ -50,8 +62,7 @@ function validatedHeader(request, header) {
   const value = request.headers.get(header)?.trim()
   if (
     !value ||
-    value.length > MAX_CORRELATION_ID_LENGTH ||
-    !CORRELATION_ID_PATTERN.test(value)
+    !isValidCorrelationId(value)
   ) {
     return undefined
   }

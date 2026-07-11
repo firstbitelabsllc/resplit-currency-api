@@ -1,4 +1,9 @@
 import * as Sentry from '@sentry/cloudflare'
+import {
+  isValidCorrelationId,
+  REQUEST_ID_HEADER,
+  RESPLIT_TRACE_ID_HEADER,
+} from './request-id.mjs'
 
 const SURFACE = 'resplit-currency-api'
 let sentrySdk = Sentry
@@ -16,6 +21,62 @@ const FX_CANARY_MONITOR_CONFIG = {
 }
 
 const DEFAULT_TRACES_SAMPLE_RATE = 0.05
+const CORRELATION_HEADER_NAMES = new Set([REQUEST_ID_HEADER, RESPLIT_TRACE_ID_HEADER])
+const CORRELATION_SPAN_ATTRIBUTES = new Set([
+  'http.request.header.x_request_id',
+  'http.request.header.x_resplit_trace_id',
+])
+
+/**
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+function normalizeSafeCorrelationId(value) {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim()
+  return isValidCorrelationId(normalized) ? normalized : undefined
+}
+
+/**
+ * @param {Record<string, unknown> | undefined} values
+ * @param {Set<string>} protectedKeys
+ */
+function scrubCorrelationValues(values, protectedKeys) {
+  if (!values) return
+
+  for (const key of Object.keys(values)) {
+    if (!protectedKeys.has(key.toLowerCase())) continue
+    const normalized = normalizeSafeCorrelationId(values[key])
+    if (normalized === undefined) {
+      delete values[key]
+    } else {
+      values[key] = normalized
+    }
+  }
+}
+
+/**
+ * @template {Record<string, unknown>} T
+ * @param {T} event
+ * @returns {T}
+ */
+export function applySentryCorrelationRequestFilter(event) {
+  // @sentry/cloudflare's automatic RequestData integration captures non-PII
+  // headers even with sendDefaultPii=false. Keep useful request context while
+  // preventing malformed caller-controlled ids from reaching Sentry verbatim.
+  scrubCorrelationValues(event.request?.headers, CORRELATION_HEADER_NAMES)
+  return event
+}
+
+/**
+ * @template {Record<string, unknown>} T
+ * @param {T} span
+ * @returns {T}
+ */
+export function applySentryCorrelationSpanFilter(span) {
+  scrubCorrelationValues(span.data, CORRELATION_SPAN_ATTRIBUTES)
+  return span
+}
 
 /**
  * @param {{ SENTRY_DSN?: string }} env
@@ -72,6 +133,9 @@ export function getSentryWorkerOptions(env) {
     tracesSampleRate: resolveTracesSampleRate(env),
     tracePropagationTargets: TRACE_PROPAGATION_TARGETS,
     sendDefaultPii: false,
+    beforeSend: applySentryCorrelationRequestFilter,
+    beforeSendSpan: applySentryCorrelationSpanFilter,
+    beforeSendTransaction: applySentryCorrelationRequestFilter,
     initialScope: {
       tags: {
         surface: SURFACE,
