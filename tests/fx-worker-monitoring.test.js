@@ -90,6 +90,8 @@ test('getSentryWorkerOptions returns dedicated worker config when DSN is present
       /\/\/([a-z0-9-]+\.)*resplit-currency-api\.pages\.dev(\/|:|$)/,
     ],
     sendDefaultPii: false,
+    beforeSend: monitoring.applySentryCorrelationRequestFilter,
+    beforeSendSpan: monitoring.applySentryCorrelationSpanFilter,
     initialScope: {
       tags: {
         surface: 'resplit-currency-api',
@@ -172,6 +174,40 @@ test('Sentry options remove unsafe correlation values from automatic HTTP span a
     'http.request.header.x_request_id': 'safe-request-123',
     'http.request.header.user_agent': 'proof-agent',
     'http.response.status_code': 500,
+  })
+})
+
+test('Sentry options scrub the distinct transaction request path without dropping transaction metadata', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+
+  assert.equal(typeof options.beforeSendTransaction, 'function')
+  const transaction = {
+    type: 'transaction',
+    transaction: 'GET /health',
+    request: {
+      method: 'GET',
+      headers: {
+        'x-resplit-trace-id': 'safe-trace-123',
+        'x-request-id': 'rejected request id',
+        accept: 'application/json',
+      },
+    },
+  }
+
+  assert.equal(options.beforeSendTransaction(transaction, {}), transaction)
+  assert.deepEqual(transaction, {
+    type: 'transaction',
+    transaction: 'GET /health',
+    request: {
+      method: 'GET',
+      headers: {
+        'x-resplit-trace-id': 'safe-trace-123',
+        accept: 'application/json',
+      },
+    },
   })
 })
 
