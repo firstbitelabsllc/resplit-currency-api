@@ -312,10 +312,13 @@ Automatic behavior:
 2. A trusted exact-date archive snapshot may replace a failed primary only when
    `CURRENCY_API_ALLOW_ARCHIVE_FALLBACK` is explicitly enabled. Its internal source date
    must match the requested publish date.
-3. The live primary and exact-date archive fallback must contain every currency present in
-   the latest trusted archive strictly before the publish date. Additions are allowed;
-   removals fail until an explicit code-reviewed retirement changes this contract. Package
-   validation repeats the same prior-set containment check.
+3. Before fetching or writing, the publisher builds a trusted currency baseline from the
+   union of the latest valid archive strictly before the publish date and any same-day
+   snapshot already committed in `HEAD`. The live primary and exact-date fallback must
+   contain that union. This means a `00:00` addition cannot disappear in the `03:00` pass,
+   and fallback rates cannot authorize themselves by being compared to the same reduced
+   file. Additions are allowed; removals fail until an explicit code-reviewed retirement
+   changes this contract.
 4. Without that exact-date fallback, primary failure, date mismatch, or currency removal
    refuses publication; the last good deployed CDN and Worker artifacts continue serving.
 5. Frankfurter/ECB has a separate 96-hour lag budget for weekends and upstream calendar
@@ -325,6 +328,11 @@ Automatic behavior:
    Drift above 0.5% warns (2% when ECB's dated snapshot lags); drift above 5% refuses the
    publish before a new snapshot is written. Package validation enforces the same artifact
    contract again.
+
+Generated `snapshots/base-rates.json` records the pre-write baseline source dates and code
+sets. Package validation requires the candidate to contain their union and independently
+checks that the receipt includes every code from the latest prior archive. The separate
+day-over-day value-sanity comparison remains anchored only to that strictly prior snapshot.
 
 If the primary is permanently unavailable, add and prove a full-coverage replacement in
 [`scripts/lib/sources.js`](scripts/lib/sources.js). Do not promote a majors-only source or

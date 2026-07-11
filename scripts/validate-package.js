@@ -131,8 +131,15 @@ function main() {
   // publish it. (Skips gracefully when there is no prior day to compare.)
   const priorSanityDates = archiveManifest.availableDates.filter((date) => date < meta.latestDate)
   const priorSanityDate = priorSanityDates.length ? priorSanityDates[priorSanityDates.length - 1] : null
+  const priorSnapshot = priorSanityDate ? readJSON(`archive/${priorSanityDate}.json`) : null
+  validateTrustedCurrencyBaseline({
+    baseline: snapshot.trustedCurrencyBaseline,
+    candidateRates: snapshot.rates,
+    snapshotDate: snapshot.date,
+    priorSnapshot,
+    priorDate: priorSanityDate
+  })
   if (priorSanityDate) {
-    const priorSnapshot = readJSON(`archive/${priorSanityDate}.json`)
     const missingCodes = findMissingCurrencyCodes(snapshot.rates, priorSnapshot.rates)
     ensure(
       missingCodes.length === 0,
@@ -236,6 +243,90 @@ function main() {
   console.log(
     `validate-package: OK (${codes.length} currencies, history points=${historyFrom.points.length}, sample=${fromCode}->${toCode}, strictHistory=${STRICT_HISTORY_COVERAGE ? 'on' : 'off'})`
   )
+}
+
+function validateTrustedCurrencyBaseline({
+  baseline,
+  candidateRates,
+  snapshotDate,
+  priorSnapshot,
+  priorDate
+}) {
+  ensure(
+    baseline && typeof baseline === 'object' && !Array.isArray(baseline),
+    'trusted currency baseline metadata missing'
+  )
+  ensure(Array.isArray(baseline.sources), 'trusted currency baseline sources missing')
+  ensure(Array.isArray(baseline.currencyCodes), 'trusted currency baseline codes missing')
+
+  const allowedKinds = new Set(['latest_prior_archive', 'same_day_committed_archive'])
+  const seenKinds = new Set()
+  const sourceCodes = []
+  for (const source of baseline.sources) {
+    ensure(allowedKinds.has(source?.kind), `trusted currency baseline source kind invalid: ${source?.kind}`)
+    ensure(!seenKinds.has(source.kind), `trusted currency baseline source duplicated: ${source.kind}`)
+    seenKinds.add(source.kind)
+    ensure(isIsoDate(source.date), `trusted currency baseline source date invalid: ${source.date}`)
+    const normalizedCodes = normalizeCurrencyCodeList(source.currencyCodes)
+    ensure(
+      normalizedCodes !== null && arraysEqual(source.currencyCodes, normalizedCodes),
+      `trusted currency baseline ${source.kind} codes must be sorted, unique lowercase strings`
+    )
+    sourceCodes.push(...normalizedCodes)
+  }
+
+  const normalizedBaselineCodes = normalizeCurrencyCodeList(baseline.currencyCodes)
+  ensure(
+    normalizedBaselineCodes !== null && arraysEqual(baseline.currencyCodes, normalizedBaselineCodes),
+    'trusted currency baseline codes must be sorted, unique lowercase strings'
+  )
+  const expectedUnion = [...new Set(sourceCodes)].sort((left, right) => left.localeCompare(right))
+  ensure(
+    arraysEqual(normalizedBaselineCodes, expectedUnion),
+    'trusted currency baseline codes must equal the union of its source codes'
+  )
+
+  const priorSource = baseline.sources.find((source) => source.kind === 'latest_prior_archive')
+  if (priorDate) {
+    ensure(
+      priorSource?.date === priorDate,
+      `trusted currency baseline must identify latest prior archive ${priorDate}`
+    )
+    const priorCodes = Object.keys(priorSnapshot?.rates || {})
+      .map((code) => code.toLowerCase())
+      .sort((left, right) => left.localeCompare(right))
+    ensure(
+      arraysEqual(priorSource.currencyCodes, priorCodes),
+      `trusted currency baseline metadata must contain all latest prior archive codes from ${priorDate}`
+    )
+  } else {
+    ensure(!priorSource, 'trusted currency baseline names a prior archive when none exists')
+  }
+
+  const sameDaySource = baseline.sources.find(
+    (source) => source.kind === 'same_day_committed_archive'
+  )
+  if (sameDaySource) {
+    ensure(
+      sameDaySource.date === snapshotDate,
+      `trusted same-day baseline date must match snapshot date ${snapshotDate}`
+    )
+  }
+
+  const baselineRates = Object.fromEntries(normalizedBaselineCodes.map((code) => [code, 1]))
+  const missingCodes = findMissingCurrencyCodes(candidateRates, baselineRates)
+  ensure(
+    missingCodes.length === 0,
+    `trusted currency baseline: candidate missing ${missingCodes.length} pre-write trusted ${missingCodes.length === 1 ? 'currency' : 'currencies'}: ${missingCodes.slice(0, 12).join(', ')}`
+  )
+}
+
+function normalizeCurrencyCodeList(codes) {
+  if (!Array.isArray(codes)) return null
+  if (codes.some((code) => typeof code !== 'string' || code.length === 0)) return null
+  const normalized = codes.map((code) => code.toLowerCase())
+  if (new Set(normalized).size !== normalized.length) return null
+  return normalized.sort((left, right) => left.localeCompare(right))
 }
 
 function validateHistoryCoverage({ dates, latestDate, strict }) {

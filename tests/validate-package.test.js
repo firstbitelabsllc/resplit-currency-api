@@ -142,7 +142,44 @@ test('validate-package refuses an unexplained currency removal versus the latest
 
   assert.throws(
     () => temp.validate(),
-    new RegExp(`currency-set continuity: snapshot missing 1 trusted currency.*${removedCode}`)
+    new RegExp(`trusted currency baseline: candidate missing 1 pre-write trusted currency.*${removedCode}`)
+  )
+})
+
+test('validate-package refuses a candidate missing a committed same-day baseline addition', (t) => {
+  const temp = withTempPackage(t)
+  const snapshotPath = path.join(temp.packageRoot, 'snapshots', 'base-rates.json')
+  const snapshot = fs.readJsonSync(snapshotPath)
+  const sameDaySource = snapshot.trustedCurrencyBaseline.sources
+    .find((source) => source.kind === 'same_day_committed_archive')
+
+  assert.ok(sameDaySource)
+  sameDaySource.currencyCodes.push('zzq')
+  sameDaySource.currencyCodes.sort()
+  snapshot.trustedCurrencyBaseline.currencyCodes.push('zzq')
+  snapshot.trustedCurrencyBaseline.currencyCodes.sort()
+  fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
+
+  assert.throws(
+    () => temp.validate(),
+    /trusted currency baseline: candidate missing 1 pre-write trusted currency: zzq/
+  )
+})
+
+test('validate-package requires baseline metadata to contain every latest-prior archive code', (t) => {
+  const temp = withTempPackage(t)
+  const snapshotPath = path.join(temp.packageRoot, 'snapshots', 'base-rates.json')
+  const snapshot = fs.readJsonSync(snapshotPath)
+  const priorSource = snapshot.trustedCurrencyBaseline.sources
+    .find((source) => source.kind === 'latest_prior_archive')
+
+  assert.ok(priorSource)
+  priorSource.currencyCodes = priorSource.currencyCodes.slice(1)
+  fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
+
+  assert.throws(
+    () => temp.validate(),
+    /trusted currency baseline metadata must contain all latest prior archive codes/
   )
 })
 

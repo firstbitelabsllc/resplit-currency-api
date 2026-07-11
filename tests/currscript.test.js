@@ -10,6 +10,7 @@ const {
   buildArchiveManifest,
   buildArchiveYearPayloads,
   buildSnapshotWindow,
+  buildTrustedCurrencyBaseline,
   computeCrossRates,
   dateDaysBeforeUTC,
   fetchLatestRates,
@@ -18,6 +19,7 @@ const {
   loadAllSnapshotsFromArchive,
   loadArchiveRateFallback,
   loadPriorTrustedSnapshotFromArchive,
+  loadSameDayCommittedSnapshotFromArchive,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
   promoteBuildOutput,
@@ -41,6 +43,7 @@ function currencyTable(count) {
 }
 
 const noPriorTrustedSnapshot = () => null
+const noSameDayCommittedSnapshot = () => null
 
 test('snapshot retention is pinned to one year', () => {
   assert.equal(snapshotRetentionDays, 365)
@@ -101,6 +104,7 @@ test('fetchLatestRates uses upstream rates before fallback', async () => {
   const rates = await fetchLatestRates({
     publishDate: '2026-06-30',
     loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+    loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
     env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
     fetchPrimary: async () => ({
       source: 'er-api',
@@ -122,6 +126,7 @@ test('fetchLatestRates can fall back to exact-date archive rates after upstream 
   const rates = await fetchLatestRates({
     publishDate: '2026-06-30',
     loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+    loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
     env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
     fetchJson: async () => {
       throw new Error('getaddrinfo EAI_AGAIN open.er-api.com')
@@ -141,6 +146,7 @@ test('fetchLatestRates still throws upstream failures when archive fallback is u
     () => fetchLatestRates({
       publishDate: '2026-06-30',
       loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+      loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
       env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
       fetchJson: async () => {
         throw new Error('network unreachable')
@@ -159,6 +165,7 @@ test('fetchReconciledRates keeps er-api authoritative and emits cross-check agre
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
     loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+    loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
     minimumIntersection: 2,
     fetchPrimary: async () => ({
       source: 'er-api',
@@ -186,6 +193,7 @@ test('fetchReconciledRates refuses a partial Frankfurter replacement when er-api
     () => fetchReconciledRates({
       publishDate: '2026-07-03',
       loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+      loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
       env: {},
       fetchPrimary: async () => {
         throw new Error('getaddrinfo EAI_AGAIN open.er-api.com')
@@ -208,6 +216,7 @@ test('fetchReconciledRates preserves the explicit exact-date archive fallback', 
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
     loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+    loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
     minimumIntersection: 2,
     env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
     fetchPrimary: async () => {
@@ -234,6 +243,7 @@ test('fetchReconciledRates continues full-table publication when the tripwire is
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
     loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+    loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
     fetchPrimary: async () => ({
       source: 'er-api',
       date: '2026-07-03',
@@ -258,6 +268,7 @@ test('fetchReconciledRates does not claim an undersized cross-check intersection
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
     loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+    loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
     minimumIntersection: 3,
     fetchPrimary: async () => ({
       source: 'er-api',
@@ -290,6 +301,7 @@ test('fetchReconciledRates refuses stale primary data', async () => {
       }),
       fetchSecondary: async () => null,
       loadPriorTrustedSnapshot: () => null,
+      loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
       capture: async () => {},
       warn: () => {}
     }),
@@ -312,6 +324,7 @@ test('fetchReconciledRates refuses unexplained live-primary currency removals', 
         date: '2026-07-10',
         rates: currencyTable(166)
       }),
+      loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
       capture: async (payload) => captured.push(payload.signal),
       warn: () => {}
     }),
@@ -335,6 +348,7 @@ test('fetchReconciledRates refuses unexplained exact-date archive-fallback remov
         date: '2026-07-10',
         rates: currencyTable(166)
       }),
+      loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
       capture: async (payload) => captured.push(payload.signal),
       warn: () => {}
     }),
@@ -343,12 +357,98 @@ test('fetchReconciledRates refuses unexplained exact-date archive-fallback remov
   assert.ok(captured.includes('fx_currency_set_regression'))
 })
 
+test('00:00 additions become a required baseline for a reduced 03:00 primary', async () => {
+  const publishDate = '2026-07-11'
+  const priorRates = currencyTable(166)
+  const midnightRates = currencyTable(167)
+
+  const midnight = await fetchReconciledRates({
+    publishDate,
+    fetchPrimary: async () => ({ source: 'er-api', date: publishDate, rates: midnightRates }),
+    fetchSecondary: async () => null,
+    loadPriorTrustedSnapshot: () => ({ date: '2026-07-10', rates: priorRates }),
+    loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
+    capture: async () => {},
+    warn: () => {}
+  })
+
+  assert.equal(midnight.reconciliation.trustedCurrencyBaseline.currencyCodes.length, 166)
+  assert.deepEqual(
+    midnight.reconciliation.trustedCurrencyBaseline.sources.map((source) => source.kind),
+    ['latest_prior_archive']
+  )
+
+  const captured = []
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate,
+      fetchPrimary: async () => ({ source: 'er-api', date: publishDate, rates: priorRates }),
+      fetchSecondary: async () => null,
+      loadPriorTrustedSnapshot: () => ({ date: '2026-07-10', rates: priorRates }),
+      loadSameDayCommittedSnapshot: () => ({ date: publishDate, rates: midnight.rates }),
+      capture: async (payload) => captured.push(payload.signal),
+      warn: () => {}
+    }),
+    /missing 1 trusted currency.*x165/
+  )
+  assert.ok(captured.includes('fx_currency_set_regression'))
+})
+
+test('exact-date fallback cannot self-authorize a reduction from the committed same-day set', async () => {
+  const publishDate = '2026-07-11'
+  const priorRates = currencyTable(166)
+  const committedSameDayRates = currencyTable(167)
+  const captured = []
+
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate,
+      env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
+      fetchPrimary: async () => {
+        throw new Error('primary down')
+      },
+      fetchSecondary: async () => null,
+      loadArchiveSnapshot: () => priorRates,
+      loadPriorTrustedSnapshot: () => ({ date: '2026-07-10', rates: priorRates }),
+      loadSameDayCommittedSnapshot: () => ({ date: publishDate, rates: committedSameDayRates }),
+      capture: async (payload) => captured.push(payload.signal),
+      warn: () => {}
+    }),
+    /missing 1 trusted currency.*x165/
+  )
+  assert.ok(captured.includes('upstream_fetch_failure'))
+  assert.ok(captured.includes('fx_currency_set_regression'))
+})
+
+test('an invalid committed same-day baseline fails before any provider fetch', async () => {
+  let primaryCalled = false
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate: '2026-07-11',
+      loadPriorTrustedSnapshot: () => ({
+        date: '2026-07-10',
+        rates: currencyTable(166)
+      }),
+      loadSameDayCommittedSnapshot: () => {
+        throw new Error('Committed same-day FX snapshot 2026-07-11 is invalid')
+      },
+      fetchPrimary: async () => {
+        primaryCalled = true
+        return { source: 'er-api', date: '2026-07-11', rates: currencyTable(166) }
+      }
+    }),
+    /Committed same-day FX snapshot 2026-07-11 is invalid/
+  )
+  assert.equal(primaryCalled, false)
+})
+
 test('fetchReconciledRates refuses and reports a >5% cross-source disagreement', async () => {
   const captured = []
   await assert.rejects(
     () => fetchReconciledRates({
       publishDate: '2026-07-03',
       loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
+      loadSameDayCommittedSnapshot: noSameDayCommittedSnapshot,
       minimumIntersection: 2,
       fetchPrimary: async () => ({
         source: 'er-api',
@@ -459,6 +559,7 @@ test('loadPriorTrustedSnapshotFromArchive selects the latest date strictly befor
   const loadedDates = []
   const snapshot = loadPriorTrustedSnapshotFromArchive({
     publishDate: '2026-07-11',
+    minimumCurrencies: 1,
     listDates: () => ['2026-07-12', '2026-07-09', '2026-07-11', '2026-07-10'],
     loadSnapshot: (date) => {
       loadedDates.push(date)
@@ -481,6 +582,64 @@ test('loadPriorTrustedSnapshotFromArchive fails closed when the latest prior sna
       loadSnapshot: () => null
     }),
     /Latest prior trusted FX snapshot 2026-07-10 is missing or invalid/
+  )
+})
+
+test('loadSameDayCommittedSnapshotFromArchive validates committed date, base, and rates', () => {
+  const valid = loadSameDayCommittedSnapshotFromArchive({
+    publishDate: '2026-07-11',
+    minimumCurrencies: 1,
+    readCommittedFile: () => JSON.stringify({
+      date: '2026-07-11',
+      base: 'eur',
+      rates: { EUR: 1, USD: 1.2 }
+    })
+  })
+  assert.deepEqual(valid, {
+    date: '2026-07-11',
+    rates: { eur: 1, usd: 1.2 }
+  })
+
+  assert.throws(
+    () => loadSameDayCommittedSnapshotFromArchive({
+      publishDate: '2026-07-11',
+      minimumCurrencies: 1,
+      readCommittedFile: () => '{not json'
+    }),
+    /invalid JSON/
+  )
+  assert.throws(
+    () => loadSameDayCommittedSnapshotFromArchive({
+      publishDate: '2026-07-11',
+      minimumCurrencies: 1,
+      readCommittedFile: () => ({
+        date: '2026-07-10',
+        base: 'eur',
+        rates: { eur: 1, usd: 1.2 }
+      })
+    }),
+    /mismatched date or base/
+  )
+})
+
+test('buildTrustedCurrencyBaseline records the union of prior and committed same-day codes', () => {
+  const baseline = buildTrustedCurrencyBaseline({
+    publishDate: '2026-07-11',
+    priorSnapshot: { date: '2026-07-10', rates: { eur: 1, usd: 1.1 } },
+    sameDayCommittedSnapshot: {
+      date: '2026-07-11',
+      rates: { eur: 1, usd: 1.1, xnew: 2 }
+    },
+    minimumCurrencies: 1
+  })
+
+  assert.deepEqual(baseline.currencyCodes, ['eur', 'usd', 'xnew'])
+  assert.deepEqual(
+    baseline.sources.map((source) => ({ kind: source.kind, date: source.date })),
+    [
+      { kind: 'latest_prior_archive', date: '2026-07-10' },
+      { kind: 'same_day_committed_archive', date: '2026-07-11' }
+    ]
   )
 })
 
