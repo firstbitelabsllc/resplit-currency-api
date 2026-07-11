@@ -9,6 +9,7 @@ const requiredCryptoVersion = 'v0.52.0'
 const requiredGoImageDigest = 'sha256:079e59808d2d252516e27e3f3a9c003740dee7f75e55aa71528766d52bcfc16a'
 const requiredRuntimeImageDigest = 'sha256:b7bb25d9f7c31d2bdd1982feb4dafcaf137703c7075dbe2febb41c24212b946f'
 const commandNames = ['fx-publish', 'ocr', 'sideload']
+const allCommandNames = [...commandNames, 'ocr-loki-forwarder'].sort()
 const dockerfileNames = commandNames.map((name) => `Dockerfile.${name}`)
 
 function read(relativePath) {
@@ -316,7 +317,7 @@ test('every shipped Go container pins the patched builder, including mutations',
     .map((entry) => entry.name)
     .filter((name) => /^package main$/m.test(read(`cmd/${name}/main.go`)))
     .sort()
-  assert.deepEqual(discoveredCommands, commandNames)
+  assert.deepEqual(discoveredCommands, allCommandNames)
   const discoveredDockerfiles = fs
     .readdirSync(repoRoot)
     .filter((name) => name.startsWith('Dockerfile.'))
@@ -353,6 +354,9 @@ test('every shipped Go container pins the patched builder, including mutations',
     '!internal/',
     '!internal/**',
     '!Dockerfile.*',
+    '!infra/',
+    '!infra/ocr-loki-forwarder/',
+    '!infra/ocr-loki-forwarder/Dockerfile',
     '',
   ].join('\n'))
 })
