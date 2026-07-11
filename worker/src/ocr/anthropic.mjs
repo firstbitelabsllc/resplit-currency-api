@@ -326,11 +326,12 @@ export function receiptShapeViolation(scanned) {
  * @param {ArrayBuffer | Uint8Array} imageBytes
  * @param {string} contentType
  * @param {{ ANTHROPIC_API_KEY?: string, LLM_SCAN_MODEL?: string }} env
- * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null }>}
+ * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, providerStarted: boolean }>}
  */
 export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
   const start = Date.now()
   let model = (env.LLM_SCAN_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL
+  let providerStarted = false
   try {
     const config = readConfig(env)
     model = config.model
@@ -343,13 +344,16 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
     const image = resolveAnthropicImage(imageBytes, contentType)
     if (!image.ok) {
       const httpStatus = image.reason === 'llm_unsupported_media' ? 415 : 413
-      return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: image.reason }
+      return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: image.reason, providerStarted }
     }
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS)
     let res
     try {
+      // Once fetch is invoked, conservatively account for a paid provider attempt:
+      // a transport timeout cannot prove Anthropic did not accept the request.
+      providerStarted = true
       res = await fetch(ANTHROPIC_MESSAGES_URL, {
         method: 'POST',
         headers: {
@@ -366,7 +370,7 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
 
     if (res.status !== 200) {
       const errorBody = await res.text().catch(() => '')
-      return { ok: false, httpStatus: res.status, scanned: null, latencyMs: Date.now() - start, model, errorBody: errorBody.slice(0, 500) }
+      return { ok: false, httpStatus: res.status, scanned: null, latencyMs: Date.now() - start, model, errorBody: errorBody.slice(0, 500), providerStarted }
     }
 
     const body = await res.json().catch(() => null)
@@ -374,20 +378,20 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
     // partial (missing line items, cut-off amounts). Never return it as a success —
     // a partial that looks whole is worse than an explicit failure the caller retries.
     if (body?.stop_reason === 'max_tokens') {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'llm_truncated' }
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'llm_truncated', providerStarted }
     }
     const scanned = toolInputFromMessagesBody(body)
     if (!scanned) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'missing emit_receipt tool_use' }
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'missing emit_receipt tool_use', providerStarted }
     }
     const violation = receiptShapeViolation(scanned)
     if (violation) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: `llm_schema_violation:${violation}` }
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: `llm_schema_violation:${violation}`, providerStarted }
     }
-    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null }
+    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, providerStarted }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const httpStatus = error instanceof AnthropicConfigError ? 503 : 502
-    return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: message.slice(0, 500) }
+    return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: message.slice(0, 500), providerStarted }
   }
 }

@@ -53,6 +53,11 @@
     // Observational only: false means no mapper invocation or added telemetry;
     // true still leaves the v1 response byte contract unchanged.
     "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "false",
+    // Server-owned global provider ceilings for the dark SQLite enforcement path.
+    // OCR_ACCOUNTING_HMAC_KEY remains a secret and is intentionally not required
+    // by the legacy deployment; activation must provision it before changing mode.
+    "OCR_AZURE_GLOBAL_DAILY_CAP": "6000",
+    "OCR_ANTHROPIC_GLOBAL_DAILY_CAP": "3000",
     // pre-launch dev unlock — set false at public launch (see router readLlmGate)
     "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
   },
@@ -137,6 +142,8 @@
         "OCR_ACCOUNTING_MODE": "legacy",
         // Default-off observational compatibility classifier; response never changes.
         "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "false",
+        "OCR_AZURE_GLOBAL_DAILY_CAP": "6000",
+        "OCR_ANTHROPIC_GLOBAL_DAILY_CAP": "3000",
         // pre-launch dev unlock — mirrored from root vars so the two postures don't
         // diverge; set false at public launch (see router readLlmGate).
         "LLM_SCAN_ALLOW_SOFT_FAIL": "true"

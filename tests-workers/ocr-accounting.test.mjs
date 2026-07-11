@@ -134,6 +134,57 @@ describe('OcrAccounting SQLite Durable Object', () => {
     expect(stored.subjects[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
   })
 
+  it('rejects over-commit and conflicting finalization without changing reserved usage', async () => {
+    const stub = accountingStub('settlement-guards')
+    const request = reservation({ azureUnits: 1, anthropicUnits: 1 })
+    await stub.reserve(request)
+
+    expect(await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 2,
+      anthropicUnits: 1,
+    })).toMatchObject({
+      ok: false,
+      error: 'SETTLEMENT_EXCEEDS_RESERVATION',
+    })
+    expect((await snapshot(stub)).global[0]).toMatchObject({ azure_units: 1, anthropic_units: 1 })
+
+    const committed = await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })
+    expect(committed.ok).toBe(true)
+    expect(await stub.refund({
+      day: request.day,
+      reservationId: request.reservationId,
+    })).toMatchObject({
+      ok: false,
+      error: 'IDEMPOTENCY_CONFLICT',
+    })
+    expect((await snapshot(stub)).global[0]).toMatchObject({ azure_units: 1, anthropic_units: 0 })
+  })
+
+  it('fails closed on malformed or missing settlement requests', async () => {
+    const stub = accountingStub('invalid-settlement')
+    const request = reservation()
+    await stub.reserve(request)
+
+    expect(await stub.commit({
+      day: request.day,
+      reservationId: request.reservationId,
+      azureUnits: -1,
+      anthropicUnits: 0,
+    })).toMatchObject({ ok: false, error: 'INVALID_REQUEST' })
+    expect(await stub.refund({
+      day: request.day,
+      reservationId: crypto.randomUUID(),
+    })).toMatchObject({ ok: false, error: 'RESERVATION_NOT_FOUND' })
+    expect((await snapshot(stub)).global[0].azure_units).toBe(1)
+  })
+
   it('fails closed when a reservation ID is reused with different subject, units, or caps', async () => {
     const mutations = [
       (request) => ({ ...request, subjectToken: 'b'.repeat(64) }),

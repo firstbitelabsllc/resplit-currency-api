@@ -250,6 +250,30 @@ Pass criteria:
 **Re-enable**: unset the variable, or set it to `off`, then rerun the Worker smoke plus one
 controlled `/ocr/scan` proof.
 
+#### Atomic OCR accounting rollout guard
+
+`OCR_ACCOUNTING_MODE=legacy` is the production-safe default. The SQLite Durable
+Object binding, global caps, and enforcement code may deploy dark, but do not
+change the mode until all of these are independently true:
+
+- the exact-version compatibility mapper for still-active builds 3798, 3801,
+  and 3811 has completed its shadow-first proof;
+- `OCR_ACCOUNTING_HMAC_KEY` is provisioned as a Worker secret with at least 32
+  bytes, and root/named global caps match the reviewed source values;
+- the Durable Object migration and class export are live while legacy responses
+  remain healthy;
+- activation starts at a clean UTC-day boundary if accounting shadow mode wrote
+  reservations earlier that day; shadow reservations deliberately count observed
+  work and are not safe to mix with a mid-day enforcement flip;
+- `LLM_SCAN_ALLOW_SOFT_FAIL` stays `true` while the vulnerable installed cohorts
+  remain active.
+
+After a reviewed activation, prove a cap-one concurrent burst admits exactly one
+paid Azure analyze, a cache replay spends zero additional units, an accounting
+store failure calls no provider, and the structured accounting signals contain no
+raw IP/App Attest principal. Roll back by restoring `OCR_ACCOUNTING_MODE=legacy`;
+retain the binding, class export, and permanent migration history.
+
 ### 5. Cloudflare token expired or revoked
 
 **Symptoms**: Pipeline runs but Cloudflare deploy step fails.
