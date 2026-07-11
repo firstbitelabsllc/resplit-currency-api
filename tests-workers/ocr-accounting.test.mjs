@@ -36,6 +36,9 @@ async function snapshot(stub) {
     reservations: state.storage.sql.exec(
       'SELECT * FROM ocr_reservations ORDER BY day, reservation_id'
     ).toArray(),
+    finalizations: state.storage.sql.exec(
+      'SELECT * FROM ocr_reservation_finalizations ORDER BY day, reservation_id'
+    ).toArray(),
   }))
 }
 
@@ -294,6 +297,29 @@ describe('OcrAccounting SQLite Durable Object', () => {
     expect(JSON.stringify(stored)).not.toContain(rawIdentity)
   })
 
+  it('keeps one week of idempotency receipts and prunes older accounting rows once a new day arrives', async () => {
+    const stub = accountingStub('retention')
+    const expired = reservation({ day: '2026-07-01' })
+    const boundary = reservation({ day: '2026-07-03' })
+    const current = reservation({ day: '2026-07-10' })
+
+    await stub.reserve(expired)
+    await stub.commit({
+      day: expired.day,
+      reservationId: expired.reservationId,
+      azureUnits: 1,
+      anthropicUnits: 0,
+    })
+    await stub.reserve(boundary)
+    await stub.reserve(current)
+
+    const stored = await snapshot(stub)
+    expect(stored.global.map(({ day }) => day)).toEqual(['2026-07-03', '2026-07-10'])
+    expect(stored.subjects.map(({ day }) => day)).toEqual(['2026-07-03', '2026-07-10'])
+    expect(stored.reservations.map(({ day }) => day)).toEqual(['2026-07-03', '2026-07-10'])
+    expect(stored.finalizations).toEqual([])
+  })
+
   it('fails closed on invalid caps or malformed subject tokens without persisting usage', async () => {
     const invalidCases = [
       reservation({ caps: { azure: { globalDaily: -1, subjectDaily: 1 }, anthropic: { globalDaily: 1, subjectDaily: 1 } } }),
@@ -310,7 +336,7 @@ describe('OcrAccounting SQLite Durable Object', () => {
         azure: { allowed: false, reason: 'invalid_request' },
         anthropic: { allowed: false, reason: 'invalid_request' },
       })
-      expect(await snapshot(stub)).toEqual({ global: [], subjects: [], reservations: [] })
+      expect(await snapshot(stub)).toEqual({ global: [], subjects: [], reservations: [], finalizations: [] })
     }
   })
 })
