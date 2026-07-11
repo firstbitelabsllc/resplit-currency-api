@@ -28,7 +28,7 @@ import {
   getLayoutKeyValueAnalyzeResult,
   OCR_PROVIDER,
 } from './azure.mjs'
-import { scanReceiptWithAnthropic, LLM_PROVIDER } from './anthropic.mjs'
+import { scanReceiptWithAnthropic, receiptShapeViolation, LLM_PROVIDER } from './anthropic.mjs'
 import { verifyAssertion, AttestError } from './attest.mjs'
 import { verifyAttestation } from './attestation.mjs'
 import { readOcrImageWithinBudget } from './ingress.mjs'
@@ -53,6 +53,23 @@ const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
 const DEFAULT_LLM_SCAN_MODEL = 'claude-sonnet-5'
 const DEFAULT_LLM_SCAN_DAILY_CAP = 50
 const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
+const LEGACY_PARTIAL_COMPAT_VERSIONS = new Set([
+  '2.0.0+3798',
+  '2.0.0+3801',
+  '2.0.0+3811',
+])
+const LEGACY_PARTIAL_COMPAT_CURRENCIES = Object.freeze({
+  USD: Object.freeze({ symbol: '$', scale: 100 }),
+  EUR: Object.freeze({ symbol: '€', scale: 100 }),
+  JPY: Object.freeze({ symbol: '¥', scale: 1 }),
+})
+const LEGACY_PARTIAL_LLM_STATUSES = new Set([
+  'not_allowed',
+  'not_started',
+  'provider_error',
+  'provider_unavailable',
+  'rate_limited',
+])
 
 const sha256Hex = async (bytes) => {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
@@ -354,6 +371,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     result, route, requestId, clientVersion, attest, cache: 'miss',
     azureLatencyMs: azure.latencyMs, totalMs,
   })
+  logLegacyPartialCompatibilityShadow(env, { result, route, clientVersion })
 
   if (azure.status === 'provider_error') {
     await captureOcrProviderFailure({
@@ -937,6 +955,229 @@ export function finiteNumberOrNull(value) {
   const parsed = Number(normalized)
   if (!Number.isFinite(parsed)) return null
   return negative ? -parsed : parsed
+}
+
+/**
+ * Exact installed-build admission for the pre-3817 dual-scan decoder. This is
+ * deliberately byte-exact: caller-controlled whitespace, suffixes, semantic
+ * lookalikes, and newer builds must not broaden a compatibility carrier.
+ */
+export function isLegacyPartialCompatibilityVersion(value) {
+  return typeof value === 'string' && LEGACY_PARTIAL_COMPAT_VERSIONS.has(value)
+}
+
+/**
+ * Build a conservative historical-client DTO candidate from Azure's structured
+ * receipt fields. This function is pure and fail-closed. It never changes the
+ * provider result; the live caller currently uses only outcome/reason telemetry.
+ *
+ * The mapper intentionally supports only three currencies with explicit Azure
+ * currency codes and minor-unit scales. It requires structured item/subtotal/
+ * total money, rejects cross-field currency disagreement, and accepts at most a
+ * one-minor-unit reconciliation delta at each arithmetic seam.
+ */
+export function mapLegacyPartialCompatibilityCandidate(azureRaw) {
+  const documents = azureRaw?.analyzeResult?.documents
+  if (!Array.isArray(documents) || documents.length !== 1) {
+    return legacyPartialRejected('ambiguous_document')
+  }
+  const fields = documents[0]?.fields
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+    return legacyPartialRejected('ambiguous_document')
+  }
+
+  if (!fields.Total) return legacyPartialRejected('missing_total')
+  const total = readLegacyPartialMoney(fields.Total)
+  if (!total.ok) return legacyPartialRejected(total.reason)
+  const currency = LEGACY_PARTIAL_COMPAT_CURRENCIES[total.currencyCode]
+  if (!currency) return legacyPartialRejected('unsupported_currency')
+
+  if (!fields.Subtotal) return legacyPartialRejected('missing_subtotal')
+  const subtotal = readLegacyPartialMoney(fields.Subtotal)
+  if (!subtotal.ok) return legacyPartialRejected(subtotal.reason)
+  if (subtotal.currencyCode !== total.currencyCode) {
+    return legacyPartialRejected('ambiguous_currency')
+  }
+
+  const items = fields.Items?.valueArray
+  if (!Array.isArray(items) || items.length === 0) {
+    return legacyPartialRejected('items_missing')
+  }
+
+  const lineItems = []
+  for (const item of items) {
+    const object = item?.valueObject
+    const name = legacyPartialText(object?.Description, ['valueString', 'content'])
+    if (!name) return legacyPartialRejected('missing_item_name')
+    if (!object?.TotalPrice) return legacyPartialRejected('missing_item_amount')
+    const amount = readLegacyPartialMoney(object.TotalPrice)
+    if (!amount.ok) return legacyPartialRejected(amount.reason)
+    if (amount.currencyCode !== total.currencyCode) {
+      return legacyPartialRejected('ambiguous_currency')
+    }
+
+    const amountMinor = legacyPartialMinorUnits(amount.amount, currency.scale)
+    if (amountMinor == null || amountMinor < 0) {
+      return legacyPartialRejected('ambiguous_amount')
+    }
+    const quantity = legacyPartialQuantity(object.Quantity)
+    if (quantity === undefined) return legacyPartialRejected('ambiguous_quantity')
+    lineItems.push({
+      name,
+      amount: amountMinor / currency.scale,
+      quantity,
+    })
+  }
+
+  const totalMinor = legacyPartialMinorUnits(total.amount, currency.scale)
+  const subtotalMinor = legacyPartialMinorUnits(subtotal.amount, currency.scale)
+  if (totalMinor == null || subtotalMinor == null || totalMinor <= 0 || subtotalMinor < 0) {
+    return legacyPartialRejected('ambiguous_amount')
+  }
+
+  const extras = []
+  let extrasMinor = 0
+  for (const [fieldName, label, kind] of [
+    ['TotalTax', 'Tax', 'tax'],
+    ['Tip', 'Tip', 'tip'],
+  ]) {
+    const field = fields[fieldName]
+    if (!field) continue
+    const extra = readLegacyPartialMoney(field)
+    if (!extra.ok) return legacyPartialRejected(extra.reason)
+    if (extra.currencyCode !== total.currencyCode) {
+      return legacyPartialRejected('ambiguous_currency')
+    }
+    const amountMinor = legacyPartialMinorUnits(extra.amount, currency.scale)
+    if (amountMinor == null || amountMinor < 0) {
+      return legacyPartialRejected('ambiguous_amount')
+    }
+    extrasMinor += amountMinor
+    extras.push({ label, amount: amountMinor / currency.scale, kind })
+  }
+
+  const itemMinor = lineItems.reduce(
+    (sum, item) => sum + legacyPartialMinorUnits(item.amount, currency.scale),
+    0,
+  )
+  if (
+    Math.abs(itemMinor - subtotalMinor) > 1 ||
+    Math.abs(subtotalMinor + extrasMinor - totalMinor) > 1
+  ) {
+    return legacyPartialRejected('arithmetic_mismatch')
+  }
+
+  const scanned = {
+    merchantName: legacyPartialText(fields.MerchantName, ['valueString', 'content']),
+    merchantAddress: legacyPartialText(fields.MerchantAddress, ['content', 'valueString']),
+    transactionDate: legacyPartialDate(fields.TransactionDate),
+    currencyCode: total.currencyCode,
+    currencySymbol: currency.symbol,
+    lineItems,
+    subtotal: subtotalMinor / currency.scale,
+    total: totalMinor / currency.scale,
+    extras,
+  }
+  if (receiptShapeViolation(scanned) !== null) {
+    return legacyPartialRejected('schema_invalid')
+  }
+  return { outcome: 'candidate', reason: 'arithmetic_verified', scanned }
+}
+
+function readLegacyPartialMoney(field) {
+  const valueCurrency = field?.valueCurrency
+  const amount = finiteNumberOrNull(valueCurrency?.amount)
+  if (amount == null) return { ok: false, reason: 'ambiguous_amount' }
+
+  const rawCurrencyCode = valueCurrency?.currencyCode
+  if (typeof rawCurrencyCode !== 'string' || !/^[A-Z]{3}$/.test(rawCurrencyCode)) {
+    return { ok: false, reason: 'ambiguous_currency' }
+  }
+
+  if (typeof field.content === 'string' && field.content.trim().length > 0) {
+    const contentAmount = finiteNumberOrNull(field.content)
+    const currency = LEGACY_PARTIAL_COMPAT_CURRENCIES[rawCurrencyCode]
+    const contentMinor = currency
+      ? legacyPartialMinorUnits(contentAmount, currency.scale)
+      : null
+    const structuredMinor = currency
+      ? legacyPartialMinorUnits(amount, currency.scale)
+      : null
+    if (
+      contentAmount == null ||
+      (currency && (
+        contentMinor == null ||
+        structuredMinor == null ||
+        Math.abs(contentMinor - structuredMinor) > 1
+      ))
+    ) {
+      return { ok: false, reason: 'ambiguous_amount' }
+    }
+  }
+
+  return { ok: true, amount, currencyCode: rawCurrencyCode }
+}
+
+function legacyPartialMinorUnits(amount, scale) {
+  if (!Number.isFinite(amount)) return null
+  const scaled = amount * scale
+  const rounded = Math.round(scaled)
+  return Math.abs(scaled - rounded) <= 0.000001 ? rounded : null
+}
+
+function legacyPartialText(field, keys) {
+  for (const key of keys) {
+    const value = field?.[key]
+    if (typeof value !== 'string') continue
+    const normalized = value.trim().replace(/\s+/g, ' ')
+    if (normalized.length > 0 && normalized.length <= 500) return normalized
+  }
+  return null
+}
+
+function legacyPartialDate(field) {
+  const date = legacyPartialText(field, ['valueDate'])
+  return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null
+}
+
+function legacyPartialQuantity(field) {
+  if (field == null) return null
+  const value = finiteNumberOrNull(field.valueNumber)
+  if (value == null || value <= 0 || value > 10_000) return undefined
+  const rounded = Math.round(value)
+  return Math.abs(value - rounded) <= 0.0001 ? rounded : null
+}
+
+function legacyPartialRejected(reason) {
+  return { outcome: 'rejected', reason, scanned: null }
+}
+
+function logLegacyPartialCompatibilityShadow(env, { result, route, clientVersion }) {
+  if (!enabledEnvFlag(env.OCR_LEGACY_PARTIAL_COMPAT_SHADOW)) return
+  if (route !== 'dual-scan' || !isLegacyPartialCompatibilityVersion(clientVersion)) return
+  if (
+    result.status !== 'partial' ||
+    result.azure?.status !== 'succeeded' ||
+    result.llm?.status === 'succeeded'
+  ) return
+
+  // This lane is observational until an independently proven activation change.
+  // A mapper or log regression must never alter the historical response.
+  try {
+    const mapped = mapLegacyPartialCompatibilityCandidate(result.azure.raw)
+    logOcrMonitoringEvent('info', {
+      signal: 'ocr_legacy_partial_compat_shadow',
+      route: 'dual-scan',
+      compatibility_outcome: mapped.outcome,
+      compatibility_version: clientVersion,
+      compatibility_reason: mapped.reason,
+      llm_status: LEGACY_PARTIAL_LLM_STATUSES.has(result.llm.status)
+        ? result.llm.status
+        : 'other',
+    }, env)
+  } catch {
+    // Shadow classification and telemetry are never response dependencies.
+  }
 }
 
 // Resolve thousands vs decimal separators the way the lab's EXTRACT_PROMPT does:

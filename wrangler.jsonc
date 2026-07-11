@@ -49,6 +49,10 @@
     // DARK foundation only. The OCR router remains on its existing KV accounting
     // path until a separately proven activation change moves this out of legacy.
     "OCR_ACCOUNTING_MODE": "legacy",
+    // Exact 2.0.0+3798/3801/3811 Azure-only partial compatibility classifier.
+    // Observational only: false means no mapper invocation or added telemetry;
+    // true still leaves the v1 response byte contract unchanged.
+    "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "false",
     // pre-launch dev unlock — set false at public launch (see router readLlmGate)
     "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
   },
@@ -131,6 +135,8 @@
         "SOFT_FAIL_DAILY_CAP": "150",
         // Mirror root dark mode; named environments inherit neither vars nor DO bindings.
         "OCR_ACCOUNTING_MODE": "legacy",
+        // Default-off observational compatibility classifier; response never changes.
+        "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "false",
         // pre-launch dev unlock — mirrored from root vars so the two postures don't
         // diverge; set false at public launch (see router readLlmGate).
         "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
