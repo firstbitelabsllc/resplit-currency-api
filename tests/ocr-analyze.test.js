@@ -323,6 +323,27 @@ test('the shared cache serves one scan to BOTH routes, shaped per-route (no cros
   assert.equal(calls.anthropic, 1)
 })
 
+test('cache-first accounting: analyze to dual replay uses one paid provider pair and one legacy debit at cap 1', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    SOFT_FAIL_DAILY_CAP: '1',
+  })
+  const image = new Uint8Array([8, 6, 7, 5, 3, 0, 9])
+  const day = new Date().toISOString().slice(0, 10)
+
+  const analyze = await handleOcr(analyzeRequest(image), env)
+  const dual = await handleOcr(dualScanRequest(image), env)
+
+  assert.equal(analyze.status, 200)
+  assert.equal(dual.status, 200, 'the shared cache replay must not require a second provider budget unit')
+  assert.equal(calls.azureSubmit, 1, 'analyze and dual share one paid Azure call')
+  assert.equal(calls.anthropic, 1, 'analyze and dual share one paid Anthropic call')
+  assert.equal(await env.ATTEST_KV.get(`count:ip:unknown:${day}`), '1', 'only the shared-cache miss debits the legacy budget')
+  assert.equal((await dual.json()).v, 1, 'the replay still renders the requested legacy envelope')
+})
+
 test('POST /ocr/analyze dark mode (no ANTHROPIC_API_KEY) is partial with an azure-only aiModels', async () => {
   stubProviders()
   const env = makeEnv()

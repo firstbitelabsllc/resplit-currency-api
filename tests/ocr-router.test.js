@@ -173,6 +173,48 @@ test('idempotency: the same image twice bills Azure once (second is a cache hit)
   assert.deepEqual(await r1.json(), await r2.json())
 })
 
+test('cache-first accounting: a cap-1 duplicate raw scan is served twice for one Azure debit', async () => {
+  stubAzure()
+  const env = makeEnv({ SOFT_FAIL_DAILY_CAP: '1' })
+  const image = new Uint8Array([9, 9, 1, 1])
+  const day = new Date().toISOString().slice(0, 10)
+
+  const first = await handleOcr(scanRequest(image), env)
+  const replay = await handleOcr(scanRequest(image), env)
+
+  assert.equal(first.status, 200)
+  assert.equal(replay.status, 200, 'a cache hit performs no paid work and must not consume or require another cap unit')
+  assert.equal(azureCalls.submit, 1, 'the duplicate image must reach Azure exactly once')
+  assert.equal(await env.ATTEST_KV.get(`count:ip:unknown:${day}`), '1', 'only the cache miss debits the legacy budget')
+  assert.deepEqual(await replay.json(), await first.json(), 'cache-first accounting must preserve the exact response envelope')
+})
+
+test('cache-first accounting: invalid App Attest cannot read a seeded raw cache entry', async () => {
+  const env = makeEnv()
+  const image = new Uint8Array([4, 2, 4, 2])
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', image))
+  const imageHash = Array.from(digest).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  await env.ATTEST_KV.put(`cache:${imageHash}`, JSON.stringify({
+    v: 1,
+    mode: 'raw',
+    provider: 'azure-di-v4',
+    scanId: 'seeded-cache-must-not-leak',
+    status: 'ok',
+    kv_extras: 'off',
+    raw: { seeded: true },
+  }))
+
+  const response = await handleOcr(scanRequest(image, {
+    'x-resplit-attest-soft-fail': 'false',
+    'x-resplit-attest-key-id': 'unregistered-key',
+    'x-resplit-attest-assertion': 'AA==',
+  }), env)
+
+  assert.equal(response.status, 401, 'authentication must complete before any cache read can return data')
+  assert.doesNotMatch(await response.text(), /seeded-cache-must-not-leak/)
+  assert.equal(azureCalls.submit, 0)
+})
+
 test('POST /ocr/scan keeps a successful provider result when the cache write fails and emits one PII-free signal', async () => {
   stubAzure()
   const env = makeEnv({ AZURE_OCR_KEY: 'azure-key-must-not-leak', SENTRY_RELEASE: 'release-cache-test' })
