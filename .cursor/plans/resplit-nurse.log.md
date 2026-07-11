@@ -2,7 +2,7 @@
 
 ## 2026-07-11 18:56 EDT / 2026-07-11 22:56 UTC
 
-- `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for the stale FX PR reconciliation in draft PR `#79` at commit `9bde52e2`, branched from `origin/main` `00056a5942dfafa6da090464cd240b68b68a9fe1`; no workflow dispatch, deploy, secret write, or production mutation occurred.
+- `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for the stale FX PR reconciliation in draft PR `#79`, branched from `origin/main` `00056a5942dfafa6da090464cd240b68b68a9fe1`; no workflow dispatch, deploy, secret write, or production mutation occurred.
 - Recovered delta: the daily publisher keeps the full er-api table authoritative and cross-checks its major-currency intersection against Frankfurter/ECB. Invalid/partial/future/stale primary data, a missing or non-unit EUR self-rate, and >5% cross-source disagreements fail before snapshot mutation; the explicit exact-date archive fallback remains available. Frankfurter failure only removes the tripwire, and Frankfurter can never replace the full table with its majors-only set. Generated artifacts carry bounded source/agreement metadata, and package validation rechecks both the EUR-base invariant and persisted disagreement evidence.
 - Fresh proof:
   - `npm run check` -> live generation saw `166` authoritative currencies and a `30`-currency independent intersection (`0.336%` maximum drift, Frankfurter dated one day behind); strict package validation passed; Node suite `461/461`; Worker suite `13/13`.
@@ -14,9 +14,9 @@
   - `#40` contains the still-real single-source correctness gap, but its majors-only fallback contradicts the current `>=100` currency release gate. This branch is the fail-closed replacement; retire `#40` after the replacement PR is linked.
   - `#41` is salvage-only: its dashboard queries `fx_fallback_served_total`, which neither that branch nor current main emits. Split emitted pipeline metrics from dashboard cleanup before revalidation.
   - `#42` is stacked on `#41`, inherits the non-emitted metric, and needs Grafana credentials for live provisioning/notification proof. Rebase only after the metric contract exists.
-  - `#43` is obsolete as written: it says the Go FX tree is retained, but `#58` removed `internal/fx` and `cmd/fx-publish`. Close or rewrite against current architecture; do not merge unchanged.
+  - `#43` is salvage/rewrite-only: current main still retains `internal/fx` and `cmd/fx-publish`, so its Cloudflare/JS-canonical ADR direction remains useful. Do not merge unchanged because it claims exact Go quorum semantics were ported (the safe replacement deliberately omits the majors-only fallback/quorum path) and its Wrangler entrypoint receipt names `worker/src/index.mjs` instead of current `worker/src/worker-entry.mjs`.
 - Current boundary: production `/health` remains release `094801ebe8c77862f16ecf8d9492920564c09d3c`, which predates source main and this branch. Local deploy credentials are incomplete, so no deploy claim is available.
-- Exact next slice: let draft PR `#79` checks/review settle, retire `#39/#40/#43` with the evidence above, then recover `#41` as a current emitted-metrics slice before revisiting credential-gated `#42`.
+- Exact next slice: let draft PR `#79` checks/review settle, retire `#39/#40`, rewrite the useful ADR slice from `#43` against current architecture, then recover `#41` as a current emitted-metrics slice before revisiting credential-gated `#42`.
 
 <promise>KEEP-GOING: review replacement PR, retire superseded drafts, recover emitted metrics</promise>
 
