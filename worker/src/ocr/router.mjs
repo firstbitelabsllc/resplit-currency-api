@@ -239,11 +239,12 @@ async function handleAnalyze(request, env, requestId, ctx) {
 }
 
 // Shared scan core for the multi-engine OCR routes. /ocr/dual-scan and /ocr/analyze
-// run the IDENTICAL pipeline — kill switch, empty-body guard, App Attest + daily-cap
-// gate, idempotency cache, Azure OCR + Anthropic vision legs, divergence/consensus,
-// cache write, Loki + Sentry monitoring — and differ ONLY in how the shape-neutral
-// internal result is rendered into a response (shapeEnvelope). The gate logic lives
-// here once so a naming/shape change on one route can never drift the other's auth.
+// run the IDENTICAL pipeline — kill switch, empty-body guard, App Attest, idempotency
+// cache, cache-miss provider-budget debit, Azure OCR + Anthropic vision legs,
+// divergence/consensus, cache write, Loki + Sentry monitoring — and differ ONLY in
+// how the shape-neutral internal result is rendered into a response (shapeEnvelope).
+// The gate logic lives here once so a naming/shape change on one route can never
+// drift the other's auth or accounting order.
 async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }) {
   const start = Date.now()
   const scanId = crypto.randomUUID()
