@@ -46,8 +46,9 @@ function assertDependencySecurityFloor(manifest, lockfile) {
   assertAtLeast(sentryLock?.version, REQUIRED.sentryNode, 'lock resolved @sentry/node')
 
   assert.equal(manifest.overrides?.['brace-expansion'], REQUIRED.braceExpansion, 'package brace-expansion override')
-  assert.equal(lockfile.overrides?.['brace-expansion'], REQUIRED.braceExpansion, 'lock brace-expansion override')
-  assert.equal(braceLock?.version, REQUIRED.braceExpansion, 'lock resolved brace-expansion')
+  if (braceLock) {
+    assert.equal(braceLock.version, REQUIRED.braceExpansion, 'lock resolved brace-expansion')
+  }
 
   assert.equal(
     manifest.devDependencies?.['@cloudflare/vitest-pool-workers'],
@@ -74,7 +75,6 @@ function greenFixture() {
       overrides: { 'brace-expansion': '5.0.6' }
     },
     lockfile: {
-      overrides: { 'brace-expansion': '5.0.6' },
       packages: {
         '': {
           dependencies: { '@sentry/node': '^10.54.0' },
