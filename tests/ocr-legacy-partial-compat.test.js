@@ -187,7 +187,7 @@ function stubPartialProviders(raw = azureReceipt({
     const target = String(url)
     if (target === 'https://api.anthropic.com/v1/messages') {
       calls.anthropic += 1
-      return Response.json({ error: { type: 'provider_error', message: 'receipt total $10 must not leak' } }, { status: 500 })
+      throw new Error('receipt total $10 must not leak')
     }
     if (init.method === 'POST' && target.includes(':analyze')) {
       calls.azureSubmit += 1
@@ -223,9 +223,11 @@ async function runPartial({ shadow, clientVersion, imageByte }) {
       ctx,
     )
     await Promise.all(ctx.tasks)
+    const responseText = await response.text()
     return {
       response,
-      body: await response.json(),
+      responseText,
+      body: JSON.parse(responseText),
       providers,
       accounting: accounting.calls,
       kv: env.ATTEST_KV.calls,
@@ -313,8 +315,19 @@ test('the default-off root and named-production config preserve soft-fail while 
 })
 
 test('enabled exact-build shadow emits one bounded candidate event without changing response, spend, accounting, or cache behavior', { concurrency: false }, async () => {
-  const off = await runPartial({ shadow: false, clientVersion: '2.0.0+3798', imageByte: 7 })
-  const on = await runPartial({ shadow: true, clientVersion: '2.0.0+3798', imageByte: 8 })
+  const originalRandomUUID = globalThis.crypto.randomUUID
+  const originalDateNow = Date.now
+  globalThis.crypto.randomUUID = () => '11111111-1111-4111-8111-111111111111'
+  Date.now = () => 1_789_000_000_000
+  let off
+  let on
+  try {
+    off = await runPartial({ shadow: false, clientVersion: '2.0.0+3798', imageByte: 7 })
+    on = await runPartial({ shadow: true, clientVersion: '2.0.0+3798', imageByte: 7 })
+  } finally {
+    globalThis.crypto.randomUUID = originalRandomUUID
+    Date.now = originalDateNow
+  }
 
   for (const run of [off, on]) {
     assert.equal(run.response.status, 200)
@@ -326,11 +339,12 @@ test('enabled exact-build shadow emits one bounded candidate event without chang
     assert.deepEqual(run.body.aiModels, ['azure-di-v4'])
   }
 
+  assert.equal(on.responseText, off.responseText, 'shadow activation must not change one response byte')
   assert.deepEqual(on.providers, off.providers)
   assert.deepEqual(on.providers, { azureSubmit: 1, azurePoll: 1, anthropic: 1 })
   assert.deepEqual(on.accounting, off.accounting)
   assert.deepEqual(on.accounting, { idFromName: 1, get: 1, reserve: 1 })
-  assert.deepEqual(on.kv.get.map((key) => key.replace(/:[0-9a-f]{64}:/, ':<hash>:')), off.kv.get.map((key) => key.replace(/:[0-9a-f]{64}:/, ':<hash>:')))
+  assert.deepEqual(on.kv.get, off.kv.get)
   assert.deepEqual(on.kv.put, off.kv.put)
   assert.equal(on.kv.put.some((key) => key.startsWith('cache:dualScan:')), false)
 
