@@ -69,6 +69,7 @@ func TestPubSubPushForwardsOnlySafeFieldsSynchronously(t *testing.T) {
 		LokiURL:             loki.URL + "/loki/api/v1/push",
 		AuthorizationHeader: "Authorization=Basic%20dXNlcjp0b2tlbg==",
 		HTTPClient:          loki.Client(),
+		Revision:            "ocr-loki-forwarder-00017-proof",
 	})
 
 	timestamp := time.Date(2026, 7, 11, 1, 3, 27, 123456789, time.UTC)
@@ -87,6 +88,9 @@ func TestPubSubPushForwardsOnlySafeFieldsSynchronously(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Resplit-Forwarder-Revision"); got != "ocr-loki-forwarder-00017-proof" {
+		t.Fatalf("forwarder revision header = %q, want exact candidate revision", got)
 	}
 	var got capturedLokiRequest
 	select {
@@ -136,19 +140,20 @@ func TestPubSubPushForwardsOnlySafeFieldsSynchronously(t *testing.T) {
 		t.Fatalf("decode Loki JSON line: %v", err)
 	}
 	for key, want := range map[string]any{
-		"timestamp":      timestamp.Format(time.RFC3339Nano),
-		"severity":       "INFO",
-		"message":        "[OCR_MONITORING] scan",
-		"method":         "POST",
-		"path":           "/ocr/scan",
-		"request_id":     "00112233445566778899aabbccddeeff",
-		"trace_id":       "ffeeddccbbaa99887766554433221100",
-		"signal":         "scan",
-		"status":         "ok",
-		"attest":         "pass",
-		"provider":       "azure-di",
-		"scan_id":        "0123456789abcdef0123456789abcdef",
-		"client_version": "2.2.0 (3801)",
+		"timestamp":          timestamp.Format(time.RFC3339Nano),
+		"severity":           "INFO",
+		"message":            "[OCR_MONITORING] scan",
+		"method":             "POST",
+		"path":               "/ocr/scan",
+		"request_id":         "00112233445566778899aabbccddeeff",
+		"trace_id":           "ffeeddccbbaa99887766554433221100",
+		"signal":             "scan",
+		"status":             "ok",
+		"attest":             "pass",
+		"provider":           "azure-di",
+		"scan_id":            "0123456789abcdef0123456789abcdef",
+		"client_version":     "2.2.0 (3801)",
+		"forwarder_revision": "ocr-loki-forwarder-00017-proof",
 	} {
 		if gotValue := line[key]; gotValue != want {
 			t.Errorf("line[%q] = %#v, want %#v", key, gotValue, want)
@@ -438,6 +443,14 @@ func TestNewHandlerRejectsInsecureURLAndMalformedSecretWithoutEcho(t *testing.T)
 			cfg: Config{
 				LokiURL:             "https://logs-prod-036.grafana.net/loki/api/v1/push",
 				AuthorizationHeader: "Authorization=Basic%20dXNlcjp0b2tlbg==%0d%0aX-Leak:secret",
+			},
+		},
+		{
+			name: "revision header injection",
+			cfg: Config{
+				LokiURL:             "https://logs-prod-036.grafana.net/loki/api/v1/push",
+				AuthorizationHeader: "Authorization=Basic%20dXNlcjp0b2tlbg==",
+				Revision:            "candidate\r\nX-Leak: secret",
 			},
 		},
 	}

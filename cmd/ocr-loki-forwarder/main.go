@@ -18,6 +18,7 @@ func main() {
 	handler, err := ocrloki.NewHandler(ocrloki.Config{
 		LokiURL:             os.Getenv("LOKI_URL"),
 		AuthorizationHeader: os.Getenv("LOKI_AUTH_HEADER"),
+		Revision:            os.Getenv("K_REVISION"),
 		Logger:              logger,
 	})
 	if err != nil {

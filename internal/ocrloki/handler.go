@@ -28,6 +28,7 @@ var (
 	hexID             = regexp.MustCompile(`^[0-9a-fA-F]{16,64}$`)
 	correlationID     = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 	safeClientVersion = regexp.MustCompile(`^(?:[0-9]{1,4}(?:\.[0-9]{1,4}){1,3}(?:[ +()-][0-9A-Za-z.+()_-]{1,24})?|deploy-canary|ocr-lab-cron|unknown)$`)
+	safeRevision      = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	grafanaLokiHost   = regexp.MustCompile(`^logs-prod-[0-9]{3}\.grafana\.net$`)
 
 	safeMessages = map[string]struct{}{
@@ -64,12 +65,14 @@ type Config struct {
 	Timeout             time.Duration
 	Logger              *slog.Logger
 	AllowTestEndpoint   bool
+	Revision            string
 }
 
 func ConfigFromEnv() Config {
 	return Config{
 		LokiURL:             os.Getenv("LOKI_URL"),
 		AuthorizationHeader: os.Getenv("LOKI_AUTH_HEADER"),
+		Revision:            os.Getenv("K_REVISION"),
 	}
 }
 
@@ -80,6 +83,7 @@ type handler struct {
 	timeout       time.Duration
 	logger        *slog.Logger
 	mux           *http.ServeMux
+	revision      string
 }
 
 type pubSubEnvelope struct {
@@ -128,6 +132,9 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	if err != nil {
 		return nil, errors.New("invalid Loki authorization configuration")
 	}
+	if cfg.Revision != "" && !safeRevision.MatchString(cfg.Revision) {
+		return nil, errors.New("invalid Cloud Run revision configuration")
+	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{}
@@ -153,6 +160,7 @@ func NewHandler(cfg Config) (http.Handler, error) {
 		timeout:       timeout,
 		logger:        logger,
 		mux:           http.NewServeMux(),
+		revision:      cfg.Revision,
 	}
 	h.mux.HandleFunc("GET /health", h.health)
 	h.mux.HandleFunc("POST /pubsub/push", h.push)
@@ -226,6 +234,9 @@ func (h *handler) push(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
+	if h.revision != "" {
+		line["forwarder_revision"] = h.revision
+	}
 
 	lineJSON, err := json.Marshal(line)
 	if err != nil {
@@ -268,6 +279,9 @@ func (h *handler) push(w http.ResponseWriter, r *http.Request) {
 			slog.Int("status", response.StatusCode))
 		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
+	}
+	if h.revision != "" {
+		w.Header().Set("X-Resplit-Forwarder-Revision", h.revision)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
