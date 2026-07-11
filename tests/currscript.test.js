@@ -13,6 +13,7 @@ const {
   computeCrossRates,
   dateDaysBeforeUTC,
   fetchLatestRates,
+  fetchReconciledRates,
   listSnapshotArchiveDates,
   loadAllSnapshotsFromArchive,
   loadArchiveRateFallback,
@@ -88,9 +89,10 @@ test('fetchLatestRates uses upstream rates before fallback', async () => {
   const rates = await fetchLatestRates({
     publishDate: '2026-06-30',
     env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
-    fetchJson: async () => ({
-      result: 'success',
-      rates: { USD: '1.2', EUR: 1 }
+    fetchPrimary: async () => ({
+      source: 'er-api',
+      date: '2026-06-30',
+      rates: { eur: 1, usd: 1.2 }
     }),
     loadArchiveSnapshot: () => {
       throw new Error('unexpected fallback')
@@ -136,6 +138,166 @@ test('fetchLatestRates still throws upstream failures when archive fallback is u
     }),
     /network unreachable/
   )
+})
+
+test('fetchReconciledRates keeps er-api authoritative and emits cross-check agreement', async () => {
+  const { rates, reconciliation } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    minimumIntersection: 2,
+    fetchPrimary: async () => ({
+      source: 'er-api',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.08, thb: 39.5 } // thb is er-api-only (tail)
+    }),
+    fetchSecondary: async () => ({
+      source: 'frankfurter',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.0805 }
+    }),
+    capture: async () => {},
+    warn: () => {}
+  })
+
+  // Published values are er-api's, tail preserved and unblended.
+  assert.deepEqual(rates, { eur: 1, usd: 1.08, thb: 39.5 })
+  assert.equal(reconciliation.publishedSource, 'er-api')
+  assert.equal(reconciliation.agreement.intersectionCount, 2) // eur + usd; thb excluded
+})
+
+test('fetchReconciledRates refuses a partial Frankfurter replacement when er-api is down', async () => {
+  const captured = []
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate: '2026-07-03',
+      env: {},
+      fetchPrimary: async () => {
+        throw new Error('getaddrinfo EAI_AGAIN open.er-api.com')
+      },
+      fetchSecondary: async () => ({
+        source: 'frankfurter',
+        date: '2026-07-03',
+        rates: { eur: 1, usd: 1.083, gbp: 0.85 }
+      }),
+      loadArchiveSnapshot: () => null,
+      capture: async (payload) => captured.push(payload.signal),
+      warn: () => {}
+    }),
+    /refusing partial-currency publish/
+  )
+  assert.ok(captured.includes('upstream_fetch_failure'))
+})
+
+test('fetchReconciledRates preserves the explicit exact-date archive fallback', async () => {
+  const { rates, reconciliation } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    minimumIntersection: 2,
+    env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
+    fetchPrimary: async () => {
+      throw new Error('primary down')
+    },
+    fetchSecondary: async () => ({
+      source: 'frankfurter',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.081 }
+    }),
+    loadArchiveSnapshot: () => ({ eur: 1, usd: 1.08, thb: 39.5 }),
+    capture: async () => {},
+    warn: () => {}
+  })
+
+  assert.deepEqual(rates, { eur: 1, thb: 39.5, usd: 1.08 })
+  assert.equal(reconciliation.publishedSource, 'er-api-archive')
+  assert.equal(reconciliation.stale, false)
+})
+
+test('fetchReconciledRates continues full-table publication when the tripwire is unavailable', async () => {
+  const captured = []
+  const warnings = []
+  const { rates, reconciliation } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    fetchPrimary: async () => ({
+      source: 'er-api',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.08, thb: 39.5 }
+    }),
+    fetchSecondary: async () => {
+      throw new Error('secondary down')
+    },
+    capture: async (payload) => captured.push(payload.signal),
+    warn: (message) => warnings.push(message)
+  })
+
+  assert.equal(rates.thb, 39.5)
+  assert.equal(reconciliation.agreement, null)
+  assert.ok(captured.includes('fx_secondary_source_unavailable'))
+  assert.match(warnings[0], /cross-check source unavailable/)
+})
+
+test('fetchReconciledRates does not claim an undersized cross-check intersection', async () => {
+  const captured = []
+  const warnings = []
+  const { rates, reconciliation } = await fetchReconciledRates({
+    publishDate: '2026-07-03',
+    minimumIntersection: 3,
+    fetchPrimary: async () => ({
+      source: 'er-api',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.08, thb: 39.5 }
+    }),
+    fetchSecondary: async () => ({
+      source: 'frankfurter',
+      date: '2026-07-03',
+      rates: { eur: 1, usd: 1.081, sek: 11.2 }
+    }),
+    capture: async (payload) => captured.push(payload.signal),
+    warn: (message) => warnings.push(message)
+  })
+
+  assert.equal(rates.thb, 39.5)
+  assert.equal(reconciliation.agreement, null)
+  assert.ok(captured.includes('fx_secondary_source_incomplete_intersection'))
+  assert.match(warnings[0], /intersection is incomplete \(2\/3\)/)
+})
+
+test('fetchReconciledRates refuses stale primary data', async () => {
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate: '2026-07-10',
+      fetchPrimary: async () => ({
+        source: 'er-api',
+        date: '2026-07-01',
+        rates: { eur: 1, usd: 1.08 }
+      }),
+      fetchSecondary: async () => null,
+      capture: async () => {},
+      warn: () => {}
+    }),
+    /is stale; refusing publish/
+  )
+})
+
+test('fetchReconciledRates refuses and reports a >5% cross-source disagreement', async () => {
+  const captured = []
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate: '2026-07-03',
+      minimumIntersection: 2,
+      fetchPrimary: async () => ({
+        source: 'er-api',
+        date: '2026-07-03',
+        rates: { eur: 1, usd: 1.08 }
+      }),
+      fetchSecondary: async () => ({
+        source: 'frankfurter',
+        date: '2026-07-03',
+        rates: { eur: 1, usd: 1.30 }
+      }),
+      capture: async (payload) => captured.push(payload.signal),
+      warn: () => {}
+    }),
+    /cross-source disagreement >5%/
+  )
+  assert.ok(captured.includes('fx_cross_source_disagreement'))
 })
 
 test('computeCrossRates produces positive finite cross rates', () => {

@@ -106,6 +106,45 @@ test('validate-package fails strict release validation with incomplete calendar 
   )
 })
 
+test('validate-package warns on moderate independent-source drift', (t) => {
+  const temp = withTempPackage(t)
+  const warnings = []
+  const originalWarn = console.warn
+
+  t.after(() => {
+    console.warn = originalWarn
+  })
+
+  writeAgreement(temp.packageRoot, {
+    secondaryLagged: false,
+    pairs: [{ code: 'usd', relDiff: 0.008 }]
+  })
+  console.warn = (message) => warnings.push(message)
+
+  assert.doesNotThrow(() => temp.validate())
+  assert.ok(warnings.some((line) => line.includes('cross-source: 1 intersection currency')))
+})
+
+test('validate-package refuses a persisted gross independent-source disagreement', (t) => {
+  const temp = withTempPackage(t)
+  writeAgreement(temp.packageRoot, {
+    secondaryLagged: false,
+    pairs: [{ code: 'usd', relDiff: 0.06 }]
+  })
+
+  assert.throws(
+    () => temp.validate(),
+    /cross-source: 1 intersection currency.*disagree >5%/
+  )
+})
+
+function writeAgreement(tempPackage, agreement) {
+  const snapshotPath = path.join(tempPackage, 'snapshots', 'base-rates.json')
+  const snapshot = fs.readJsonSync(snapshotPath)
+  snapshot.agreement = agreement
+  fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
+}
+
 function removeMiddleHistoryDate(tempPackage) {
   const historyPath = path.join(tempPackage, 'history', '30d', 'usd.json')
   const minHistoryPath = path.join(tempPackage, 'history', '30d', 'usd.min.json')

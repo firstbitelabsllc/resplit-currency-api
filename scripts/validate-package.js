@@ -3,6 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const { runMonitoredScript } = require('./sentry-monitoring')
+const { evaluateCrossSourceAgreement } = require('./lib/sources')
 
 const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(__dirname, '..', 'package')
 const MIN_ARCHIVE_DAYS = 365
@@ -129,6 +130,26 @@ function main() {
   } else {
     warnIf(true, 'rate-sanity: no prior archived day before latestDate to compare — value gate skipped')
   }
+
+  // Defense in depth for generated artifacts: currscript refuses a gross
+  // disagreement before writing, and validation rejects any persisted snapshot
+  // carrying the same bad comparison. Legacy/backfill snapshots have no
+  // agreement metadata and remain valid.
+  const { warns: crossWarns, refusals: crossRefusals } = evaluateCrossSourceAgreement(snapshot.agreement)
+  warnIf(
+    crossWarns.length > 0,
+    `cross-source: ${crossWarns.length} intersection currency(ies) diverge beyond the warn band: ${crossWarns
+      .slice(0, 8)
+      .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+      .join(', ')}`
+  )
+  ensure(
+    crossRefusals.length === 0,
+    `cross-source: ${crossRefusals.length} intersection currency(ies) disagree >5% between er-api and Frankfurter — likely a bad upstream rate, refusing to publish: ${crossRefusals
+      .slice(0, 8)
+      .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+      .join(', ')}`
+  )
 
   // Minified files must parse too.
   ensure(isIsoDate(archiveManifest.earliestDate), 'archive earliestDate invalid')

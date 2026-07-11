@@ -5,6 +5,15 @@ const {
   captureIssue,
   runMonitoredScript
 } = require('./scripts/sentry-monitoring')
+const {
+  ER_API_URL,
+  FRANKFURTER_URL,
+  SECONDARY_MIN_CURRENCIES,
+  fetchErApiSnapshot,
+  fetchFrankfurterSnapshot,
+  buildReconciliation,
+  evaluateCrossSourceAgreement
+} = require('./scripts/lib/sources')
 
 const indent = '\t'
 const historyDays = 30
@@ -24,12 +33,14 @@ if (require.main === module) {
 
 async function main() {
   const dateToday = resolvePublishDate()
-  const latestRates = await fetchLatestRates({ publishDate: dateToday })
+  const { rates: latestRates, reconciliation } = await fetchReconciledRates({ publishDate: dateToday })
   if (!latestRates || Object.keys(latestRates).length === 0) {
     throw new Error('Failed to fetch currency rates from source')
   }
 
-  console.log(`Fetched ${Object.keys(latestRates).length} currencies for ${dateToday}`)
+  console.log(
+    `Fetched ${Object.keys(latestRates).length} currencies for ${dateToday} (source=${reconciliation.publishedSource})`
+  )
 
   saveSnapshotToArchive(dateToday, latestRates)
   pruneSnapshotArchive({
@@ -75,7 +86,8 @@ async function main() {
         dateToday,
         latestRates,
         archiveSnapshots,
-        historySnapshots
+        historySnapshots,
+        reconciliation
       })
       writeRootPackageMetadata({ root, dateToday })
       fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(root, 'country.json'))
@@ -223,7 +235,8 @@ function writeArtifacts({
   dateToday,
   latestRates,
   archiveSnapshots,
-  historySnapshots
+  historySnapshots,
+  reconciliation = null
 }) {
   const latestDir = path.join(root, 'latest')
   const historyDir = path.join(root, 'history', '30d')
@@ -243,7 +256,17 @@ function writeArtifacts({
   const snapshotPayload = {
     date: dateToday,
     base: 'eur',
-    rates: latestRates
+    rates: latestRates,
+    // The full er-api table remains authoritative. Frankfurter contributes only
+    // provenance and an independent agreement tripwire.
+    ...(reconciliation
+      ? {
+        publishedSource: reconciliation.publishedSource,
+        stale: reconciliation.stale,
+        sources: reconciliation.sources,
+        agreement: reconciliation.agreement
+      }
+      : {})
   }
   writeJsonFile(path.join(snapshotsDir, 'base-rates.json'), snapshotPayload, true)
   writeJsonFile(path.join(snapshotsDir, 'base-rates.min.json'), snapshotPayload)
@@ -266,7 +289,18 @@ function writeArtifacts({
     archiveMode: 'immutable',
     archiveEarliestDate: archiveManifest.earliestDate,
     archiveLatestDate: archiveManifest.latestDate,
-    archiveGapCount: archiveManifest.gapCount
+    archiveGapCount: archiveManifest.gapCount,
+    // Slim cross-source summary for downstream diagnostics.
+    sources: reconciliation ? reconciliation.sources.map((source) => source.source) : ['er-api'],
+    crossSource: reconciliation
+      ? {
+        publishedSource: reconciliation.publishedSource,
+        stale: reconciliation.stale,
+        intersectionCount: reconciliation.agreement ? reconciliation.agreement.intersectionCount : 0,
+        maxRelDiff: reconciliation.agreement ? reconciliation.agreement.maxRelDiff : 0,
+        secondaryLagged: reconciliation.agreement ? reconciliation.agreement.secondaryLagged : false
+      }
+      : null
   }
   writeJsonFile(path.join(root, 'meta.json'), metaPayload, true)
   writeJsonFile(path.join(root, 'meta.min.json'), metaPayload)
@@ -457,51 +491,13 @@ function pruneSnapshotArchive({
   return prunedDates
 }
 
-async function fetchLatestRates({
-  publishDate = resolvePublishDate(),
-  env = process.env,
-  fetchJson = fetchJSON,
-  loadArchiveSnapshot = loadSnapshotFromArchive,
-  capture = captureIssue,
-  warn = console.warn
-} = {}) {
-  // Primary: open.er-api.com — free, ~160 fiat currencies, no API key.
-  const sourceUrl = 'https://open.er-api.com/v6/latest/EUR'
-  try {
-    const data = await fetchJson(sourceUrl, 30_000)
-    if (data?.result === 'success' && data.rates) {
-      return toLowerSorted(data.rates)
-    }
-    return loadArchiveRateFallback({
-      publishDate,
-      env,
-      loadArchiveSnapshot,
-      warn,
-      reason: new Error('upstream did not return successful rates')
-    })
-  } catch (error) {
-    await capture({
-      signal: 'upstream_fetch_failure',
-      error,
-      context: {
-        workflow: 'daily_publish',
-        source_url: sourceUrl
-      }
-    })
-
-    const fallbackRates = loadArchiveRateFallback({
-      publishDate,
-      env,
-      loadArchiveSnapshot,
-      warn,
-      reason: error
-    })
-    if (fallbackRates) {
-      return fallbackRates
-    }
-
-    throw error
-  }
+async function fetchLatestRates(options = {}) {
+  const { rates } = await fetchReconciledRates({
+    ...options,
+    // Compatibility wrapper for callers that only need the authoritative table.
+    fetchSecondary: async () => null
+  })
+  return rates
 }
 
 function loadArchiveRateFallback({
@@ -527,6 +523,133 @@ function loadArchiveRateFallback({
 
 function allowArchiveRateFallback({ env = process.env } = {}) {
   return /^(1|true|yes|on)$/i.test(String(env.CURRENCY_API_ALLOW_ARCHIVE_FALLBACK || ''))
+}
+
+/**
+ * Fetch the full EUR-base rate table and independently cross-check its major
+ * currencies. open.er-api.com remains authoritative for every published value;
+ * Frankfurter/ECB is a tripwire, never a partial-table replacement.
+ *
+ * Returns { rates, reconciliation }. `reconciliation` carries the source
+ * provenance + intersection agreement that gets emitted into snapshots/meta and
+ * enforced by scripts/validate-package.js.
+ */
+async function fetchReconciledRates({
+  publishDate = resolvePublishDate(),
+  env = process.env,
+  fetchJson = fetchJSON,
+  fetchPrimary = fetchErApiSnapshot,
+  fetchSecondary = fetchFrankfurterSnapshot,
+  minimumIntersection = SECONDARY_MIN_CURRENCIES,
+  loadArchiveSnapshot = loadSnapshotFromArchive,
+  capture = captureIssue,
+  warn = console.warn
+} = {}) {
+  // Primary: open.er-api.com, with the existing exact-date archive fallback.
+  let primary = null
+  let primaryError = null
+  try {
+    primary = await fetchPrimary({ fetchJson })
+  } catch (error) {
+    primaryError = error
+    await capture({
+      signal: 'upstream_fetch_failure',
+      error,
+      context: { workflow: 'daily_publish', source_url: ER_API_URL }
+    })
+    const fallbackRates = loadArchiveRateFallback({ publishDate, env, loadArchiveSnapshot, warn, reason: error })
+    if (fallbackRates) {
+      primary = { source: 'er-api-archive', date: publishDate, rates: fallbackRates }
+    }
+  }
+
+  // Secondary: Frankfurter/ECB, best-effort. Its absence removes the independent
+  // tripwire but never changes the authoritative full-table values.
+  let secondary = null
+  try {
+    secondary = await fetchSecondary({ fetchJson })
+  } catch (error) {
+    warn(`Frankfurter cross-check source unavailable: ${error.message}`)
+    await capture({
+      signal: 'fx_secondary_source_unavailable',
+      error,
+      context: { workflow: 'daily_publish', source_url: FRANKFURTER_URL }
+    })
+  }
+
+  const { rates, reconciliation } = buildReconciliation({ primary, secondary, publishDate })
+  if (!rates || Object.keys(rates).length === 0) {
+    throw new Error(
+      `Primary FX source unavailable and no exact-date archive fallback is enabled; refusing partial-currency publish${
+        primaryError?.message ? `: ${primaryError.message}` : ''
+      }`
+    )
+  }
+
+  if (reconciliation.stale) {
+    throw new Error(`Primary FX source ${reconciliation.publishedSource} is stale; refusing publish`)
+  }
+
+  const secondaryState = reconciliation.sources.find((source) => source.source === 'frankfurter')
+  if (secondaryState && !secondaryState.fresh) {
+    const error = new Error(
+      `Frankfurter cross-check source is stale (${secondaryState.date}, age=${secondaryState.ageHours}h)`
+    )
+    warn(error.message)
+    await capture({
+      signal: 'fx_secondary_source_stale',
+      error,
+      context: { workflow: 'daily_publish', source_url: FRANKFURTER_URL }
+    })
+  }
+
+  if (
+    reconciliation.agreement &&
+    reconciliation.agreement.intersectionCount < minimumIntersection
+  ) {
+    const error = new Error(
+      `Frankfurter cross-check intersection is incomplete (${reconciliation.agreement.intersectionCount}/${minimumIntersection})`
+    )
+    warn(error.message)
+    await capture({
+      signal: 'fx_secondary_source_incomplete_intersection',
+      error,
+      context: { workflow: 'daily_publish', source_url: FRANKFURTER_URL }
+    })
+    reconciliation.agreement = null
+  }
+
+  if (reconciliation.agreement) {
+    const { warns, refusals } = evaluateCrossSourceAgreement(reconciliation.agreement)
+    if (warns.length > 0) {
+      warn(
+        `cross-source: ${warns.length} intersection currency(ies) diverge beyond the warn band: ${warns
+          .slice(0, 8)
+          .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+          .join(', ')}`
+      )
+    }
+    if (refusals.length > 0) {
+      const error = new Error(
+        `cross-source disagreement >5% between er-api and Frankfurter: ${refusals.map((entry) => entry.code).join(', ')}`
+      )
+      await capture({
+        signal: 'fx_cross_source_disagreement',
+        error,
+        context: { workflow: 'daily_publish', refusals }
+      })
+      throw error
+    }
+  }
+
+  const summary = reconciliation.agreement
+    ? `intersection=${reconciliation.agreement.intersectionCount} maxDrift=${(reconciliation.agreement.maxRelDiff * 100).toFixed(3)}% secondaryLagged=${reconciliation.agreement.secondaryLagged}`
+    : 'single-source (no cross-check)'
+  console.log(
+    `Sources: published=${reconciliation.publishedSource} stale=${reconciliation.stale} ${summary}`
+  )
+
+  return { rates, reconciliation }
 }
 
 async function fetchJSON(url, timeoutMs) {
@@ -661,6 +784,7 @@ module.exports = {
   computeCrossRates,
   dateDaysBeforeUTC,
   fetchLatestRates,
+  fetchReconciledRates,
   loadAllSnapshotsFromArchive,
   loadArchiveRateFallback,
   listSnapshotArchiveDates,

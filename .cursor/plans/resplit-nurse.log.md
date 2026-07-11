@@ -1,5 +1,25 @@
 # Resplit Nurse Log
 
+## 2026-07-11 18:56 EDT / 2026-07-11 22:56 UTC
+
+- `GO/source-proven-pr-pending`, `NO-GO/deploy-unproven` for the stale FX PR reconciliation on branch `codex/fx-stale-pr-reconcile-20260711` from `origin/main` `00056a5942dfafa6da090464cd240b68b68a9fe1`; no workflow dispatch, deploy, secret write, or production mutation occurred.
+- Recovered delta: the daily publisher keeps the full er-api table authoritative and cross-checks its major-currency intersection against Frankfurter/ECB. Invalid/partial/future/stale primary data and >5% cross-source disagreements fail before snapshot mutation; the explicit exact-date archive fallback remains available. Frankfurter failure only removes the tripwire, and Frankfurter can never replace the full table with its majors-only set. Generated artifacts carry bounded source/agreement metadata and package validation rechecks persisted disagreement evidence.
+- Fresh proof:
+  - `npm run check` -> live generation saw `166` authoritative currencies and a `30`-currency independent intersection (`0.336%` maximum drift, Frankfurter dated one day behind); strict package validation passed; Node suite `459/459`; Worker suite `13/13`.
+  - Focused reconciliation and artifact-gate suite -> `56/56`; includes partial-secondary refusal, exact-date fallback preservation, stale/future source refusal, unavailable or undersized-tripwire behavior, and persisted >5% disagreement refusal.
+  - `npm run smoke:deploy` -> `OK (date=2026-07-11, historyPoints=30)` against the existing deployment.
+  - Read-only live proof -> Worker and web mirror exact USD/EUR quote parity for `2026-07-11`; both history routes returned the same eight points; Worker coverage reported `mismatchCount=0`, empty `signals`, and zero freshness lag.
+- Stale PR classification:
+  - `#39` is superseded by merged `#37` (`b205774d`); current main already owns the cron trigger and scheduled handler. Close as duplicate.
+  - `#40` contains the still-real single-source correctness gap, but its majors-only fallback contradicts the current `>=100` currency release gate. This branch is the fail-closed replacement; retire `#40` after the replacement PR is linked.
+  - `#41` is salvage-only: its dashboard queries `fx_fallback_served_total`, which neither that branch nor current main emits. Split emitted pipeline metrics from dashboard cleanup before revalidation.
+  - `#42` is stacked on `#41`, inherits the non-emitted metric, and needs Grafana credentials for live provisioning/notification proof. Rebase only after the metric contract exists.
+  - `#43` is obsolete as written: it says the Go FX tree is retained, but `#58` removed `internal/fx` and `cmd/fx-publish`. Close or rewrite against current architecture; do not merge unchanged.
+- Current boundary: production `/health` remains release `094801ebe8c77862f16ecf8d9492920564c09d3c`, which predates source main and this branch. Local deploy credentials are incomplete, so no deploy claim is available.
+- Exact next slice: open the replacement draft PR, let current checks/review settle, retire `#39/#40/#43` with the evidence above, then recover `#41` as a current emitted-metrics slice before revisiting credential-gated `#42`.
+
+<promise>KEEP-GOING: review replacement PR, retire superseded drafts, recover emitted metrics</promise>
+
 ## 2026-07-11 07:33 EDT / 2026-07-11 11:33 UTC
 
 - `GO/branch-proven`, `NO-GO/source-runtime-activation-pending` for global OCR provider accounting on branch `codex/ocr-atomic-accounting-20260711`, rebased onto compatibility source `e88b4fb05a817ef7706a9887aca064039576eb1c`; root and named production config remain exactly `OCR_ACCOUNTING_MODE=legacy`, compatibility shadow remains `false`, and no workflow dispatch, secret write, or deployment happened.
