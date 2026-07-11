@@ -133,6 +133,45 @@ test('Sentry options remove only unsafe inbound correlation headers from automat
   })
 })
 
+test('Sentry options remove non-ASCII and overlong correlation values from every automatic SDK path', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+  const event = {
+    request: {
+      headers: {
+        'x-resplit-trace-id': 'trace-über',
+        'x-request-id': 'r'.repeat(97),
+        accept: 'application/json',
+      },
+    },
+  }
+  const transaction = {
+    request: {
+      headers: {
+        'x-resplit-trace-id': 't'.repeat(97),
+        'x-request-id': 'request-über',
+        accept: 'application/json',
+      },
+    },
+  }
+  const span = {
+    data: {
+      'http.request.header.x_resplit_trace_id': 'trace-über',
+      'http.request.header.x_request_id': 'r'.repeat(97),
+      'http.response.status_code': 500,
+    },
+  }
+
+  assert.equal(options.beforeSend(event, {}), event)
+  assert.equal(options.beforeSendTransaction(transaction, {}), transaction)
+  assert.equal(options.beforeSendSpan(span), span)
+  assert.deepEqual(event.request.headers, { accept: 'application/json' })
+  assert.deepEqual(transaction.request.headers, { accept: 'application/json' })
+  assert.deepEqual(span.data, { 'http.response.status_code': 500 })
+})
+
 test('Sentry options retain and normalize safe correlation headers in automatic request context', async () => {
   const monitoring = await import('../worker/src/monitoring.mjs')
   const options = monitoring.getSentryWorkerOptions({
