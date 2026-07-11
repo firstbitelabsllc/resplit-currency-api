@@ -124,6 +124,38 @@ test('OCR accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
   assert.deepEqual(state.events, ['deploy-candidate', 'promote-candidate', 'remove-candidate-tag'])
 })
 
+test('OCR rejects an ambiguous OCI index before creating a candidate', (t) => {
+  const harness = makeHarness('ocr', 'manifest_index_ambiguous')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(ocrScript, harness, {
+    IMAGE: `${ocrPrefix}${'b'.repeat(64)}`,
+    SERVICE: 'ocr',
+    SCAN_FIXTURE: harness.fixture,
+    DEPLOY_TRACE_ID: 'deploy-manifest-index-ambiguous',
+  })
+  assert.notEqual(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.current, 'ocr-prev')
+  assert.equal(state.candidateCreated, false)
+  assert.deepEqual(state.events, [])
+})
+
+test('OCR rejects a parseable manifest delivered by a failed registry transport', (t) => {
+  const harness = makeHarness('ocr', 'manifest_transport_fail')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(ocrScript, harness, {
+    IMAGE: `${ocrPrefix}${'b'.repeat(64)}`,
+    SERVICE: 'ocr',
+    SCAN_FIXTURE: harness.fixture,
+    DEPLOY_TRACE_ID: 'deploy-manifest-transport-fail',
+  })
+  assert.notEqual(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.current, 'ocr-prev')
+  assert.equal(state.candidateCreated, false)
+  assert.deepEqual(state.events, [])
+})
+
 for (const scenario of ['contract_fail', 'readback_mismatch']) {
   test(`FX ${scenario} restores the last completed digest and the whole non-image contract`, (t) => {
     const harness = makeHarness('fx', scenario)
@@ -163,6 +195,11 @@ let state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
 const save = () => fs.writeFileSync(stateFile, JSON.stringify(state))
 const arg = prefix => args.find(value => value.startsWith(prefix))
 const output = value => process.stdout.write(typeof value === 'string' ? value : JSON.stringify(value))
+
+if (args[0] === 'auth' && args[1] === 'print-access-token') {
+  output('fake-artifact-registry-token')
+  process.exit(0)
+}
 
 if (state.mode === 'ocr') {
   if (args[0] === 'run' && args[1] === 'deploy') {
@@ -277,9 +314,49 @@ const fs = require('node:fs')
 const args = process.argv.slice(2)
 const state = JSON.parse(fs.readFileSync(process.env.FAKE_STATE, 'utf8'))
 const url = args[args.length - 1]
+if (args.some(value => value.includes('fake-artifact-registry-token'))) {
+  console.error('Artifact Registry bearer leaked into curl argv')
+  process.exit(65)
+}
 const valueAfter = flag => {
   const index = args.indexOf(flag)
   return index >= 0 ? args[index + 1] : null
+}
+if (url.includes('.pkg.dev/v2/test-project/resplit-fx/ocr/manifests/sha256:')) {
+  if (state.scenario === 'manifest_index_success' || state.scenario === 'manifest_index_ambiguous') {
+    const manifests = [
+      {
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        digest: 'sha256:' + 'c'.repeat(64),
+        platform: { architecture: 'amd64', os: 'linux' },
+      },
+      {
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        digest: 'sha256:' + 'd'.repeat(64),
+        platform: { architecture: 'unknown', os: 'unknown' },
+        annotations: { 'vnd.docker.reference.type': 'attestation-manifest' },
+      },
+    ]
+    if (state.scenario === 'manifest_index_ambiguous') {
+      manifests.push({
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        digest: 'sha256:' + 'e'.repeat(64),
+        platform: { architecture: 'amd64', os: 'linux' },
+      })
+    }
+    process.stdout.write(JSON.stringify({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.index.v1+json',
+      manifests,
+    }))
+  } else {
+    process.stdout.write(JSON.stringify({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+    }))
+    if (state.scenario === 'manifest_transport_fail') process.exit(18)
+  }
+  process.exit(0)
 }
 if (url === 'https://candidate.example/health' && state.scenario === 'candidate_fail') process.exit(22)
 if (url === 'https://ocr.example/health' && state.scenario === 'post_promote_fail' && state.current === 'ocr-candidate') process.exit(22)
