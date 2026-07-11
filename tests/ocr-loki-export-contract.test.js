@@ -84,7 +84,7 @@ function assertDeployContract({ script, verifier, workflow }) {
     'grafana-otlp-auth-header',
     'ACTIVATE',
   ]) {
-    assert.match(script, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.ok(script.includes(required), `missing exact deploy contract: ${required}`)
   }
 
   assert.equal(
@@ -121,7 +121,7 @@ function assertDeployContract({ script, verifier, workflow }) {
     'get-iam-policy',
     'allAuthenticatedUsers',
   ]) {
-    assert.match(script, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.ok(script.includes(required), `missing exact deploy safety contract: ${required}`)
   }
   assert.doesNotMatch(script, /^\s*"\$GCLOUD" run deploy/m)
   const deployLeaseCreateIndex = script.indexOf('pubsub subscriptions create "$LEASE_SUBSCRIPTION"')
@@ -205,7 +205,7 @@ function assertDeployContract({ script, verifier, workflow }) {
     'allAuthenticatedUsers',
     '--connect-timeout 3 --max-time 8',
   ]) {
-    assert.match(verifier, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.ok(verifier.includes(required), `missing exact verifier contract: ${required}`)
   }
   assert.equal(occurrences(verifier, 'openssl rand -hex 16'), 3)
   assert.equal(occurrences(verifier, '.labels.resplit_owner == $owner'), 2)
