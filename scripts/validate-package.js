@@ -3,6 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const { runMonitoredScript } = require('./sentry-monitoring')
+const { evaluateCrossSourceAgreement } = require('./lib/sources')
 
 const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(__dirname, '..', 'package')
 const MIN_ARCHIVE_DAYS = 365
@@ -129,6 +130,29 @@ function main() {
   } else {
     warnIf(true, 'rate-sanity: no prior archived day before latestDate to compare — value gate skipped')
   }
+
+  // Cross-source disagreement gate (2026-07-03, Phase 2): open.er-api.com stays
+  // authoritative, frankfurter.app/ECB is an independent tripwire. currscript.js
+  // emits `agreement` (intersection relDiffs + weekend flag) into the snapshot;
+  // enforce it here so the publish/refuse decision has one tuning point, exactly
+  // like the day-over-day sanity gate above. No-ops on legacy/backfill snapshots
+  // that predate multi-source (no `agreement` key). Thresholds live in
+  // scripts/lib/sources.js: >0.5% business-day warn, wider weekend band, >5% refuse.
+  const { warns: crossWarns, refusals: crossRefusals } = evaluateCrossSourceAgreement(snapshot.agreement)
+  warnIf(
+    crossWarns.length > 0,
+    `cross-source: ${crossWarns.length} intersection currency(ies) diverge beyond the warn band: ${crossWarns
+      .slice(0, 8)
+      .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+      .join(', ')}`
+  )
+  ensure(
+    crossRefusals.length === 0,
+    `cross-source: ${crossRefusals.length} intersection currency(ies) disagree >5% between er-api and Frankfurter — likely a bad upstream rate, refusing to publish: ${crossRefusals
+      .slice(0, 8)
+      .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+      .join(', ')}`
+  )
 
   // Minified files must parse too.
   ensure(isIsoDate(archiveManifest.earliestDate), 'archive earliestDate invalid')

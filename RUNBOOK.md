@@ -155,7 +155,7 @@ gh run view <RUN_ID> --repo firstbitelabsllc/resplit-currency-api --log-failed
 **Common causes**:
 | Cause | Fix |
 |-------|-----|
-| `open.er-api.com` is down | Pipeline auto-retries once. If still failing, wait and re-trigger manually. Consider adding a backup source (see "Upstream data source dies" below). |
+| `open.er-api.com` is down | Handled automatically — the pipeline falls back to Frankfurter/ECB majors with `reducedCoverage` metadata. Only escalate if er-api dies permanently (see "Upstream data source dies" below). |
 | `npm ci` fails | Check `package-lock.json` integrity, run `npm ci` locally to reproduce. |
 | Cloudflare deploy fails | Check `CLOUDFLARE_API_TOKEN` hasn't expired/been revoked. Verify at dash.cloudflare.com/profile/api-tokens. |
 | GitHub Pages deploy fails | Check repo settings — Pages must be enabled, source set to `gh-pages` branch. |
@@ -295,14 +295,39 @@ evidence. Do not treat the object as a permanent billing ledger.
    ```
 4. Re-trigger the workflow.
 
-### 6. Upstream data source dies permanently
+### 6. Upstream data source dies
 
-**Symptoms**: `open.er-api.com` returns errors for multiple days.
+**Symptoms**: `open.er-api.com` returns errors for one or more days.
 
-**Options** (in order of effort):
-1. **Swap source in `currscript.js`** — replace the fetch URL with another free API (e.g., `exchangerate-api.com`, `currencyapi.com`). Same JSON output format, no iOS changes needed.
-2. **Add a paid source** — sign up for a paid API, add the key as a GitHub secret, update the fetch function.
-3. **Fall back to fawazahmed0 CDN** — the original upstream still publishes daily. Change iOS URLs back temporarily.
+**This is now handled automatically.** The pipeline fetches two independent EUR-base
+sources every run — `open.er-api.com` (primary, ~160 currencies, authoritative for every
+published value) and `api.frankfurter.app`/ECB (secondary, ~30 majors, cross-check +
+degraded fallback). See [scripts/lib/sources.js](scripts/lib/sources.js) and
+`fetchReconciledRates()` in [currscript.js](currscript.js).
+
+**What happens on its own when er-api is down:**
+1. The archive exact-date fallback runs first (if `CURRENCY_API_ALLOW_ARCHIVE_FALLBACK` is on).
+2. If that yields nothing, the pipeline publishes **Frankfurter/ECB majors only** with
+   `reducedCoverage: true` + `publishedSource: "frankfurter"` in the snapshot/meta, and fires a
+   `fx_reduced_coverage_publish` Sentry signal. The ~30 majors stay live; the ~130 tail
+   currencies er-api uniquely covered are absent that day (by design — no fabricated tail).
+3. If **both** sources are down, `fetchReconciledRates()` returns no rates and the run fails
+   loudly rather than publishing garbage — the last good CDN artifacts keep serving.
+
+**Cross-source safety net (always on):** on days both sources are up, the intersection (~30
+majors) is compared. >0.5% business-day drift warns; >5% drift on any major makes
+[scripts/validate-package.js](scripts/validate-package.js) **refuse to publish** (a bad
+upstream rate can no longer slip through with only a warning). Weekend/ECB stale-Friday
+rates use a wider band and soft-warn only — see `evaluateCrossSourceAgreement()`.
+
+**Manual escalation** (only if er-api dies *permanently* and you want full tail coverage back):
+1. **Promote/replace the primary in [scripts/lib/sources.js](scripts/lib/sources.js)** — swap
+   `ER_API_URL` for another free EUR-base API (e.g., `exchangerate-api.com`, `currencyapi.com`).
+   Same lowercase-EUR-base output, no iOS changes needed. Keep Frankfurter as the cross-check.
+2. **Add a paid source** — sign up, add the key as a GitHub secret, add a fetcher in
+   `sources.js`, and wire it into `fetchReconciledRates()`.
+3. **Fall back to fawazahmed0 CDN** — the original upstream still publishes daily; change iOS
+   URLs back temporarily.
 
 ### 7. Cloudflare Pages warns about `pages_build_output_dir`
 
