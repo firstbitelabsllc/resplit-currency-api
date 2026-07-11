@@ -9,6 +9,7 @@ const FX_MAX_RATE_AGE_HOURS = 96
 const WARN_TOLERANCE = 0.005
 const LAGGED_SECONDARY_WARN_TOLERANCE = 0.02
 const REFUSE_TOLERANCE = 0.05
+const BASE_SELF_RATE_EPSILON = 1e-9
 
 const ER_API_URL = 'https://open.er-api.com/v6/latest/EUR'
 const FRANKFURTER_URL = 'https://api.frankfurter.app/latest?base=EUR'
@@ -34,6 +35,13 @@ function assertCoverage(source, rates, minimum) {
   }
 }
 
+function assertEurSelfRate(source, rates) {
+  const eurRate = rates.eur
+  if (!Number.isFinite(eurRate) || Math.abs(eurRate - 1) > BASE_SELF_RATE_EPSILON) {
+    throw new Error(`${source}: EUR self-rate must equal 1`)
+  }
+}
+
 function parseErApiDate(raw) {
   if (!raw || typeof raw !== 'string') return null
   const parsed = new Date(raw.trim())
@@ -55,6 +63,7 @@ function parseErApiSnapshot(data, { minCurrencies = PRIMARY_MIN_CURRENCIES } = {
   }
 
   const rates = normalizeRates(data?.rates)
+  assertEurSelfRate('er-api', rates)
   assertCoverage('er-api', rates, minCurrencies)
   return { source: 'er-api', date, rates }
 }
@@ -196,6 +205,7 @@ module.exports = {
   WARN_TOLERANCE,
   LAGGED_SECONDARY_WARN_TOLERANCE,
   REFUSE_TOLERANCE,
+  BASE_SELF_RATE_EPSILON,
   ER_API_URL,
   FRANKFURTER_URL,
   normalizeRates,

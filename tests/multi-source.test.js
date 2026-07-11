@@ -82,6 +82,24 @@ test('er-api parser requires success, EUR, a date, and full coverage', () => {
     }),
     /expected at least 100 currencies/
   )
+  assert.throws(
+    () => parseErApiSnapshot({
+      result: 'success',
+      base_code: 'EUR',
+      time_last_update_utc: 'Fri, 03 Jul 2026 00:00:01 +0000',
+      rates: rateTable(PRIMARY_MIN_CURRENCIES, { includeEur: false })
+    }),
+    /EUR self-rate must equal 1/
+  )
+  assert.throws(
+    () => parseErApiSnapshot({
+      result: 'success',
+      base_code: 'EUR',
+      time_last_update_utc: 'Fri, 03 Jul 2026 00:00:01 +0000',
+      rates: { ...rateTable(PRIMARY_MIN_CURRENCIES), eur: 1.01 }
+    }),
+    /EUR self-rate must equal 1/
+  )
 })
 
 test('Frankfurter parser requires EUR, a dated snapshot, and major coverage', () => {

@@ -3,7 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 const { runMonitoredScript } = require('./sentry-monitoring')
-const { evaluateCrossSourceAgreement } = require('./lib/sources')
+const { BASE_SELF_RATE_EPSILON, evaluateCrossSourceAgreement } = require('./lib/sources')
 
 const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(__dirname, '..', 'package')
 const MIN_ARCHIVE_DAYS = 365
@@ -71,6 +71,10 @@ function main() {
   ensure(isIsoDate(snapshot.date), 'snapshot date is not ISO yyyy-mm-dd')
   ensure(snapshot.base === 'eur', `snapshot base expected "eur", got "${snapshot.base}"`)
   ensure(snapshot.rates && typeof snapshot.rates === 'object', 'snapshot rates missing')
+  ensure(
+    Number.isFinite(snapshot.rates.eur) && approximatelyEqual(snapshot.rates.eur, 1, BASE_SELF_RATE_EPSILON),
+    `snapshot EUR self-rate must equal 1, got ${snapshot.rates.eur}`
+  )
   ensure(Object.keys(snapshot.rates).length === codes.length, 'snapshot currency count mismatch')
 
   ensure(isIsoDate(meta.latestDate), 'meta latestDate invalid')

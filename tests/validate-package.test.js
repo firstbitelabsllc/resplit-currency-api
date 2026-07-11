@@ -106,6 +106,26 @@ test('validate-package fails strict release validation with incomplete calendar 
   )
 })
 
+test('validate-package refuses a snapshot missing the EUR self-rate', (t) => {
+  const temp = withTempPackage(t)
+  writeEurSelfRate(temp.packageRoot, undefined)
+
+  assert.throws(
+    () => temp.validate(),
+    /snapshot EUR self-rate must equal 1/
+  )
+})
+
+test('validate-package refuses a non-unit EUR self-rate', (t) => {
+  const temp = withTempPackage(t)
+  writeEurSelfRate(temp.packageRoot, 1.01)
+
+  assert.throws(
+    () => temp.validate(),
+    /snapshot EUR self-rate must equal 1/
+  )
+})
+
 test('validate-package warns on moderate independent-source drift', (t) => {
   const temp = withTempPackage(t)
   const warnings = []
@@ -142,6 +162,17 @@ function writeAgreement(tempPackage, agreement) {
   const snapshotPath = path.join(tempPackage, 'snapshots', 'base-rates.json')
   const snapshot = fs.readJsonSync(snapshotPath)
   snapshot.agreement = agreement
+  fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
+}
+
+function writeEurSelfRate(tempPackage, rate) {
+  const snapshotPath = path.join(tempPackage, 'snapshots', 'base-rates.json')
+  const snapshot = fs.readJsonSync(snapshotPath)
+  if (rate === undefined) {
+    delete snapshot.rates.eur
+  } else {
+    snapshot.rates.eur = rate
+  }
   fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
 }
 
