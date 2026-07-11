@@ -1,5 +1,16 @@
 # Resplit Nurse Log
 
+## 2026-07-11 19:35 EDT / 2026-07-11 23:35 UTC
+
+- `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for draft PR `#79`; no workflow dispatch, merge, deploy, secret write, or production mutation occurred.
+- Money-law repair: er-api now must carry the exact UTC publish date, including weekends; the separately lag-tolerant Frankfurter/ECB tripwire keeps its 96-hour budget. The publisher selects the latest trusted archive strictly before the publish date and refuses any live-primary or exact-date-fallback currency removal while allowing additions. Archive reads verify their internal source date, publication refuses date relabeling, and package validation repeats both source-date and prior-set containment gates.
+- Fresh proof:
+  - Adversarial focused suite -> `67/67`, including 100-vs-166 live and fallback refusal, strictly-prior archive selection, corrupt/date-mismatched archive refusal, weekend same-day primary behavior, lagged ECB acceptance, addition allowance, no-relabeling, and artifact-level prior-set containment.
+  - `npm run check` -> live generation accepted `166` same-day er-api currencies and a `30`-currency independent intersection (`0.336%` maximum drift, Frankfurter one day behind); strict package validation passed; Node suite `470/470`; Worker suite `13/13`.
+  - Wrangler `4.110.0` root dry-run -> bundle OK with canonical bindings; `npm run smoke:deploy` -> `OK (date=2026-07-11, historyPoints=30)` against the existing deployment.
+- Runbook contract: the midnight run may fail closed while er-api rolls its daily table; the scheduled `03:00` run is the later retry. A prior-day primary is never published as today, and a currency retirement requires an explicit reviewed code change.
+- Current boundary: production remains untouched and still predates this draft branch. Exact next slice is PR review/check settlement and normal merge/deploy routing by the owning release lane.
+
 ## 2026-07-11 18:56 EDT / 2026-07-11 22:56 UTC
 
 - `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for the stale FX PR reconciliation in draft PR `#79`, branched from `origin/main` `00056a5942dfafa6da090464cd240b68b68a9fe1`; no workflow dispatch, deploy, secret write, or production mutation occurred.

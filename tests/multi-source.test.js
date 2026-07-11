@@ -4,7 +4,8 @@ const assert = require('node:assert/strict')
 const {
   PRIMARY_MIN_CURRENCIES,
   SECONDARY_MIN_CURRENCIES,
-  FX_MAX_RATE_AGE_HOURS,
+  PRIMARY_MAX_RATE_AGE_HOURS,
+  SECONDARY_MAX_RATE_AGE_HOURS,
   LAGGED_SECONDARY_WARN_TOLERANCE,
   REFUSE_TOLERANCE,
   normalizeRates,
@@ -14,7 +15,9 @@ const {
   fetchErApiSnapshot,
   fetchFrankfurterSnapshot,
   snapshotAgeHours,
-  isFresh,
+  isPrimaryFresh,
+  isSecondaryFresh,
+  findMissingCurrencyCodes,
   relativeDifference,
   crossCheckPairs,
   buildReconciliation,
@@ -33,7 +36,8 @@ function rateTable(count, { includeEur = true } = {}) {
 test('source coverage and freshness limits stay pinned', () => {
   assert.equal(PRIMARY_MIN_CURRENCIES, 100)
   assert.equal(SECONDARY_MIN_CURRENCIES, 20)
-  assert.equal(FX_MAX_RATE_AGE_HOURS, 96)
+  assert.equal(PRIMARY_MAX_RATE_AGE_HOURS, 0)
+  assert.equal(SECONDARY_MAX_RATE_AGE_HOURS, 96)
   assert.equal(REFUSE_TOLERANCE, 0.05)
 })
 
@@ -157,12 +161,53 @@ test('fetchers use the pinned independent EUR-base endpoints', async () => {
   assert.equal(seen[1].timeoutMs, 15_000)
 })
 
-test('freshness rejects unknown, future, and older-than-96-hour source dates', () => {
+test('primary freshness is exact-date while secondary freshness allows a 96-hour lag', () => {
   assert.equal(snapshotAgeHours('2026-07-03', '2026-07-07'), 96)
-  assert.equal(isFresh('2026-07-03', '2026-07-07'), true)
-  assert.equal(isFresh('2026-07-03', '2026-07-08'), false)
-  assert.equal(isFresh('', '2026-07-07'), false)
-  assert.equal(isFresh('2026-07-08', '2026-07-07'), false)
+  assert.equal(isPrimaryFresh('2026-07-07', '2026-07-07'), true)
+  assert.equal(isPrimaryFresh('2026-07-06', '2026-07-07'), false)
+  assert.equal(isPrimaryFresh('', '2026-07-07'), false)
+  assert.equal(isPrimaryFresh('2026-07-08', '2026-07-07'), false)
+  assert.equal(isSecondaryFresh('2026-07-03', '2026-07-07'), true)
+  assert.equal(isSecondaryFresh('2026-07-03', '2026-07-08'), false)
+  assert.equal(isSecondaryFresh('2026-07-08', '2026-07-07'), false)
+})
+
+test('weekend publication still requires same-day primary while accepting lagged ECB', () => {
+  const { reconciliation } = buildReconciliation({
+    primary: { source: 'er-api', date: '2026-07-12', rates: { eur: 1, usd: 1.08 } },
+    secondary: { source: 'frankfurter', date: '2026-07-10', rates: { eur: 1, usd: 1.081 } },
+    publishDate: '2026-07-12'
+  })
+
+  assert.equal(reconciliation.stale, false)
+  assert.equal(reconciliation.sources[0].ageHours, 0)
+  assert.equal(reconciliation.sources[1].ageHours, 48)
+  assert.equal(reconciliation.sources[1].fresh, true)
+  assert.equal(reconciliation.agreement.secondaryLagged, true)
+
+  const stalePrimary = buildReconciliation({
+    primary: { source: 'er-api', date: '2026-07-11', rates: { eur: 1, usd: 1.08 } },
+    secondary: null,
+    publishDate: '2026-07-12'
+  })
+  assert.equal(stalePrimary.reconciliation.stale, true)
+})
+
+test('currency continuity allows additions and reports only trusted removals', () => {
+  assert.deepEqual(
+    findMissingCurrencyCodes(
+      { eur: 1, usd: 1.08, new: 2 },
+      { EUR: 1, USD: 1.07 }
+    ),
+    []
+  )
+  assert.deepEqual(
+    findMissingCurrencyCodes(
+      { eur: 1, new: 2 },
+      { EUR: 1, USD: 1.07 }
+    ),
+    ['usd']
+  )
 })
 
 test('cross-check compares only the intersection and preserves authoritative values', () => {

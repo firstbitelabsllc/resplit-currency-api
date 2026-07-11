@@ -3,7 +3,11 @@
 const fs = require('fs')
 const path = require('path')
 const { runMonitoredScript } = require('./sentry-monitoring')
-const { BASE_SELF_RATE_EPSILON, evaluateCrossSourceAgreement } = require('./lib/sources')
+const {
+  BASE_SELF_RATE_EPSILON,
+  evaluateCrossSourceAgreement,
+  findMissingCurrencyCodes
+} = require('./lib/sources')
 
 const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(__dirname, '..', 'package')
 const MIN_ARCHIVE_DAYS = 365
@@ -78,6 +82,19 @@ function main() {
   ensure(Object.keys(snapshot.rates).length === codes.length, 'snapshot currency count mismatch')
 
   ensure(isIsoDate(meta.latestDate), 'meta latestDate invalid')
+  ensure(
+    snapshot.date === meta.latestDate,
+    `snapshot date must match meta latestDate, got ${snapshot.date} vs ${meta.latestDate}`
+  )
+  if (snapshot.publishedSource) {
+    const publishedSource = Array.isArray(snapshot.sources)
+      ? snapshot.sources.find((source) => source.source === snapshot.publishedSource)
+      : null
+    ensure(
+      publishedSource?.date === snapshot.date,
+      `published source date must match snapshot date, got ${publishedSource?.date || 'missing'} vs ${snapshot.date}`
+    )
+  }
   ensure(meta.historyDays === HISTORY_DAYS, `meta historyDays must be ${HISTORY_DAYS}, got ${meta.historyDays}`)
   ensure(meta.archiveMode === 'immutable', `meta archiveMode expected immutable, got ${meta.archiveMode}`)
   ensure(
@@ -116,6 +133,11 @@ function main() {
   const priorSanityDate = priorSanityDates.length ? priorSanityDates[priorSanityDates.length - 1] : null
   if (priorSanityDate) {
     const priorSnapshot = readJSON(`archive/${priorSanityDate}.json`)
+    const missingCodes = findMissingCurrencyCodes(snapshot.rates, priorSnapshot.rates)
+    ensure(
+      missingCodes.length === 0,
+      `currency-set continuity: snapshot missing ${missingCodes.length} trusted ${missingCodes.length === 1 ? 'currency' : 'currencies'} vs ${priorSanityDate}: ${missingCodes.slice(0, 12).join(', ')}`
+    )
     const { gross, warns } = computeRateSanity(snapshot.rates, priorSnapshot.rates)
     warnIf(
       warns.length > 0,

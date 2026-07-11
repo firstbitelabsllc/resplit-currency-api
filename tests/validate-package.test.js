@@ -126,6 +126,26 @@ test('validate-package refuses a non-unit EUR self-rate', (t) => {
   )
 })
 
+test('validate-package refuses an unexplained currency removal versus the latest prior archive', (t) => {
+  const temp = withTempPackage(t)
+  const snapshotPath = path.join(temp.packageRoot, 'snapshots', 'base-rates.json')
+  const currenciesPath = path.join(temp.packageRoot, 'currencies.json')
+  const snapshot = fs.readJsonSync(snapshotPath)
+  const currencies = fs.readJsonSync(currenciesPath)
+  const removedCode = Object.keys(snapshot.rates)
+    .find((code) => !['eur', 'usd', 'aed', 'gbp', 'myr'].includes(code))
+
+  delete snapshot.rates[removedCode]
+  delete currencies[removedCode]
+  fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
+  fs.writeJsonSync(currenciesPath, currencies, { spaces: '\t' })
+
+  assert.throws(
+    () => temp.validate(),
+    new RegExp(`currency-set continuity: snapshot missing 1 trusted currency.*${removedCode}`)
+  )
+})
+
 test('validate-package warns on moderate independent-source drift', (t) => {
   const temp = withTempPackage(t)
   const warnings = []

@@ -306,16 +306,25 @@ This prevents a provider outage from silently dropping the long-tail currencies 
 existing receipts.
 
 Automatic behavior:
-1. A trusted exact-date archive snapshot may replace a failed primary only when
-   `CURRENCY_API_ALLOW_ARCHIVE_FALLBACK` is explicitly enabled.
-2. Without that exact-date fallback, primary failure or staleness refuses publication; the
-   last good deployed CDN and Worker artifacts continue serving.
-3. When both live sources are healthy, the shared major-currency intersection is compared.
+1. The er-api primary date must exactly equal the UTC publish date, including weekends. A
+   prior-day response is never relabeled as today. The `00:00` run can fail closed while
+   er-api rolls its daily table; the scheduled `03:00` run provides the later retry.
+2. A trusted exact-date archive snapshot may replace a failed primary only when
+   `CURRENCY_API_ALLOW_ARCHIVE_FALLBACK` is explicitly enabled. Its internal source date
+   must match the requested publish date.
+3. The live primary and exact-date archive fallback must contain every currency present in
+   the latest trusted archive strictly before the publish date. Additions are allowed;
+   removals fail until an explicit code-reviewed retirement changes this contract. Package
+   validation repeats the same prior-set containment check.
+4. Without that exact-date fallback, primary failure, date mismatch, or currency removal
+   refuses publication; the last good deployed CDN and Worker artifacts continue serving.
+5. Frankfurter/ECB has a separate 96-hour lag budget for weekends and upstream calendar
+   timing. Its failure or staleness emits a warning/Sentry signal but does not alter the
+   authoritative rates.
+6. When both live sources are healthy, the shared major-currency intersection is compared.
    Drift above 0.5% warns (2% when ECB's dated snapshot lags); drift above 5% refuses the
    publish before a new snapshot is written. Package validation enforces the same artifact
    contract again.
-4. Frankfurter failure or staleness emits a warning/Sentry signal but does not alter the
-   authoritative rates.
 
 If the primary is permanently unavailable, add and prove a full-coverage replacement in
 [`scripts/lib/sources.js`](scripts/lib/sources.js). Do not promote a majors-only source or

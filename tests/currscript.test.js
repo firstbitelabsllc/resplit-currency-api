@@ -17,9 +17,11 @@ const {
   listSnapshotArchiveDates,
   loadAllSnapshotsFromArchive,
   loadArchiveRateFallback,
+  loadPriorTrustedSnapshotFromArchive,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
   promoteBuildOutput,
+  resolveArchiveDateForPublish,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
@@ -29,6 +31,16 @@ const {
   writeJsonFile,
   writeTextFile
 } = require('../currscript')
+
+function currencyTable(count) {
+  const rates = { eur: 1 }
+  for (let index = 0; index < count - 1; index += 1) {
+    rates[`x${String(index).padStart(3, '0')}`] = index + 2
+  }
+  return rates
+}
+
+const noPriorTrustedSnapshot = () => null
 
 test('snapshot retention is pinned to one year', () => {
   assert.equal(snapshotRetentionDays, 365)
@@ -88,6 +100,7 @@ test('loadArchiveRateFallback stays disabled by default', () => {
 test('fetchLatestRates uses upstream rates before fallback', async () => {
   const rates = await fetchLatestRates({
     publishDate: '2026-06-30',
+    loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
     env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
     fetchPrimary: async () => ({
       source: 'er-api',
@@ -108,6 +121,7 @@ test('fetchLatestRates can fall back to exact-date archive rates after upstream 
 
   const rates = await fetchLatestRates({
     publishDate: '2026-06-30',
+    loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
     env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
     fetchJson: async () => {
       throw new Error('getaddrinfo EAI_AGAIN open.er-api.com')
@@ -126,6 +140,7 @@ test('fetchLatestRates still throws upstream failures when archive fallback is u
   await assert.rejects(
     () => fetchLatestRates({
       publishDate: '2026-06-30',
+      loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
       env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
       fetchJson: async () => {
         throw new Error('network unreachable')
@@ -143,6 +158,7 @@ test('fetchLatestRates still throws upstream failures when archive fallback is u
 test('fetchReconciledRates keeps er-api authoritative and emits cross-check agreement', async () => {
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
+    loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
     minimumIntersection: 2,
     fetchPrimary: async () => ({
       source: 'er-api',
@@ -169,6 +185,7 @@ test('fetchReconciledRates refuses a partial Frankfurter replacement when er-api
   await assert.rejects(
     () => fetchReconciledRates({
       publishDate: '2026-07-03',
+      loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
       env: {},
       fetchPrimary: async () => {
         throw new Error('getaddrinfo EAI_AGAIN open.er-api.com')
@@ -190,6 +207,7 @@ test('fetchReconciledRates refuses a partial Frankfurter replacement when er-api
 test('fetchReconciledRates preserves the explicit exact-date archive fallback', async () => {
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
+    loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
     minimumIntersection: 2,
     env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
     fetchPrimary: async () => {
@@ -215,6 +233,7 @@ test('fetchReconciledRates continues full-table publication when the tripwire is
   const warnings = []
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
+    loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
     fetchPrimary: async () => ({
       source: 'er-api',
       date: '2026-07-03',
@@ -238,6 +257,7 @@ test('fetchReconciledRates does not claim an undersized cross-check intersection
   const warnings = []
   const { rates, reconciliation } = await fetchReconciledRates({
     publishDate: '2026-07-03',
+    loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
     minimumIntersection: 3,
     fetchPrimary: async () => ({
       source: 'er-api',
@@ -262,13 +282,14 @@ test('fetchReconciledRates does not claim an undersized cross-check intersection
 test('fetchReconciledRates refuses stale primary data', async () => {
   await assert.rejects(
     () => fetchReconciledRates({
-      publishDate: '2026-07-10',
+      publishDate: '2026-07-11',
       fetchPrimary: async () => ({
         source: 'er-api',
-        date: '2026-07-01',
+        date: '2026-07-07',
         rates: { eur: 1, usd: 1.08 }
       }),
       fetchSecondary: async () => null,
+      loadPriorTrustedSnapshot: () => null,
       capture: async () => {},
       warn: () => {}
     }),
@@ -276,11 +297,58 @@ test('fetchReconciledRates refuses stale primary data', async () => {
   )
 })
 
+test('fetchReconciledRates refuses unexplained live-primary currency removals', async () => {
+  const captured = []
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate: '2026-07-11',
+      fetchPrimary: async () => ({
+        source: 'er-api',
+        date: '2026-07-11',
+        rates: currencyTable(100)
+      }),
+      fetchSecondary: async () => null,
+      loadPriorTrustedSnapshot: () => ({
+        date: '2026-07-10',
+        rates: currencyTable(166)
+      }),
+      capture: async (payload) => captured.push(payload.signal),
+      warn: () => {}
+    }),
+    /missing 66 trusted currencies/
+  )
+  assert.ok(captured.includes('fx_currency_set_regression'))
+})
+
+test('fetchReconciledRates refuses unexplained exact-date archive-fallback removals', async () => {
+  const captured = []
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate: '2026-07-11',
+      env: { CURRENCY_API_ALLOW_ARCHIVE_FALLBACK: '1' },
+      fetchPrimary: async () => {
+        throw new Error('primary down')
+      },
+      fetchSecondary: async () => null,
+      loadArchiveSnapshot: () => currencyTable(100),
+      loadPriorTrustedSnapshot: () => ({
+        date: '2026-07-10',
+        rates: currencyTable(166)
+      }),
+      capture: async (payload) => captured.push(payload.signal),
+      warn: () => {}
+    }),
+    /missing 66 trusted currencies/
+  )
+  assert.ok(captured.includes('fx_currency_set_regression'))
+})
+
 test('fetchReconciledRates refuses and reports a >5% cross-source disagreement', async () => {
   const captured = []
   await assert.rejects(
     () => fetchReconciledRates({
       publishDate: '2026-07-03',
+      loadPriorTrustedSnapshot: noPriorTrustedSnapshot,
       minimumIntersection: 2,
       fetchPrimary: async () => ({
         source: 'er-api',
@@ -367,6 +435,70 @@ test('loadSnapshotFromArchive returns null for empty rates', (t) => {
 
   const result = loadSnapshotFromArchive(testDate)
   assert.equal(result, null)
+})
+
+test('loadSnapshotFromArchive refuses an internally mismatched source date', (t) => {
+  const testDate = '2099-06-16'
+  const filePath = path.join(snapshotArchiveDir, `${testDate}.json`)
+
+  t.after(() => {
+    fs.removeSync(filePath)
+  })
+
+  fs.mkdirpSync(snapshotArchiveDir)
+  fs.writeJsonSync(filePath, {
+    date: '2099-06-15',
+    base: 'eur',
+    rates: { eur: 1, usd: 1.2 }
+  })
+
+  assert.equal(loadSnapshotFromArchive(testDate), null)
+})
+
+test('loadPriorTrustedSnapshotFromArchive selects the latest date strictly before publish', () => {
+  const loadedDates = []
+  const snapshot = loadPriorTrustedSnapshotFromArchive({
+    publishDate: '2026-07-11',
+    listDates: () => ['2026-07-12', '2026-07-09', '2026-07-11', '2026-07-10'],
+    loadSnapshot: (date) => {
+      loadedDates.push(date)
+      return { EUR: 1, USD: 1.2 }
+    }
+  })
+
+  assert.deepEqual(loadedDates, ['2026-07-10'])
+  assert.deepEqual(snapshot, {
+    date: '2026-07-10',
+    rates: { eur: 1, usd: 1.2 }
+  })
+})
+
+test('loadPriorTrustedSnapshotFromArchive fails closed when the latest prior snapshot is invalid', () => {
+  assert.throws(
+    () => loadPriorTrustedSnapshotFromArchive({
+      publishDate: '2026-07-11',
+      listDates: () => ['2026-07-09', '2026-07-10'],
+      loadSnapshot: () => null
+    }),
+    /Latest prior trusted FX snapshot 2026-07-10 is missing or invalid/
+  )
+})
+
+test('resolveArchiveDateForPublish never relabels rates under a different date', () => {
+  assert.equal(
+    resolveArchiveDateForPublish({
+      publishDate: '2026-07-11',
+      reconciliation: { publishedDate: '2026-07-11' }
+    }),
+    '2026-07-11'
+  )
+  assert.throws(
+    () => resolveArchiveDateForPublish({
+      publishDate: '2026-07-11',
+      reconciliation: { publishedDate: '2026-07-07' }
+    }),
+    /does not match publish date 2026-07-11; refusing to relabel rates/
+  )
 })
 
 test('buildArchiveManifest summarizes immutable archive coverage', () => {

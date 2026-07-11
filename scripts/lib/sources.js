@@ -5,7 +5,8 @@
 // with its much smaller ECB set.
 const PRIMARY_MIN_CURRENCIES = 100
 const SECONDARY_MIN_CURRENCIES = 20
-const FX_MAX_RATE_AGE_HOURS = 96
+const PRIMARY_MAX_RATE_AGE_HOURS = 0
+const SECONDARY_MAX_RATE_AGE_HOURS = 96
 const WARN_TOLERANCE = 0.005
 const LAGGED_SECONDARY_WARN_TOLERANCE = 0.02
 const REFUSE_TOLERANCE = 0.05
@@ -109,9 +110,32 @@ function snapshotAgeHours(sourceDate, publishDate) {
   return Math.round((publish - source) / (60 * 60 * 1000))
 }
 
-function isFresh(sourceDate, publishDate, maxAgeHours = FX_MAX_RATE_AGE_HOURS) {
+function isFreshWithin(sourceDate, publishDate, maxAgeHours) {
   const ageHours = snapshotAgeHours(sourceDate, publishDate)
   return ageHours !== null && ageHours >= 0 && ageHours <= maxAgeHours
+}
+
+function isPrimaryFresh(sourceDate, publishDate) {
+  return isFreshWithin(sourceDate, publishDate, PRIMARY_MAX_RATE_AGE_HOURS)
+}
+
+function isSecondaryFresh(sourceDate, publishDate) {
+  return isFreshWithin(sourceDate, publishDate, SECONDARY_MAX_RATE_AGE_HOURS)
+}
+
+function findMissingCurrencyCodes(candidateRates, trustedRates) {
+  const candidateCodes = new Set(
+    Object.entries(candidateRates || {})
+      .filter(([, rate]) => Number.isFinite(rate) && rate > 0)
+      .map(([code]) => code.toLowerCase())
+  )
+
+  return Object.entries(trustedRates || {})
+    .filter(([, rate]) => Number.isFinite(rate) && rate > 0)
+    .map(([code]) => code.toLowerCase())
+    .filter((code, index, codes) => codes.indexOf(code) === index)
+    .filter((code) => !candidateCodes.has(code))
+    .sort((left, right) => left.localeCompare(right))
 }
 
 function relativeDifference(left, right) {
@@ -134,13 +158,13 @@ function crossCheckPairs(primary, secondary) {
   return pairs.sort((left, right) => left.code.localeCompare(right.code))
 }
 
-function describeSource(snapshot, publishDate) {
+function describeSource(snapshot, publishDate, freshnessCheck) {
   const ageHours = snapshotAgeHours(snapshot.date, publishDate)
   return {
     source: snapshot.source,
     date: snapshot.date,
     currencyCount: Object.keys(snapshot.rates).length,
-    fresh: isFresh(snapshot.date, publishDate),
+    fresh: freshnessCheck(snapshot.date, publishDate),
     ageHours
   }
 }
@@ -158,16 +182,18 @@ function buildAgreement(primary, secondary) {
 }
 
 function buildReconciliation({ primary, secondary, publishDate }) {
-  const sources = [primary, secondary]
-    .filter(Boolean)
-    .map((snapshot) => describeSource(snapshot, publishDate))
-  const secondaryFresh = secondary && isFresh(secondary.date, publishDate)
+  const sources = []
+  if (primary) sources.push(describeSource(primary, publishDate, isPrimaryFresh))
+  if (secondary) sources.push(describeSource(secondary, publishDate, isSecondaryFresh))
+  const primaryFresh = primary && isPrimaryFresh(primary.date, publishDate)
+  const secondaryFresh = secondary && isSecondaryFresh(secondary.date, publishDate)
 
   return {
     rates: primary?.rates || null,
     reconciliation: {
       publishedSource: primary?.source || null,
-      stale: primary ? !isFresh(primary.date, publishDate) : false,
+      publishedDate: primary?.date || null,
+      stale: primary ? !primaryFresh : false,
       sources,
       agreement: primary && secondaryFresh ? buildAgreement(primary, secondary) : null
     }
@@ -201,7 +227,8 @@ function evaluateCrossSourceAgreement(agreement, {
 module.exports = {
   PRIMARY_MIN_CURRENCIES,
   SECONDARY_MIN_CURRENCIES,
-  FX_MAX_RATE_AGE_HOURS,
+  PRIMARY_MAX_RATE_AGE_HOURS,
+  SECONDARY_MAX_RATE_AGE_HOURS,
   WARN_TOLERANCE,
   LAGGED_SECONDARY_WARN_TOLERANCE,
   REFUSE_TOLERANCE,
@@ -215,7 +242,10 @@ module.exports = {
   fetchErApiSnapshot,
   fetchFrankfurterSnapshot,
   snapshotAgeHours,
-  isFresh,
+  isFreshWithin,
+  isPrimaryFresh,
+  isSecondaryFresh,
+  findMissingCurrencyCodes,
   relativeDifference,
   crossCheckPairs,
   buildReconciliation,

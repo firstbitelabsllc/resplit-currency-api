@@ -12,7 +12,8 @@ const {
   fetchErApiSnapshot,
   fetchFrankfurterSnapshot,
   buildReconciliation,
-  evaluateCrossSourceAgreement
+  evaluateCrossSourceAgreement,
+  findMissingCurrencyCodes
 } = require('./scripts/lib/sources')
 
 const indent = '\t'
@@ -37,38 +38,42 @@ async function main() {
   if (!latestRates || Object.keys(latestRates).length === 0) {
     throw new Error('Failed to fetch currency rates from source')
   }
+  const publicationDate = resolveArchiveDateForPublish({
+    publishDate: dateToday,
+    reconciliation
+  })
 
   console.log(
-    `Fetched ${Object.keys(latestRates).length} currencies for ${dateToday} (source=${reconciliation.publishedSource})`
+    `Fetched ${Object.keys(latestRates).length} currencies for ${publicationDate} (source=${reconciliation.publishedSource})`
   )
 
-  saveSnapshotToArchive(dateToday, latestRates)
+  saveSnapshotToArchive(publicationDate, latestRates)
   pruneSnapshotArchive({
     retentionDays: snapshotRetentionDays,
-    latestDate: dateToday
+    latestDate: publicationDate
   })
 
   const recentSnapshots = await buildSnapshotWindow({
-    todayDate: dateToday,
+    todayDate: publicationDate,
     latestRates,
     retentionDays: snapshotRetentionDays
   })
-  const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: dateToday })
-  const historyStartDate = dateDaysBeforeUTC(dateToday, historyDays - 1)
+  const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: publicationDate })
+  const historyStartDate = dateDaysBeforeUTC(publicationDate, historyDays - 1)
   const historySnapshots = recentSnapshots.filter((snapshot) => {
-    return snapshot.date >= historyStartDate && snapshot.date <= dateToday
+    return snapshot.date >= historyStartDate && snapshot.date <= publicationDate
   })
 
   if (historySnapshots.length < historyDays) {
     const error = new Error(
-      `History/30d calendar window incomplete: got ${historySnapshots.length}/${historyDays} snapshots for ${historyStartDate}..${dateToday}`
+      `History/30d calendar window incomplete: got ${historySnapshots.length}/${historyDays} snapshots for ${historyStartDate}..${publicationDate}`
     )
     await captureIssue({
       signal: 'history_window_shorter_than_30_days',
       error,
       context: {
         workflow: 'daily_publish',
-        latest_date: dateToday,
+        latest_date: publicationDate,
         history_start_date: historyStartDate,
         available_history_days: historySnapshots.length,
         required_history_days: historyDays
@@ -83,13 +88,13 @@ async function main() {
     build: (root) => {
       writeArtifacts({
         root,
-        dateToday,
+        dateToday: publicationDate,
         latestRates,
         archiveSnapshots,
         historySnapshots,
         reconciliation
       })
-      writeRootPackageMetadata({ root, dateToday })
+      writeRootPackageMetadata({ root, dateToday: publicationDate })
       fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(root, 'country.json'))
     }
   })
@@ -450,11 +455,35 @@ function loadSnapshotFromArchive(date) {
   const filePath = path.join(snapshotArchiveDir, `${date}.json`)
   try {
     const data = fs.readJsonSync(filePath)
-    if (data?.rates && typeof data.rates === 'object' && Object.keys(data.rates).length > 0) {
+    if (
+      data?.date === date &&
+      data?.rates &&
+      typeof data.rates === 'object' &&
+      Object.keys(data.rates).length > 0
+    ) {
       return data.rates
     }
   } catch (_) {}
   return null
+}
+
+function loadPriorTrustedSnapshotFromArchive({
+  publishDate,
+  listDates = listSnapshotArchiveDates,
+  loadSnapshot = loadSnapshotFromArchive
+} = {}) {
+  const priorDates = listDates()
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date) && date < publishDate)
+    .sort((left, right) => left.localeCompare(right))
+  const date = priorDates[priorDates.length - 1]
+  if (!date) return null
+
+  const rates = loadSnapshot(date)
+  if (!rates || Object.keys(rates).length === 0) {
+    throw new Error(`Latest prior trusted FX snapshot ${date} is missing or invalid`)
+  }
+
+  return { date, rates: toLowerSorted(rates) }
 }
 
 function loadAllSnapshotsFromArchive({ latestDate = null } = {}) {
@@ -542,6 +571,7 @@ async function fetchReconciledRates({
   fetchSecondary = fetchFrankfurterSnapshot,
   minimumIntersection = SECONDARY_MIN_CURRENCIES,
   loadArchiveSnapshot = loadSnapshotFromArchive,
+  loadPriorTrustedSnapshot = loadPriorTrustedSnapshotFromArchive,
   capture = captureIssue,
   warn = console.warn
 } = {}) {
@@ -588,6 +618,28 @@ async function fetchReconciledRates({
 
   if (reconciliation.stale) {
     throw new Error(`Primary FX source ${reconciliation.publishedSource} is stale; refusing publish`)
+  }
+
+  const priorTrustedSnapshot = await loadPriorTrustedSnapshot({ publishDate })
+  if (priorTrustedSnapshot) {
+    const missingCodes = findMissingCurrencyCodes(rates, priorTrustedSnapshot.rates)
+    if (missingCodes.length > 0) {
+      const error = new Error(
+        `Primary FX source ${reconciliation.publishedSource} missing ${missingCodes.length} trusted currencies vs ${priorTrustedSnapshot.date}: ${missingCodes.slice(0, 12).join(', ')}`
+      )
+      await capture({
+        signal: 'fx_currency_set_regression',
+        error,
+        context: {
+          workflow: 'daily_publish',
+          published_source: reconciliation.publishedSource,
+          prior_trusted_date: priorTrustedSnapshot.date,
+          missing_currency_count: missingCodes.length,
+          missing_currency_sample: missingCodes.slice(0, 12)
+        }
+      })
+      throw error
+    }
   }
 
   const secondaryState = reconciliation.sources.find((source) => source.source === 'frankfurter')
@@ -690,6 +742,16 @@ function resolvePublishDate({ env = process.env, now = new Date() } = {}) {
   return explicitDate
 }
 
+function resolveArchiveDateForPublish({ publishDate, reconciliation }) {
+  const sourceDate = reconciliation?.publishedDate
+  if (sourceDate !== publishDate) {
+    throw new Error(
+      `Primary FX source date ${sourceDate || 'missing'} does not match publish date ${publishDate}; refusing to relabel rates`
+    )
+  }
+  return sourceDate
+}
+
 function dateDaysBeforeUTC(anchorDate, daysBefore) {
   const date = new Date(`${anchorDate}T00:00:00Z`)
   date.setUTCDate(date.getUTCDate() - daysBefore)
@@ -787,10 +849,12 @@ module.exports = {
   fetchReconciledRates,
   loadAllSnapshotsFromArchive,
   loadArchiveRateFallback,
+  loadPriorTrustedSnapshotFromArchive,
   listSnapshotArchiveDates,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
   promoteBuildOutput,
+  resolveArchiveDateForPublish,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
