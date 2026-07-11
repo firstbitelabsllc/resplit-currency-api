@@ -26,7 +26,9 @@ const (
 var (
 	safeID            = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 	hexID             = regexp.MustCompile(`^[0-9a-fA-F]{16,64}$`)
+	correlationID     = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 	safeClientVersion = regexp.MustCompile(`^(?:[0-9]{1,4}(?:\.[0-9]{1,4}){1,3}(?:[ +()-][0-9A-Za-z.+()_-]{1,24})?|deploy-canary|ocr-lab-cron|unknown)$`)
+	grafanaLokiHost   = regexp.MustCompile(`^logs-prod-[0-9]{3}\.grafana\.net$`)
 
 	safeMessages = map[string]struct{}{
 		"[OCR_MONITORING] scan":                          {},
@@ -61,6 +63,7 @@ type Config struct {
 	HTTPClient          *http.Client
 	Timeout             time.Duration
 	Logger              *slog.Logger
+	AllowTestEndpoint   bool
 }
 
 func ConfigFromEnv() Config {
@@ -117,6 +120,10 @@ func NewHandler(cfg Config) (http.Handler, error) {
 		parsedURL.Path != "/loki/api/v1/push" {
 		return nil, errors.New("invalid Loki endpoint configuration")
 	}
+	if !grafanaLokiHost.MatchString(parsedURL.Hostname()) &&
+		!(cfg.AllowTestEndpoint && (parsedURL.Hostname() == "127.0.0.1" || parsedURL.Hostname() == "localhost")) {
+		return nil, errors.New("untrusted Loki endpoint configuration")
+	}
 	authorization, err := parseAuthorizationHeader(cfg.AuthorizationHeader)
 	if err != nil {
 		return nil, errors.New("invalid Loki authorization configuration")
@@ -125,6 +132,11 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	if client == nil {
 		client = &http.Client{}
 	}
+	clientCopy := *client
+	clientCopy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	client = &clientCopy
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
@@ -250,7 +262,7 @@ func (h *handler) push(w http.ResponseWriter, r *http.Request) {
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
+	if response.StatusCode != http.StatusNoContent {
 		h.logger.Warn("loki delivery rejected",
 			slog.String("message_id", envelope.Message.MessageID),
 			slog.Int("status", response.StatusCode))
@@ -303,7 +315,7 @@ func sanitizeEntry(entry cloudLogEntry, messageID string) (time.Time, map[string
 	}
 
 	for _, key := range []string{"request_id", "scan_id"} {
-		if value, ok := entry.JSONPayload[key].(string); ok && safeID.MatchString(value) {
+		if value, ok := entry.JSONPayload[key].(string); ok && correlationID.MatchString(value) {
 			line[key] = value
 		}
 	}

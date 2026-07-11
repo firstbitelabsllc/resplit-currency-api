@@ -1,7 +1,9 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
+const { spawnSync } = require('node:child_process')
 
 const repoRoot = path.join(__dirname, '..')
 
@@ -27,6 +29,10 @@ function assertForwarderSource({ handler, dockerfile }) {
 
   assert.match(handler, /StatusNoContent/)
   assert.match(handler, /StatusServiceUnavailable/)
+  assert.match(handler, /response\.StatusCode != http\.StatusNoContent/)
+  assert.match(handler, /CheckRedirect[\s\S]*http\.ErrUseLastResponse/)
+  assert.match(handler, /logs-prod-\[0-9\]\{3\}\\\.grafana\\\.net/)
+  assert.match(handler, /correlationID[\s\S]*\[0-9a-fA-F\]\{32\}/)
   assert.match(handler, /LOKI_AUTH_HEADER/)
   assert.match(handler, /Authorization=Basic%20/)
   assert.doesNotMatch(handler, /merchant|receipt(?:_text|_image)?|email|client_ip/i)
@@ -43,7 +49,7 @@ function assertForwarderSource({ handler, dockerfile }) {
   assert.doesNotMatch(dockerfile, /:latest/)
 }
 
-function assertDeployContract({ script, workflow }) {
+function assertDeployContract({ script, verifier, workflow }) {
   const exactFilter = [
     'resource.type="cloud_run_revision"',
     'resource.labels.service_name="ocr"',
@@ -86,7 +92,15 @@ function assertDeployContract({ script, workflow }) {
 
   assert.match(script, /\/pubsub\/push/)
   assert.match(script, /--disabled/)
-  assert.match(script, /enable.*ocr-loki-export|ocr-loki-export.*enable/s)
+  assert.match(script, /--no-traffic/)
+  assert.match(script, /--startup-probe=/)
+  assert.match(script, /--update-env-vars=/)
+  assert.doesNotMatch(script, /--set-env-vars=/)
+  assert.doesNotMatch(script, /--no-disabled|ENABLE_SINK|PROOF_REQUEST_ID/)
+  assert.ok(
+    script.indexOf('logging sinks describe') < script.indexOf('run deploy'),
+    'sink state and shape must be checked before any candidate deploy'
+  )
   assert.doesNotMatch(script, /logging sinks (?:update|delete) _(?:Default|Required)/)
   assert.doesNotMatch(script, /run deploy ocr(?:\s|["'])/)
   assert.doesNotMatch(script, /--allow-unauthenticated/)
@@ -111,6 +125,32 @@ function assertDeployContract({ script, workflow }) {
   ]) {
     assert.equal(occurrences(script, driftCheck), expectedCount, `missing exact drift check ${driftCheck}`)
   }
+
+  for (const required of [
+    'openssl rand -hex 16',
+    'pubsub subscriptions update',
+    'pubsub topics publish',
+    'query_range',
+    'wait_for_loki "$DIRECT_REQUEST_ID"',
+    'logging sinks update "$SINK" --project="$PROJECT" --no-disabled',
+    'logging write run.googleapis.com/stdout',
+    'wait_for_loki "$SINK_REQUEST_ID"',
+    '--to-revisions="${CANDIDATE_REVISION}=100"',
+    '--to-revisions="${PREVIOUS_REVISION}=100"',
+    'logging sinks update "$SINK" --project="$PROJECT" --disabled',
+  ]) {
+    assert.match(verifier, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.equal(occurrences(verifier, 'openssl rand -hex 16'), 2)
+  assert.doesNotMatch(verifier, /PROOF_REQUEST_ID/)
+  assert.ok(
+    verifier.indexOf('wait_for_loki "$DIRECT_REQUEST_ID"') < verifier.indexOf('logging sinks update "$SINK" --project="$PROJECT" --no-disabled'),
+    'candidate delivery proof must precede sink enablement'
+  )
+  assert.ok(
+    verifier.indexOf('logging write run.googleapis.com/stdout') < verifier.indexOf('wait_for_loki "$SINK_REQUEST_ID"'),
+    'Cloud Logging write must precede its exact Loki convergence proof'
+  )
 }
 
 test('OCR Loki export remains asynchronous, private, scoped, and loss-aware', () => {
@@ -118,6 +158,7 @@ test('OCR Loki export remains asynchronous, private, scoped, and loss-aware', ()
     handler: read('internal/ocrloki/handler.go'),
     dockerfile: read('infra/ocr-loki-forwarder/Dockerfile'),
     script: read('bootstrap/deploy-ocr-loki-forwarder.sh'),
+    verifier: read('bootstrap/verify-ocr-loki-export.sh'),
     workflow: read('.github/workflows/deploy-ocr-loki-forwarder.yml'),
   }
 
@@ -130,6 +171,7 @@ test('OCR Loki contract rejects sink, auth, durability, and coupling mutations',
     handler: read('internal/ocrloki/handler.go'),
     dockerfile: read('infra/ocr-loki-forwarder/Dockerfile'),
     script: read('bootstrap/deploy-ocr-loki-forwarder.sh'),
+    verifier: read('bootstrap/verify-ocr-loki-export.sh'),
     workflow: read('.github/workflows/deploy-ocr-loki-forwarder.yml'),
   }
 
@@ -143,10 +185,16 @@ test('OCR Loki contract rejects sink, auth, durability, and coupling mutations',
     { key: 'script', value: `${sources.script}\ngcloud logging sinks delete _Default\n` },
     { key: 'script', value: `${sources.script}\ngcloud run deploy ocr --image=bad\n` },
     { key: 'handler', value: sources.handler.replace('request_id', 'merchant') },
+    { key: 'handler', value: sources.handler.replace('response.StatusCode != http.StatusNoContent', 'response.StatusCode < 200 || response.StatusCode >= 300') },
+    { key: 'handler', value: sources.handler.replace('return http.ErrUseLastResponse', 'return nil') },
     { key: 'dockerfile', value: sources.dockerfile.replace(/@sha256:[0-9a-f]{64}/, ':latest') },
     { key: 'workflow', value: sources.workflow.replace('group: resplit-fx-production-deploy', 'group: deploy-${{ github.ref }}') },
     { key: 'workflow', value: sources.workflow.replace(' && inputs.activate', '') },
     { key: 'script', value: sources.script.replace('.deadLetterPolicy.maxDeliveryAttempts == 10', '.deadLetterPolicy.maxDeliveryAttempts >= 1') },
+    { key: 'script', value: sources.script.replace('--no-traffic', '--to-latest') },
+    { key: 'script', value: sources.script.replace('--update-env-vars=', '--set-env-vars=') },
+    { key: 'verifier', value: sources.verifier.replace('openssl rand -hex 16', '${PROOF_REQUEST_ID}') },
+    { key: 'verifier', value: sources.verifier.replace('logging write run.googleapis.com/stdout', 'echo skipped-cloud-logging-write') },
   ]
 
   for (const mutation of mutations) {
@@ -156,6 +204,63 @@ test('OCR Loki contract rejects sink, auth, durability, and coupling mutations',
       assertForwarderSource(candidate)
       assertDeployContract(candidate)
     })
+  }
+})
+
+test('an enabled sink fails closed before any cloud mutation or candidate deploy', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocr-loki-preflight-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const bin = path.join(root, 'bin')
+  const calls = path.join(root, 'gcloud-calls.txt')
+  fs.mkdirSync(bin)
+  fs.writeFileSync(path.join(bin, 'gcloud'), `#!/usr/bin/env node
+const fs = require('node:fs')
+const args = process.argv.slice(2)
+fs.appendFileSync(process.env.FAKE_CALLS, args.join(' ') + '\\n')
+if (args[0] === 'auth' && args[1] === 'print-access-token') process.stdout.write('fake-token')
+else if (args[0] === 'projects' && args[1] === 'describe') process.stdout.write('123456789')
+else if (args[0] === 'secrets' && args[1] === 'versions' && args[2] === 'list') process.stdout.write('7')
+else if (args[0] === 'logging' && args[1] === 'sinks' && args[2] === 'describe') {
+  if (args.includes('--format=json')) process.stdout.write(JSON.stringify({
+    destination: 'pubsub.googleapis.com/projects/test-project/topics/ocr-loki-logs',
+    filter: 'resource.type="cloud_run_revision"\\nresource.labels.service_name="ocr"\\nlog_id("run.googleapis.com/stdout")',
+    disabled: false,
+    writerIdentity: 'serviceAccount:sink-writer@test-project.iam.gserviceaccount.com',
+  }))
+} else process.exit(64)
+`, { mode: 0o755 })
+  fs.writeFileSync(path.join(bin, 'curl'), `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({mediaType:'application/vnd.oci.image.manifest.v1+json'}))
+`, { mode: 0o755 })
+
+  const digest = 'a'.repeat(64)
+  const result = spawnSync('bash', [path.join(repoRoot, 'bootstrap/deploy-ocr-loki-forwarder.sh')], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      FAKE_CALLS: calls,
+      GCLOUD: 'gcloud',
+      PROJECT: 'test-project',
+      REGION: 'us-central1',
+      REPO: 'resplit-fx',
+      IMAGE: `us-central1-docker.pkg.dev/test-project/resplit-fx/ocr-loki-forwarder@sha256:${digest}`,
+      ACTIVATE: '1',
+    },
+  })
+  assert.notEqual(result.status, 0, result.stdout + result.stderr)
+  assert.match(result.stderr, /disable ocr-loki-export before staging/)
+  const invocations = fs.readFileSync(calls, 'utf8')
+  for (const forbidden of [
+    'run deploy',
+    'logging sinks create',
+    'logging sinks update',
+    'iam service-accounts create',
+    'pubsub topics create',
+    'add-iam-policy-binding',
+  ]) {
+    assert.doesNotMatch(invocations, new RegExp(forbidden))
   }
 })
 

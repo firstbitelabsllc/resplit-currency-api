@@ -186,6 +186,8 @@ func TestSanitizeEntryRedactsUnreviewedValuesFromOtherwiseSafeRecords(t *testing
 	payload["reason"] = "person@example.com"
 	payload["provider"] = "person@example.com"
 	payload["client_version"] = "person@example.com"
+	payload["request_id"] = "Alice.Smith:5551234567"
+	payload["scan_id"] = "Alice.Smith:5551234567"
 
 	raw, err := json.Marshal(entryMap)
 	if err != nil {
@@ -202,7 +204,7 @@ func TestSanitizeEntryRedactsUnreviewedValuesFromOtherwiseSafeRecords(t *testing
 	if got := line["path"]; got != "unmatched" {
 		t.Fatalf("path = %#v, want low-cardinality unmatched marker", got)
 	}
-	for _, key := range []string{"method", "signal", "status", "attest", "reason", "provider", "client_version"} {
+	for _, key := range []string{"method", "signal", "status", "attest", "reason", "provider", "client_version", "request_id", "scan_id"} {
 		if _, ok := line[key]; ok {
 			t.Errorf("unreviewed %s value survived: %#v", key, line[key])
 		}
@@ -242,6 +244,49 @@ func TestPubSubPushReturns503UntilLokiAccepts(t *testing.T) {
 	defer mu.Unlock()
 	if calls != 1 {
 		t.Fatalf("Loki calls = %d, want 1", calls)
+	}
+}
+
+func TestPubSubPushRejectsRedirectAndNonLokiSuccessWithoutAcknowledging(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+	}{
+		{name: "redirect", status: http.StatusFound},
+		{name: "generic 200", status: http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			redirectTargetCalls := 0
+			loki := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/login" {
+					redirectTargetCalls++
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				if tc.status == http.StatusFound {
+					http.Redirect(w, r, "/login", http.StatusFound)
+					return
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer loki.Close()
+
+			h := mustHandler(t, Config{
+				LokiURL:             loki.URL + "/loki/api/v1/push",
+				AuthorizationHeader: "Authorization=Basic%20dXNlcjp0b2tlbg==",
+				HTTPClient:          loki.Client(),
+			})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/pubsub/push", pubSubBody(t, validLogEntry(time.Now().UTC()))))
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503 so Pub/Sub retains the message", rec.Code)
+			}
+			if redirectTargetCalls != 0 {
+				t.Fatalf("redirect target calls = %d, want 0", redirectTargetCalls)
+			}
+		})
 	}
 }
 
@@ -375,16 +420,23 @@ func TestNewHandlerRejectsInsecureURLAndMalformedSecretWithoutEcho(t *testing.T)
 			},
 		},
 		{
+			name: "untrusted HTTPS host",
+			cfg: Config{
+				LokiURL:             "https://evil.example/loki/api/v1/push",
+				AuthorizationHeader: "Authorization=Basic%20dXNlcjp0b2tlbg==",
+			},
+		},
+		{
 			name: "malformed authorization secret",
 			cfg: Config{
-				LokiURL:             "https://loki.example/loki/api/v1/push",
+				LokiURL:             "https://logs-prod-036.grafana.net/loki/api/v1/push",
 				AuthorizationHeader: "Authorization=Basic%20TOP-SECRET-NOT-BASE64",
 			},
 		},
 		{
 			name: "header injection",
 			cfg: Config{
-				LokiURL:             "https://loki.example/loki/api/v1/push",
+				LokiURL:             "https://logs-prod-036.grafana.net/loki/api/v1/push",
 				AuthorizationHeader: "Authorization=Basic%20dXNlcjp0b2tlbg==%0d%0aX-Leak:secret",
 			},
 		},
@@ -421,6 +473,7 @@ func TestAuthorizationParserPreservesPlusInBase64(t *testing.T) {
 
 func mustHandler(t *testing.T, cfg Config) http.Handler {
 	t.Helper()
+	cfg.AllowTestEndpoint = true
 	h, err := NewHandler(cfg)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)

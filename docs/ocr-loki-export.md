@@ -24,21 +24,35 @@ copying, or rotating its value. If Grafana rejects that credential for Loki,
 leave the sink disabled and provision a distinct `logs:write` credential rather
 than widening or exposing a token.
 
-The sink is created disabled. Before enabling it:
+The sink is created disabled. Updates are staged with a digest-derived traffic
+tag and `--no-traffic`; unknown environment variables are preserved. If an
+existing sink is enabled or drifted, staging stops before Cloud Run is touched.
 
-1. Publish a wrapped, PII-free Cloud Logging fixture to `ocr-loki-logs`.
-2. Query Loki for its exact message and request IDs.
-3. Force a downstream 503 and prove unacked backlog rises while Loki remains
+`bootstrap/verify-ocr-loki-export.sh` is the only promotion path. It generates
+fresh 32-hex proof IDs itself, temporarily points the push subscription at the
+tagged candidate, publishes a sanitized fixture, and requires that exact ID in
+Loki before promoting. With `ENABLE_SINK=1`, it then enables the sink, writes a
+second fixture through the real Cloud Logging API, and requires the second
+exact Loki result. Its failure trap disables the sink, restores the stable push
+endpoint, and restores the previous 100% revision. A typed proof string alone
+cannot enable export.
+
+Before running the verifier with `ENABLE_SINK=1`:
+
+1. Provide the reviewed immutable image digest and a read-capable Grafana token
+   through the local environment; do not print or persist either credential.
+2. Force a downstream 503 and prove unacked backlog rises while Loki remains
    empty, then restore delivery and prove the backlog drains.
-4. Prove a poison fixture reaches `ocr-loki-logs-dlq-inspect` after bounded
+3. Prove a poison fixture reaches `ocr-loki-logs-dlq-inspect` after bounded
    attempts.
-5. Send one real OCR request with the same 32-hex trace ID in `traceparent` and
+4. Send one real OCR request with the same 32-hex trace ID in `traceparent` and
    `X-Cloud-Trace-Context`; require the exact request/trace in Cloud Logging,
    Tempo, and Loki within 90 seconds.
-6. Confirm `_Default` and the `ocr` service shape are unchanged.
+5. Confirm `_Default` and the `ocr` service shape are unchanged.
 
-Only then rerun the script with `ENABLE_SINK=1` and the mechanically verified
-`PROOF_REQUEST_ID`. To stop export without losing the queue:
+The verifier performs the two positive convergence proofs and can enable the
+sink only in the same successful process. To stop export without losing the
+queue:
 
 ```sh
 gcloud logging sinks update ocr-loki-export \

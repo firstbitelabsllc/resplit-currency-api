@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       activate:
-        description: Create the separately billed private export resources
+        description: Create resources and stage a no-traffic candidate; never enable the sink
         required: true
         default: false
         type: boolean

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provisions the additive OCR stdout -> Pub/Sub -> synchronous Loki forwarder.
-# The sink starts disabled. ACTIVATE=1 authorizes resource creation; enabling
-# export is a separate PROOF_REQUEST_ID-gated step after a synthetic Loki read.
+# The sink starts and stays disabled. ACTIVATE=1 authorizes resource creation
+# and candidate staging only; verify-ocr-loki-export.sh owns proof/promotion.
 set -euo pipefail
 
 PROJECT="${PROJECT:-resplit-fx-prod}"
@@ -33,7 +33,7 @@ if [[ "$IMAGE" != "${EXPECTED_IMAGE_PREFIX}"* ]] || [[ ! "$DIGEST" =~ ^[0-9a-f]{
   echo ">> refusing non-canonical image; expected ${EXPECTED_IMAGE_PREFIX}<64-lowercase-hex>" >&2
   exit 2
 fi
-if [[ "$LOKI_URL" != https://logs-*.grafana.net/loki/api/v1/push ]]; then
+if [[ "$LOKI_URL" != https://logs-prod-[0-9][0-9][0-9].grafana.net/loki/api/v1/push ]]; then
   echo ">> refusing non-canonical Grafana Loki endpoint" >&2
   exit 2
 fi
@@ -65,6 +65,34 @@ if [[ ! "$SECRET_VERSION" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+EXPECTED_DESTINATION="pubsub.googleapis.com/projects/${PROJECT}/topics/${TOPIC}"
+SINK_EXISTS=0
+if "$GCLOUD" logging sinks describe "$SINK" --project="$PROJECT" >/dev/null 2>&1; then
+  SINK_EXISTS=1
+  SINK_JSON="$($GCLOUD logging sinks describe "$SINK" --project="$PROJECT" --format=json)"
+  if [[ "$(printf '%s' "$SINK_JSON" | jq -r .destination)" != "$EXPECTED_DESTINATION" ]] ||
+     [[ "$(printf '%s' "$SINK_JSON" | jq -r .filter)" != "$LOG_FILTER" ]]; then
+    echo ">> existing sink drifted; refusing to mutate runtime" >&2
+    exit 1
+  fi
+  if [[ "$(printf '%s' "$SINK_JSON" | jq -r .disabled)" != "true" ]]; then
+    echo ">> disable ${SINK} before staging a new forwarder; the queue is preserved" >&2
+    exit 1
+  fi
+fi
+
+SERVICE_EXISTS=0
+if "$GCLOUD" run services describe "$SERVICE" --project="$PROJECT" --region="$REGION" >/dev/null 2>&1; then
+  SERVICE_EXISTS=1
+  SERVICE_BEFORE_JSON="$($GCLOUD run services describe "$SERVICE" --project="$PROJECT" --region="$REGION" --format=json)"
+  PREVIOUS_REVISION="$(printf '%s' "$SERVICE_BEFORE_JSON" | jq -r \
+    '[.status.traffic[] | select((.percent // 0) == 100) | .revisionName] | if length == 1 then .[0] else "" end')"
+  if [[ -z "$PREVIOUS_REVISION" ]]; then
+    echo ">> forwarder traffic is not one reviewed 100% revision; refusing to stage" >&2
+    exit 1
+  fi
+fi
+
 ensure_service_account() {
   local name="$1"
   if ! "$GCLOUD" iam service-accounts describe "${name}@${PROJECT}.iam.gserviceaccount.com" \
@@ -91,19 +119,42 @@ ensure_topic "$DLQ_TOPIC" 14d
 "$GCLOUD" secrets add-iam-policy-binding "$LOKI_SECRET" --project="$PROJECT" \
   --member="serviceAccount:${RUNTIME_SA}" --role=roles/secretmanager.secretAccessor >/dev/null
 
+CANDIDATE_TAG="candidate-${DIGEST:0:12}"
+TRAFFIC_ARGS=(--tag="$CANDIDATE_TAG")
+if [[ "$SERVICE_EXISTS" == "1" ]]; then
+  TRAFFIC_ARGS=(--no-traffic --tag="$CANDIDATE_TAG")
+fi
+
 "$GCLOUD" run deploy "$SERVICE" --project="$PROJECT" --region="$REGION" \
   --image="$EXPECTED_RUNTIME_IMAGE" --service-account="$RUNTIME_SA" --port=8080 \
   --ingress=internal --no-allow-unauthenticated --concurrency=20 --timeout=30 \
   --cpu=1 --memory=256Mi --min-instances=0 --max-instances=3 \
-  --set-env-vars="LOKI_URL=${LOKI_URL}" \
-  --update-secrets="LOKI_AUTH_HEADER=${LOKI_SECRET}:${SECRET_VERSION}" --quiet
+  --startup-probe="httpGet.path=/health,initialDelaySeconds=0,timeoutSeconds=3,periodSeconds=3,failureThreshold=3" \
+  --update-env-vars="LOKI_URL=${LOKI_URL}" \
+  --update-secrets="LOKI_AUTH_HEADER=${LOKI_SECRET}:${SECRET_VERSION}" \
+  "${TRAFFIC_ARGS[@]}" --quiet
 
-SERVICE_URL="$($GCLOUD run services describe "$SERVICE" --project="$PROJECT" \
-  --region="$REGION" --format='value(status.url)')"
-DEPLOYED_IMAGE="$($GCLOUD run services describe "$SERVICE" --project="$PROJECT" \
-  --region="$REGION" --format='value(spec.template.spec.containers[0].image)')"
+SERVICE_JSON="$($GCLOUD run services describe "$SERVICE" --project="$PROJECT" --region="$REGION" --format=json)"
+SERVICE_URL="$(printf '%s' "$SERVICE_JSON" | jq -r .status.url)"
+CANDIDATE_REVISION="$(printf '%s' "$SERVICE_JSON" | jq -r --arg tag "$CANDIDATE_TAG" \
+  '[.status.traffic[] | select(.tag == $tag) | .revisionName] | if length == 1 then .[0] else "" end')"
+CANDIDATE_URL="$(printf '%s' "$SERVICE_JSON" | jq -r --arg tag "$CANDIDATE_TAG" \
+  '[.status.traffic[] | select(.tag == $tag) | .url] | if length == 1 then .[0] else "" end')"
+if [[ -z "$CANDIDATE_REVISION" ]] || [[ "$CANDIDATE_URL" != https://* ]]; then
+  echo ">> candidate tag readback failed; stable traffic was not promoted" >&2
+  exit 1
+fi
+DEPLOYED_IMAGE="$($GCLOUD run revisions describe "$CANDIDATE_REVISION" --project="$PROJECT" \
+  --region="$REGION" --format='value(spec.containers[0].image)')"
 if [[ "$DEPLOYED_IMAGE" != "$EXPECTED_RUNTIME_IMAGE" ]]; then
   echo ">> deployed forwarder image does not match the reviewed digest" >&2
+  exit 1
+fi
+if [[ "$SERVICE_EXISTS" == "1" ]] && printf '%s' "$SERVICE_JSON" | jq -e --arg revision "$CANDIDATE_REVISION" \
+  '.status.traffic[] | select(.revisionName == $revision and (.percent // 0) > 0)' >/dev/null; then
+  "$GCLOUD" run services update-traffic "$SERVICE" --project="$PROJECT" --region="$REGION" \
+    --to-revisions="${PREVIOUS_REVISION}=100" --quiet
+  echo ">> candidate unexpectedly received stable traffic; restored ${PREVIOUS_REVISION}" >&2
   exit 1
 fi
 
@@ -114,21 +165,19 @@ fi
   --member="serviceAccount:${PUBSUB_AGENT}" \
   --role=roles/iam.serviceAccountTokenCreator >/dev/null
 
-if ! "$GCLOUD" logging sinks describe "$SINK" --project="$PROJECT" >/dev/null 2>&1; then
+if [[ "$SINK_EXISTS" == "0" ]]; then
   "$GCLOUD" logging sinks create "$SINK" \
     "pubsub.googleapis.com/projects/${PROJECT}/topics/${TOPIC}" \
     --project="$PROJECT" --log-filter="$LOG_FILTER" --unique-writer-identity --disabled
 fi
 SINK_JSON="$($GCLOUD logging sinks describe "$SINK" --project="$PROJECT" --format=json)"
-EXPECTED_DESTINATION="pubsub.googleapis.com/projects/${PROJECT}/topics/${TOPIC}"
 if [[ "$(printf '%s' "$SINK_JSON" | jq -r .destination)" != "$EXPECTED_DESTINATION" ]] ||
    [[ "$(printf '%s' "$SINK_JSON" | jq -r .filter)" != "$LOG_FILTER" ]]; then
   echo ">> existing sink drifted; refusing to repair or broaden it automatically" >&2
   exit 1
 fi
-if [[ "${ENABLE_SINK:-0}" != "1" ]] &&
-   [[ "$(printf '%s' "$SINK_JSON" | jq -r .disabled)" != "true" ]]; then
-  echo ">> existing sink is enabled without this pass's exact proof gate" >&2
+if [[ "$(printf '%s' "$SINK_JSON" | jq -r .disabled)" != "true" ]]; then
+  echo ">> source staging must leave ${SINK} disabled" >&2
   exit 1
 fi
 SINK_WRITER="$(printf '%s' "$SINK_JSON" | jq -r .writerIdentity)"
@@ -188,15 +237,6 @@ fi
 "$GCLOUD" pubsub subscriptions add-iam-policy-binding "$SUBSCRIPTION" --project="$PROJECT" \
   --member="serviceAccount:${PUBSUB_AGENT}" --role=roles/pubsub.subscriber >/dev/null
 
-if [[ "${ENABLE_SINK:-0}" == "1" ]]; then
-  if [[ ! "${PROOF_REQUEST_ID:-}" =~ ^ocr-loki-proof-[A-Za-z0-9._:-]{8,96}$ ]]; then
-    echo ">> refusing to enable ocr-loki-export without an exact Loki proof request id" >&2
-    exit 2
-  fi
-  "$GCLOUD" logging sinks update "$SINK" --project="$PROJECT" --no-disabled
-  echo ">> enabled ocr-loki-export after proof ${PROOF_REQUEST_ID}"
-else
-  echo ">> forwarder topology ready; ${SINK} remains disabled pending synthetic Loki read proof"
-fi
-
+echo ">> staged ${CANDIDATE_REVISION} at ${CANDIDATE_URL}; stable traffic remains unchanged when a prior revision exists"
+echo ">> ${SINK} remains disabled; verify-ocr-loki-export.sh must prove and promote this exact digest"
 echo ">> rollback preserves the queue: gcloud logging sinks update ${SINK} --project=${PROJECT} --disabled"
