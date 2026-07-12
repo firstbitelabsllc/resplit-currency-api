@@ -76,6 +76,13 @@ known workflow date, or `ALLOW_STALE_DEPLOY_SMOKE=1` only for diagnostics when y
 need to inspect the latest deployed stale package. During publish-hole recovery it may warn through
 archive-only coverage gaps, but only when latest data and Worker quote resolution are current.
 
+The publish workflow pins `EXPECTED_DATE` and sets `POST_PUBLISH_SMOKE=1` after its deploy steps.
+In that mode only, the smoke check refetches Cloudflare latest, history, and metadata as one bundle
+while their dates are either the requested release or exactly the prior day. All three must converge
+on the requested release within at most 25 observations and one two-minute monotonic budget; polls
+are separated by up to five seconds and each request gets at most five seconds. Malformed, future,
+or older states are not retried, normal operator smoke remains strict, and exhaustion is a hard failure.
+
 When a release-history gap needs backfill, audit sources before writing any snapshot:
 
 ```bash
