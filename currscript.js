@@ -1,10 +1,23 @@
 const fs = require('fs-extra')
+const { execFileSync } = require('child_process')
 const os = require('os')
 const path = require('path')
 const {
   captureIssue,
   runMonitoredScript
 } = require('./scripts/sentry-monitoring')
+const {
+  ER_API_URL,
+  FRANKFURTER_URL,
+  PRIMARY_MIN_CURRENCIES,
+  SECONDARY_MIN_CURRENCIES,
+  BASE_SELF_RATE_EPSILON,
+  fetchErApiSnapshot,
+  fetchFrankfurterSnapshot,
+  buildReconciliation,
+  evaluateCrossSourceAgreement,
+  findMissingCurrencyCodes
+} = require('./scripts/lib/sources')
 
 const indent = '\t'
 const historyDays = 30
@@ -24,40 +37,46 @@ if (require.main === module) {
 
 async function main() {
   const dateToday = resolvePublishDate()
-  const latestRates = await fetchLatestRates({ publishDate: dateToday })
+  const { rates: latestRates, reconciliation } = await fetchReconciledRates({ publishDate: dateToday })
   if (!latestRates || Object.keys(latestRates).length === 0) {
     throw new Error('Failed to fetch currency rates from source')
   }
+  const publicationDate = resolveArchiveDateForPublish({
+    publishDate: dateToday,
+    reconciliation
+  })
 
-  console.log(`Fetched ${Object.keys(latestRates).length} currencies for ${dateToday}`)
+  console.log(
+    `Fetched ${Object.keys(latestRates).length} currencies for ${publicationDate} (source=${reconciliation.publishedSource})`
+  )
 
-  saveSnapshotToArchive(dateToday, latestRates)
+  saveSnapshotToArchive(publicationDate, latestRates)
   pruneSnapshotArchive({
     retentionDays: snapshotRetentionDays,
-    latestDate: dateToday
+    latestDate: publicationDate
   })
 
   const recentSnapshots = await buildSnapshotWindow({
-    todayDate: dateToday,
+    todayDate: publicationDate,
     latestRates,
     retentionDays: snapshotRetentionDays
   })
-  const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: dateToday })
-  const historyStartDate = dateDaysBeforeUTC(dateToday, historyDays - 1)
+  const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: publicationDate })
+  const historyStartDate = dateDaysBeforeUTC(publicationDate, historyDays - 1)
   const historySnapshots = recentSnapshots.filter((snapshot) => {
-    return snapshot.date >= historyStartDate && snapshot.date <= dateToday
+    return snapshot.date >= historyStartDate && snapshot.date <= publicationDate
   })
 
   if (historySnapshots.length < historyDays) {
     const error = new Error(
-      `History/30d calendar window incomplete: got ${historySnapshots.length}/${historyDays} snapshots for ${historyStartDate}..${dateToday}`
+      `History/30d calendar window incomplete: got ${historySnapshots.length}/${historyDays} snapshots for ${historyStartDate}..${publicationDate}`
     )
     await captureIssue({
       signal: 'history_window_shorter_than_30_days',
       error,
       context: {
         workflow: 'daily_publish',
-        latest_date: dateToday,
+        latest_date: publicationDate,
         history_start_date: historyStartDate,
         available_history_days: historySnapshots.length,
         required_history_days: historyDays
@@ -72,12 +91,13 @@ async function main() {
     build: (root) => {
       writeArtifacts({
         root,
-        dateToday,
+        dateToday: publicationDate,
         latestRates,
         archiveSnapshots,
-        historySnapshots
+        historySnapshots,
+        reconciliation
       })
-      writeRootPackageMetadata({ root, dateToday })
+      writeRootPackageMetadata({ root, dateToday: publicationDate })
       fs.copyFileSync(path.join(__dirname, 'country.json'), path.join(root, 'country.json'))
     }
   })
@@ -223,7 +243,8 @@ function writeArtifacts({
   dateToday,
   latestRates,
   archiveSnapshots,
-  historySnapshots
+  historySnapshots,
+  reconciliation = null
 }) {
   const latestDir = path.join(root, 'latest')
   const historyDir = path.join(root, 'history', '30d')
@@ -243,7 +264,18 @@ function writeArtifacts({
   const snapshotPayload = {
     date: dateToday,
     base: 'eur',
-    rates: latestRates
+    rates: latestRates,
+    // The full er-api table remains authoritative. Frankfurter contributes only
+    // provenance and an independent agreement tripwire.
+    ...(reconciliation
+      ? {
+        publishedSource: reconciliation.publishedSource,
+        stale: reconciliation.stale,
+        sources: reconciliation.sources,
+        agreement: reconciliation.agreement,
+        trustedCurrencyBaseline: reconciliation.trustedCurrencyBaseline
+      }
+      : {})
   }
   writeJsonFile(path.join(snapshotsDir, 'base-rates.json'), snapshotPayload, true)
   writeJsonFile(path.join(snapshotsDir, 'base-rates.min.json'), snapshotPayload)
@@ -266,7 +298,18 @@ function writeArtifacts({
     archiveMode: 'immutable',
     archiveEarliestDate: archiveManifest.earliestDate,
     archiveLatestDate: archiveManifest.latestDate,
-    archiveGapCount: archiveManifest.gapCount
+    archiveGapCount: archiveManifest.gapCount,
+    // Slim cross-source summary for downstream diagnostics.
+    sources: reconciliation ? reconciliation.sources.map((source) => source.source) : ['er-api'],
+    crossSource: reconciliation
+      ? {
+        publishedSource: reconciliation.publishedSource,
+        stale: reconciliation.stale,
+        intersectionCount: reconciliation.agreement ? reconciliation.agreement.intersectionCount : 0,
+        maxRelDiff: reconciliation.agreement ? reconciliation.agreement.maxRelDiff : 0,
+        secondaryLagged: reconciliation.agreement ? reconciliation.agreement.secondaryLagged : false
+      }
+      : null
   }
   writeJsonFile(path.join(root, 'meta.json'), metaPayload, true)
   writeJsonFile(path.join(root, 'meta.min.json'), metaPayload)
@@ -416,11 +459,159 @@ function loadSnapshotFromArchive(date) {
   const filePath = path.join(snapshotArchiveDir, `${date}.json`)
   try {
     const data = fs.readJsonSync(filePath)
-    if (data?.rates && typeof data.rates === 'object' && Object.keys(data.rates).length > 0) {
+    if (
+      data?.date === date &&
+      data?.base === 'eur' &&
+      data?.rates &&
+      typeof data.rates === 'object' &&
+      Object.keys(data.rates).length > 0
+    ) {
       return data.rates
     }
   } catch (_) {}
   return null
+}
+
+function normalizeTrustedSnapshotRates(rates, {
+  label,
+  minimumCurrencies = PRIMARY_MIN_CURRENCIES
+}) {
+  if (!rates || typeof rates !== 'object' || Array.isArray(rates)) {
+    throw new Error(`${label} has no rates object`)
+  }
+
+  const normalized = toLowerSorted(rates)
+  const rawCount = Object.keys(rates).length
+  const normalizedCount = Object.keys(normalized).length
+  if (normalizedCount !== rawCount) {
+    throw new Error(`${label} contains invalid or duplicate currency rates`)
+  }
+  if (normalizedCount < minimumCurrencies) {
+    throw new Error(`${label} expected at least ${minimumCurrencies} currencies, got ${normalizedCount}`)
+  }
+  if (
+    !Number.isFinite(normalized.eur) ||
+    Math.abs(normalized.eur - 1) > BASE_SELF_RATE_EPSILON
+  ) {
+    throw new Error(`${label} EUR self-rate must equal 1`)
+  }
+
+  return normalized
+}
+
+function loadPriorTrustedSnapshotFromArchive({
+  publishDate,
+  listDates = listSnapshotArchiveDates,
+  loadSnapshot = loadSnapshotFromArchive,
+  minimumCurrencies = PRIMARY_MIN_CURRENCIES
+} = {}) {
+  const priorDates = listDates()
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date) && date < publishDate)
+    .sort((left, right) => left.localeCompare(right))
+  const date = priorDates[priorDates.length - 1]
+  if (!date) return null
+
+  const rawRates = loadSnapshot(date)
+  if (!rawRates || Object.keys(rawRates).length === 0) {
+    throw new Error(`Latest prior trusted FX snapshot ${date} is missing or invalid`)
+  }
+
+  const rates = normalizeTrustedSnapshotRates(rawRates, {
+    label: `Latest prior trusted FX snapshot ${date}`,
+    minimumCurrencies
+  })
+  return { date, rates }
+}
+
+function readCommittedArchiveFileFromHead(date) {
+  const relativePath = `snapshot-archive/${date}.json`
+  try {
+    return execFileSync('git', ['show', `HEAD:${relativePath}`], {
+      cwd: __dirname,
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (error) {
+    const stderr = String(error?.stderr || '')
+    if (/does not exist in 'HEAD'|exists on disk, but not in 'HEAD'/.test(stderr)) {
+      return null
+    }
+    throw new Error(`Unable to read committed FX snapshot ${date}: ${stderr.trim() || error.message}`)
+  }
+}
+
+function loadSameDayCommittedSnapshotFromArchive({
+  publishDate,
+  readCommittedFile = readCommittedArchiveFileFromHead,
+  minimumCurrencies = PRIMARY_MIN_CURRENCIES
+} = {}) {
+  const raw = readCommittedFile(publishDate)
+  if (raw === null || raw === undefined) return null
+
+  let data
+  try {
+    data = typeof raw === 'string' ? JSON.parse(raw) : raw
+  } catch (error) {
+    throw new Error(`Committed same-day FX snapshot ${publishDate} is invalid JSON: ${error.message}`)
+  }
+
+  if (data?.date !== publishDate || data?.base !== 'eur') {
+    throw new Error(
+      `Committed same-day FX snapshot ${publishDate} has mismatched date or base`
+    )
+  }
+
+  const rates = normalizeTrustedSnapshotRates(data.rates, {
+    label: `Committed same-day FX snapshot ${publishDate}`,
+    minimumCurrencies
+  })
+  return { date: publishDate, rates }
+}
+
+function buildTrustedCurrencyBaseline({
+  publishDate,
+  priorSnapshot,
+  sameDayCommittedSnapshot,
+  minimumCurrencies = PRIMARY_MIN_CURRENCIES
+}) {
+  const sources = []
+
+  if (priorSnapshot) {
+    if (!(priorSnapshot.date < publishDate)) {
+      throw new Error(`Prior trusted FX snapshot ${priorSnapshot.date} is not before ${publishDate}`)
+    }
+    const rates = normalizeTrustedSnapshotRates(priorSnapshot.rates, {
+      label: `Prior trusted FX snapshot ${priorSnapshot.date}`,
+      minimumCurrencies
+    })
+    sources.push({
+      kind: 'latest_prior_archive',
+      date: priorSnapshot.date,
+      currencyCodes: Object.keys(rates).sort()
+    })
+  }
+
+  if (sameDayCommittedSnapshot) {
+    if (sameDayCommittedSnapshot.date !== publishDate) {
+      throw new Error(
+        `Committed same-day FX snapshot ${sameDayCommittedSnapshot.date} does not match ${publishDate}`
+      )
+    }
+    const rates = normalizeTrustedSnapshotRates(sameDayCommittedSnapshot.rates, {
+      label: `Committed same-day FX snapshot ${publishDate}`,
+      minimumCurrencies
+    })
+    sources.push({
+      kind: 'same_day_committed_archive',
+      date: publishDate,
+      currencyCodes: Object.keys(rates).sort()
+    })
+  }
+
+  const currencyCodes = [...new Set(sources.flatMap((source) => source.currencyCodes))]
+    .sort((left, right) => left.localeCompare(right))
+  return { sources, currencyCodes }
 }
 
 function loadAllSnapshotsFromArchive({ latestDate = null } = {}) {
@@ -457,51 +648,13 @@ function pruneSnapshotArchive({
   return prunedDates
 }
 
-async function fetchLatestRates({
-  publishDate = resolvePublishDate(),
-  env = process.env,
-  fetchJson = fetchJSON,
-  loadArchiveSnapshot = loadSnapshotFromArchive,
-  capture = captureIssue,
-  warn = console.warn
-} = {}) {
-  // Primary: open.er-api.com — free, ~160 fiat currencies, no API key.
-  const sourceUrl = 'https://open.er-api.com/v6/latest/EUR'
-  try {
-    const data = await fetchJson(sourceUrl, 30_000)
-    if (data?.result === 'success' && data.rates) {
-      return toLowerSorted(data.rates)
-    }
-    return loadArchiveRateFallback({
-      publishDate,
-      env,
-      loadArchiveSnapshot,
-      warn,
-      reason: new Error('upstream did not return successful rates')
-    })
-  } catch (error) {
-    await capture({
-      signal: 'upstream_fetch_failure',
-      error,
-      context: {
-        workflow: 'daily_publish',
-        source_url: sourceUrl
-      }
-    })
-
-    const fallbackRates = loadArchiveRateFallback({
-      publishDate,
-      env,
-      loadArchiveSnapshot,
-      warn,
-      reason: error
-    })
-    if (fallbackRates) {
-      return fallbackRates
-    }
-
-    throw error
-  }
+async function fetchLatestRates(options = {}) {
+  const { rates } = await fetchReconciledRates({
+    ...options,
+    // Compatibility wrapper for callers that only need the authoritative table.
+    fetchSecondary: async () => null
+  })
+  return rates
 }
 
 function loadArchiveRateFallback({
@@ -527,6 +680,170 @@ function loadArchiveRateFallback({
 
 function allowArchiveRateFallback({ env = process.env } = {}) {
   return /^(1|true|yes|on)$/i.test(String(env.CURRENCY_API_ALLOW_ARCHIVE_FALLBACK || ''))
+}
+
+/**
+ * Fetch the full EUR-base rate table and independently cross-check its major
+ * currencies. open.er-api.com remains authoritative for every published value;
+ * Frankfurter/ECB is a tripwire, never a partial-table replacement.
+ *
+ * Returns { rates, reconciliation }. `reconciliation` carries the source
+ * provenance + intersection agreement that gets emitted into snapshots/meta and
+ * enforced by scripts/validate-package.js.
+ */
+async function fetchReconciledRates({
+  publishDate = resolvePublishDate(),
+  env = process.env,
+  fetchJson = fetchJSON,
+  fetchPrimary = fetchErApiSnapshot,
+  fetchSecondary = fetchFrankfurterSnapshot,
+  minimumIntersection = SECONDARY_MIN_CURRENCIES,
+  loadArchiveSnapshot = loadSnapshotFromArchive,
+  loadPriorTrustedSnapshot = loadPriorTrustedSnapshotFromArchive,
+  loadSameDayCommittedSnapshot = loadSameDayCommittedSnapshotFromArchive,
+  capture = captureIssue,
+  warn = console.warn
+} = {}) {
+  // Capture both trusted archive boundaries before fetching or writing. The
+  // committed same-day snapshot is read from HEAD, not from the fallback
+  // candidate, so a later run cannot self-authorize a currency removal.
+  const priorTrustedSnapshot = await loadPriorTrustedSnapshot({ publishDate })
+  const sameDayCommittedSnapshot = await loadSameDayCommittedSnapshot({ publishDate })
+  const trustedCurrencyBaseline = buildTrustedCurrencyBaseline({
+    publishDate,
+    priorSnapshot: priorTrustedSnapshot,
+    sameDayCommittedSnapshot
+  })
+
+  // Primary: open.er-api.com, with the existing exact-date archive fallback.
+  let primary = null
+  let primaryError = null
+  try {
+    primary = await fetchPrimary({ fetchJson })
+  } catch (error) {
+    primaryError = error
+    await capture({
+      signal: 'upstream_fetch_failure',
+      error,
+      context: { workflow: 'daily_publish', source_url: ER_API_URL }
+    })
+    const fallbackRates = loadArchiveRateFallback({ publishDate, env, loadArchiveSnapshot, warn, reason: error })
+    if (fallbackRates) {
+      primary = { source: 'er-api-archive', date: publishDate, rates: fallbackRates }
+    }
+  }
+
+  // Secondary: Frankfurter/ECB, best-effort. Its absence removes the independent
+  // tripwire but never changes the authoritative full-table values.
+  let secondary = null
+  try {
+    secondary = await fetchSecondary({ fetchJson })
+  } catch (error) {
+    warn(`Frankfurter cross-check source unavailable: ${error.message}`)
+    await capture({
+      signal: 'fx_secondary_source_unavailable',
+      error,
+      context: { workflow: 'daily_publish', source_url: FRANKFURTER_URL }
+    })
+  }
+
+  const { rates, reconciliation } = buildReconciliation({ primary, secondary, publishDate })
+  reconciliation.trustedCurrencyBaseline = trustedCurrencyBaseline
+  if (!rates || Object.keys(rates).length === 0) {
+    throw new Error(
+      `Primary FX source unavailable and no exact-date archive fallback is enabled; refusing partial-currency publish${
+        primaryError?.message ? `: ${primaryError.message}` : ''
+      }`
+    )
+  }
+
+  if (reconciliation.stale) {
+    throw new Error(`Primary FX source ${reconciliation.publishedSource} is stale; refusing publish`)
+  }
+
+  const baselineRates = Object.fromEntries(
+    trustedCurrencyBaseline.currencyCodes.map((code) => [code, 1])
+  )
+  const missingCodes = findMissingCurrencyCodes(rates, baselineRates)
+  if (missingCodes.length > 0) {
+    const baselineDates = trustedCurrencyBaseline.sources.map((source) => source.date)
+    const error = new Error(
+      `Primary FX source ${reconciliation.publishedSource} missing ${missingCodes.length} trusted ${missingCodes.length === 1 ? 'currency' : 'currencies'} vs baseline ${baselineDates.join(' + ')}: ${missingCodes.slice(0, 12).join(', ')}`
+    )
+    await capture({
+      signal: 'fx_currency_set_regression',
+      error,
+      context: {
+        workflow: 'daily_publish',
+        published_source: reconciliation.publishedSource,
+        trusted_baseline_dates: baselineDates,
+        missing_currency_count: missingCodes.length,
+        missing_currency_sample: missingCodes.slice(0, 12)
+      }
+    })
+    throw error
+  }
+
+  const secondaryState = reconciliation.sources.find((source) => source.source === 'frankfurter')
+  if (secondaryState && !secondaryState.fresh) {
+    const error = new Error(
+      `Frankfurter cross-check source is stale (${secondaryState.date}, age=${secondaryState.ageHours}h)`
+    )
+    warn(error.message)
+    await capture({
+      signal: 'fx_secondary_source_stale',
+      error,
+      context: { workflow: 'daily_publish', source_url: FRANKFURTER_URL }
+    })
+  }
+
+  if (
+    reconciliation.agreement &&
+    reconciliation.agreement.intersectionCount < minimumIntersection
+  ) {
+    const error = new Error(
+      `Frankfurter cross-check intersection is incomplete (${reconciliation.agreement.intersectionCount}/${minimumIntersection})`
+    )
+    warn(error.message)
+    await capture({
+      signal: 'fx_secondary_source_incomplete_intersection',
+      error,
+      context: { workflow: 'daily_publish', source_url: FRANKFURTER_URL }
+    })
+    reconciliation.agreement = null
+  }
+
+  if (reconciliation.agreement) {
+    const { warns, refusals } = evaluateCrossSourceAgreement(reconciliation.agreement)
+    if (warns.length > 0) {
+      warn(
+        `cross-source: ${warns.length} intersection currency(ies) diverge beyond the warn band: ${warns
+          .slice(0, 8)
+          .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+          .join(', ')}`
+      )
+    }
+    if (refusals.length > 0) {
+      const error = new Error(
+        `cross-source disagreement >5% between er-api and Frankfurter: ${refusals.map((entry) => entry.code).join(', ')}`
+      )
+      await capture({
+        signal: 'fx_cross_source_disagreement',
+        error,
+        context: { workflow: 'daily_publish', refusals }
+      })
+      throw error
+    }
+  }
+
+  const summary = reconciliation.agreement
+    ? `intersection=${reconciliation.agreement.intersectionCount} maxDrift=${(reconciliation.agreement.maxRelDiff * 100).toFixed(3)}% secondaryLagged=${reconciliation.agreement.secondaryLagged}`
+    : 'single-source (no cross-check)'
+  console.log(
+    `Sources: published=${reconciliation.publishedSource} stale=${reconciliation.stale} ${summary}`
+  )
+
+  return { rates, reconciliation }
 }
 
 async function fetchJSON(url, timeoutMs) {
@@ -565,6 +882,16 @@ function resolvePublishDate({ env = process.env, now = new Date() } = {}) {
   }
 
   return explicitDate
+}
+
+function resolveArchiveDateForPublish({ publishDate, reconciliation }) {
+  const sourceDate = reconciliation?.publishedDate
+  if (sourceDate !== publishDate) {
+    throw new Error(
+      `Primary FX source date ${sourceDate || 'missing'} does not match publish date ${publishDate}; refusing to relabel rates`
+    )
+  }
+  return sourceDate
 }
 
 function dateDaysBeforeUTC(anchorDate, daysBefore) {
@@ -661,12 +988,17 @@ module.exports = {
   computeCrossRates,
   dateDaysBeforeUTC,
   fetchLatestRates,
+  fetchReconciledRates,
+  buildTrustedCurrencyBaseline,
   loadAllSnapshotsFromArchive,
   loadArchiveRateFallback,
+  loadPriorTrustedSnapshotFromArchive,
+  loadSameDayCommittedSnapshotFromArchive,
   listSnapshotArchiveDates,
   loadSnapshotFromArchive,
   pruneSnapshotArchive,
   promoteBuildOutput,
+  resolveArchiveDateForPublish,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,

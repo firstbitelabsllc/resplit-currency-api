@@ -2,9 +2,16 @@
 
 const fs = require('fs')
 const path = require('path')
+const { execFileSync } = require('child_process')
 const { runMonitoredScript } = require('./sentry-monitoring')
+const {
+  BASE_SELF_RATE_EPSILON,
+  evaluateCrossSourceAgreement,
+  findMissingCurrencyCodes
+} = require('./lib/sources')
 
-const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(__dirname, '..', 'package')
+const repoRoot = path.join(__dirname, '..')
+const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(repoRoot, 'package')
 const MIN_ARCHIVE_DAYS = 365
 const MAX_ARCHIVE_DAYS = 365
 const MAX_ARCHIVE_GAP_DAYS = 7
@@ -21,7 +28,9 @@ if (require.main === module) {
   })
 }
 
-function main() {
+function main({
+  loadCommittedSameDaySnapshot = loadCommittedSameDaySnapshotFromHead
+} = {}) {
   const currencies = readJSON('currencies.json')
   const meta = readJSON('meta.json')
   const snapshot = readJSON('snapshots/base-rates.json')
@@ -70,9 +79,26 @@ function main() {
   ensure(isIsoDate(snapshot.date), 'snapshot date is not ISO yyyy-mm-dd')
   ensure(snapshot.base === 'eur', `snapshot base expected "eur", got "${snapshot.base}"`)
   ensure(snapshot.rates && typeof snapshot.rates === 'object', 'snapshot rates missing')
+  ensure(
+    Number.isFinite(snapshot.rates.eur) && approximatelyEqual(snapshot.rates.eur, 1, BASE_SELF_RATE_EPSILON),
+    `snapshot EUR self-rate must equal 1, got ${snapshot.rates.eur}`
+  )
   ensure(Object.keys(snapshot.rates).length === codes.length, 'snapshot currency count mismatch')
 
   ensure(isIsoDate(meta.latestDate), 'meta latestDate invalid')
+  ensure(
+    snapshot.date === meta.latestDate,
+    `snapshot date must match meta latestDate, got ${snapshot.date} vs ${meta.latestDate}`
+  )
+  if (snapshot.publishedSource) {
+    const publishedSource = Array.isArray(snapshot.sources)
+      ? snapshot.sources.find((source) => source.source === snapshot.publishedSource)
+      : null
+    ensure(
+      publishedSource?.date === snapshot.date,
+      `published source date must match snapshot date, got ${publishedSource?.date || 'missing'} vs ${snapshot.date}`
+    )
+  }
   ensure(meta.historyDays === HISTORY_DAYS, `meta historyDays must be ${HISTORY_DAYS}, got ${meta.historyDays}`)
   ensure(meta.archiveMode === 'immutable', `meta archiveMode expected immutable, got ${meta.archiveMode}`)
   ensure(
@@ -109,8 +135,22 @@ function main() {
   // publish it. (Skips gracefully when there is no prior day to compare.)
   const priorSanityDates = archiveManifest.availableDates.filter((date) => date < meta.latestDate)
   const priorSanityDate = priorSanityDates.length ? priorSanityDates[priorSanityDates.length - 1] : null
+  const priorSnapshot = priorSanityDate ? readJSON(`archive/${priorSanityDate}.json`) : null
+  const sameDayCommittedSnapshot = loadCommittedSameDaySnapshot(snapshot.date)
+  validateTrustedCurrencyBaseline({
+    baseline: snapshot.trustedCurrencyBaseline,
+    candidateRates: snapshot.rates,
+    snapshotDate: snapshot.date,
+    priorSnapshot,
+    priorDate: priorSanityDate,
+    sameDayCommittedSnapshot
+  })
   if (priorSanityDate) {
-    const priorSnapshot = readJSON(`archive/${priorSanityDate}.json`)
+    const missingCodes = findMissingCurrencyCodes(snapshot.rates, priorSnapshot.rates)
+    ensure(
+      missingCodes.length === 0,
+      `currency-set continuity: snapshot missing ${missingCodes.length} trusted ${missingCodes.length === 1 ? 'currency' : 'currencies'} vs ${priorSanityDate}: ${missingCodes.slice(0, 12).join(', ')}`
+    )
     const { gross, warns } = computeRateSanity(snapshot.rates, priorSnapshot.rates)
     warnIf(
       warns.length > 0,
@@ -129,6 +169,26 @@ function main() {
   } else {
     warnIf(true, 'rate-sanity: no prior archived day before latestDate to compare — value gate skipped')
   }
+
+  // Defense in depth for generated artifacts: currscript refuses a gross
+  // disagreement before writing, and validation rejects any persisted snapshot
+  // carrying the same bad comparison. Legacy/backfill snapshots have no
+  // agreement metadata and remain valid.
+  const { warns: crossWarns, refusals: crossRefusals } = evaluateCrossSourceAgreement(snapshot.agreement)
+  warnIf(
+    crossWarns.length > 0,
+    `cross-source: ${crossWarns.length} intersection currency(ies) diverge beyond the warn band: ${crossWarns
+      .slice(0, 8)
+      .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+      .join(', ')}`
+  )
+  ensure(
+    crossRefusals.length === 0,
+    `cross-source: ${crossRefusals.length} intersection currency(ies) disagree >5% between er-api and Frankfurter — likely a bad upstream rate, refusing to publish: ${crossRefusals
+      .slice(0, 8)
+      .map((entry) => `${entry.code} ${(entry.relDiff * 100).toFixed(2)}%`)
+      .join(', ')}`
+  )
 
   // Minified files must parse too.
   ensure(isIsoDate(archiveManifest.earliestDate), 'archive earliestDate invalid')
@@ -189,6 +249,163 @@ function main() {
   console.log(
     `validate-package: OK (${codes.length} currencies, history points=${historyFrom.points.length}, sample=${fromCode}->${toCode}, strictHistory=${STRICT_HISTORY_COVERAGE ? 'on' : 'off'})`
   )
+}
+
+function validateTrustedCurrencyBaseline({
+  baseline,
+  candidateRates,
+  snapshotDate,
+  priorSnapshot,
+  priorDate,
+  sameDayCommittedSnapshot
+}) {
+  ensure(
+    baseline && typeof baseline === 'object' && !Array.isArray(baseline),
+    'trusted currency baseline metadata missing'
+  )
+  ensure(Array.isArray(baseline.sources), 'trusted currency baseline sources missing')
+  ensure(Array.isArray(baseline.currencyCodes), 'trusted currency baseline codes missing')
+
+  const allowedKinds = new Set(['latest_prior_archive', 'same_day_committed_archive'])
+  const seenKinds = new Set()
+  const sourceCodes = []
+  for (const source of baseline.sources) {
+    ensure(allowedKinds.has(source?.kind), `trusted currency baseline source kind invalid: ${source?.kind}`)
+    ensure(!seenKinds.has(source.kind), `trusted currency baseline source duplicated: ${source.kind}`)
+    seenKinds.add(source.kind)
+    ensure(isIsoDate(source.date), `trusted currency baseline source date invalid: ${source.date}`)
+    const normalizedCodes = normalizeCurrencyCodeList(source.currencyCodes)
+    ensure(
+      normalizedCodes !== null && arraysEqual(source.currencyCodes, normalizedCodes),
+      `trusted currency baseline ${source.kind} codes must be sorted, unique lowercase strings`
+    )
+    sourceCodes.push(...normalizedCodes)
+  }
+
+  const normalizedBaselineCodes = normalizeCurrencyCodeList(baseline.currencyCodes)
+  ensure(
+    normalizedBaselineCodes !== null && arraysEqual(baseline.currencyCodes, normalizedBaselineCodes),
+    'trusted currency baseline codes must be sorted, unique lowercase strings'
+  )
+  const expectedUnion = [...new Set(sourceCodes)].sort((left, right) => left.localeCompare(right))
+  ensure(
+    arraysEqual(normalizedBaselineCodes, expectedUnion),
+    'trusted currency baseline codes must equal the union of its source codes'
+  )
+
+  const priorSource = baseline.sources.find((source) => source.kind === 'latest_prior_archive')
+  if (priorDate) {
+    ensure(
+      priorSource?.date === priorDate,
+      `trusted currency baseline must identify latest prior archive ${priorDate}`
+    )
+    const priorCodes = Object.keys(priorSnapshot?.rates || {})
+      .map((code) => code.toLowerCase())
+      .sort((left, right) => left.localeCompare(right))
+    ensure(
+      arraysEqual(priorSource.currencyCodes, priorCodes),
+      `trusted currency baseline metadata must contain all latest prior archive codes from ${priorDate}`
+    )
+  } else {
+    ensure(!priorSource, 'trusted currency baseline names a prior archive when none exists')
+  }
+
+  const sameDaySource = baseline.sources.find(
+    (source) => source.kind === 'same_day_committed_archive'
+  )
+  if (sameDayCommittedSnapshot) {
+    ensure(
+      sameDaySource?.date === snapshotDate,
+      `trusted currency baseline must identify committed same-day archive ${snapshotDate}`
+    )
+    const sameDayCodes = Object.keys(sameDayCommittedSnapshot.rates)
+      .map((code) => code.toLowerCase())
+      .sort((left, right) => left.localeCompare(right))
+    ensure(
+      arraysEqual(sameDaySource.currencyCodes, sameDayCodes),
+      `trusted currency baseline metadata must exactly match committed same-day archive codes from ${snapshotDate}`
+    )
+  } else {
+    ensure(
+      !sameDaySource,
+      `trusted currency baseline names a committed same-day archive when none exists in HEAD for ${snapshotDate}`
+    )
+  }
+  if (sameDaySource) {
+    ensure(
+      sameDaySource.date === snapshotDate,
+      `trusted same-day baseline date must match snapshot date ${snapshotDate}`
+    )
+  }
+
+  const baselineRates = Object.fromEntries(normalizedBaselineCodes.map((code) => [code, 1]))
+  const missingCodes = findMissingCurrencyCodes(candidateRates, baselineRates)
+  ensure(
+    missingCodes.length === 0,
+    `trusted currency baseline: candidate missing ${missingCodes.length} pre-write trusted ${missingCodes.length === 1 ? 'currency' : 'currencies'}: ${missingCodes.slice(0, 12).join(', ')}`
+  )
+}
+
+function loadCommittedSameDaySnapshotFromHead(date, {
+  execFile = execFileSync,
+  cwd = repoRoot
+} = {}) {
+  const relativePath = `snapshot-archive/${date}.json`
+  let raw
+  try {
+    raw = execFile('git', ['show', `HEAD:${relativePath}`], {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 4 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+  } catch (error) {
+    const stderr = String(error?.stderr || '')
+    if (/does not exist in 'HEAD'|exists on disk, but not in 'HEAD'/.test(stderr)) {
+      return null
+    }
+    throw new Error(
+      `Unable to read committed FX snapshot ${date} for package validation: ${stderr.trim() || error.message}`
+    )
+  }
+
+  let snapshot
+  try {
+    snapshot = JSON.parse(raw)
+  } catch (error) {
+    throw new Error(`Committed same-day FX snapshot ${date} is invalid JSON: ${error.message}`)
+  }
+
+  ensure(
+    snapshot?.date === date && snapshot?.base === 'eur',
+    `Committed same-day FX snapshot ${date} has mismatched date or base`
+  )
+  ensure(
+    snapshot.rates && typeof snapshot.rates === 'object' && !Array.isArray(snapshot.rates),
+    `Committed same-day FX snapshot ${date} has no rates object`
+  )
+  const codes = Object.keys(snapshot.rates)
+  ensure(codes.length >= 100, `Committed same-day FX snapshot ${date} has only ${codes.length} currencies`)
+  ensure(
+    codes.every((code) =>
+      code === code.toLowerCase() && Number.isFinite(snapshot.rates[code]) && snapshot.rates[code] > 0
+    ),
+    `Committed same-day FX snapshot ${date} contains invalid currency rates`
+  )
+  ensure(
+    Number.isFinite(snapshot.rates.eur) &&
+      approximatelyEqual(snapshot.rates.eur, 1, BASE_SELF_RATE_EPSILON),
+    `Committed same-day FX snapshot ${date} EUR self-rate must equal 1`
+  )
+  return snapshot
+}
+
+function normalizeCurrencyCodeList(codes) {
+  if (!Array.isArray(codes)) return null
+  if (codes.some((code) => typeof code !== 'string' || code.length === 0)) return null
+  const normalized = codes.map((code) => code.toLowerCase())
+  if (new Set(normalized).size !== normalized.length) return null
+  return normalized.sort((left, right) => left.localeCompare(right))
 }
 
 function validateHistoryCoverage({ dates, latestDate, strict }) {
@@ -322,5 +539,7 @@ function computeRateSanity(todayRates, priorRates, { maxRatio = 2.0, warnRatio =
 
 module.exports = {
   main,
-  computeRateSanity
+  computeRateSanity,
+  loadCommittedSameDaySnapshotFromHead,
+  validateTrustedCurrencyBaseline
 }

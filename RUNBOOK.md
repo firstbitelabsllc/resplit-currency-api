@@ -155,7 +155,7 @@ gh run view <RUN_ID> --repo firstbitelabsllc/resplit-currency-api --log-failed
 **Common causes**:
 | Cause | Fix |
 |-------|-----|
-| `open.er-api.com` is down | Pipeline auto-retries once. If still failing, wait and re-trigger manually. Consider adding a backup source (see "Upstream data source dies" below). |
+| `open.er-api.com` is down | The pipeline refuses a partial-currency replacement; the last good deployed artifacts remain live. Retry once, then use the exact-date archive fallback only when that snapshot is already trusted. |
 | `npm ci` fails | Check `package-lock.json` integrity, run `npm ci` locally to reproduce. |
 | Cloudflare deploy fails | Check `CLOUDFLARE_API_TOKEN` hasn't expired/been revoked. Verify at dash.cloudflare.com/profile/api-tokens. |
 | GitHub Pages deploy fails | Check repo settings — Pages must be enabled, source set to `gh-pages` branch. |
@@ -295,14 +295,51 @@ evidence. Do not treat the object as a permanent billing ledger.
    ```
 4. Re-trigger the workflow.
 
-### 6. Upstream data source dies permanently
+### 6. Upstream data source dies or disagrees
 
-**Symptoms**: `open.er-api.com` returns errors for multiple days.
+**Symptoms**: `open.er-api.com` errors, reports an old update date, or differs materially
+from the independent Frankfurter/ECB cross-check.
 
-**Options** (in order of effort):
-1. **Swap source in `currscript.js`** — replace the fetch URL with another free API (e.g., `exchangerate-api.com`, `currencyapi.com`). Same JSON output format, no iOS changes needed.
-2. **Add a paid source** — sign up for a paid API, add the key as a GitHub secret, update the fetch function.
-3. **Fall back to fawazahmed0 CDN** — the original upstream still publishes daily. Change iOS URLs back temporarily.
+The publisher keeps one full-table authority: `open.er-api.com` (~160 currencies).
+Frankfurter/ECB (~30 majors) is an independent tripwire and never replaces the full table.
+This prevents a provider outage from silently dropping the long-tail currencies used by
+existing receipts.
+
+Automatic behavior:
+1. The er-api primary date must exactly equal the UTC publish date, including weekends. A
+   prior-day response is never relabeled as today. The `00:00` run can fail closed while
+   er-api rolls its daily table; the scheduled `03:00` run provides the later retry.
+2. A trusted exact-date archive snapshot may replace a failed primary only when
+   `CURRENCY_API_ALLOW_ARCHIVE_FALLBACK` is explicitly enabled. Its internal source date
+   must match the requested publish date.
+3. Before fetching or writing, the publisher builds a trusted currency baseline from the
+   union of the latest valid archive strictly before the publish date and any same-day
+   snapshot already committed in `HEAD`. The live primary and exact-date fallback must
+   contain that union. This means a `00:00` addition cannot disappear in the `03:00` pass,
+   and fallback rates cannot authorize themselves by being compared to the same reduced
+   file. Additions are allowed; removals fail until an explicit code-reviewed retirement
+   changes this contract.
+4. Without that exact-date fallback, primary failure, date mismatch, or currency removal
+   refuses publication; the last good deployed CDN and Worker artifacts continue serving.
+5. Frankfurter/ECB has a separate 96-hour lag budget for weekends and upstream calendar
+   timing. Its failure or staleness emits a warning/Sentry signal but does not alter the
+   authoritative rates.
+6. When both live sources are healthy, the shared major-currency intersection is compared.
+   Drift above 0.5% warns (2% when ECB's dated snapshot lags); drift above 5% refuses the
+   publish before a new snapshot is written. Package validation enforces the same artifact
+   contract again.
+
+Generated `snapshots/base-rates.json` records the pre-write baseline source dates and code
+sets. Package validation requires the candidate to contain their union and independently
+checks that the receipt includes every code from the latest prior archive. It also rereads
+`HEAD:snapshot-archive/<publish-date>.json`: same-day metadata must exist if and only if that
+committed file exists, and its code set must match exactly. Any other Git/read/JSON/date/base/
+rate failure refuses publication. The separate day-over-day value-sanity comparison remains
+anchored only to the strictly prior snapshot.
+
+If the primary is permanently unavailable, add and prove a full-coverage replacement in
+[`scripts/lib/sources.js`](scripts/lib/sources.js). Do not promote a majors-only source or
+fabricate missing tail rates.
 
 ### 7. Cloudflare Pages warns about `pages_build_output_dir`
 

@@ -1,5 +1,56 @@
 # Resplit Nurse Log
 
+## 2026-07-11 20:13 EDT / 2026-07-12 00:13 UTC
+
+- `GO/source-proven-draft-open`, `NO-GO/merge-and-deploy-pending` for PR `#79`; production was read only.
+- Review repair: package validation no longer trusts the generated same-day receipt by itself. It independently reads `HEAD:snapshot-archive/<publish-date>.json`, validates the committed JSON/date/base/EUR/count/rates, requires exact metadata presence and code-set equality, and then enforces candidate containment. Only a proven missing path means no same-day baseline; unrelated Git failures fail closed.
+- Regression proof: date-independent adversaries cover omitted/tampered metadata, a committed code omitted from both candidate and receipt, true absence, unrelated Git failure, corrupt/invalid committed snapshots, an allowed `03:00` value refresh with a code superset, and historical backfill ignoring future archives while retaining an existing target-date no-shrink floor.
+- Fresh proof: focused publisher/package tests `70/70`; pinned-date `PUBLISH_DATE=2026-07-11 npm run check` passed Node `484/484` and Worker `13/13` before the two positive-only focused cases were added; Wrangler `4.110.0` root dry-run bundled; read-only production smoke passed for `2026-07-11` with 30 history points; `git diff --check` clean.
+- Separate wall-clock truth: unpinned `npm run check` at `00:10 UTC` refused the still-`2026-07-11` er-api table as stale, which is the intended exact-date fail-closed behavior during the new UTC publish window, not a branch regression.
+- Exact next slice: settle PR review/checks, merge through the owning lane, then run the existing one-shot publish workflow and prove source SHA, workflow result, and live Worker/CDN dates separately.
+
+## 2026-07-11 19:51 EDT / 2026-07-11 23:51 UTC
+
+- `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for draft PR `#79`; no workflow dispatch, merge, deploy, secret write, or production mutation occurred.
+- Review repair: continuity now uses the union of the latest valid archive strictly before the publish date and any valid same-day snapshot already committed in `HEAD`. A midnight currency addition therefore remains mandatory for the `03:00` run, while the exact-date worktree fallback cannot authorize its own reduced set. Invalid committed same-day data fails before provider fetch or artifact mutation.
+- Package receipt: generated snapshot metadata records each trusted baseline source date and exact code set plus their union. Validation requires candidate containment, verifies the latest-prior metadata against the actual packaged archive, and retains the existing strictly-prior value-sanity comparison.
+- Fresh proof:
+  - Focused publisher/package regression suite -> `74/74`, including the explicit `00:00` 166-to-167 addition followed by a reduced `03:00` primary, reduced exact-date fallback refusal, invalid same-day fail-closed behavior, and metadata tamper refusal.
+  - `npm run check` -> live generation accepted `166` same-day er-api currencies and a `30`-currency independent intersection (`0.336%` maximum drift, Frankfurter one day behind); strict package validation passed; Node suite `477/477`; Worker suite `13/13`.
+  - Wrangler `4.110.0` root dry-run -> bundle OK with canonical bindings; `npm run smoke:deploy` -> `OK (date=2026-07-11, historyPoints=30)` against the existing deployment; `git diff --check` -> clean.
+- Current boundary: production remains untouched on release `094801ebe8c77862f16ecf8d9492920564c09d3c`, which predates this draft branch. Exact next slice is PR review/check settlement and normal merge/deploy routing by the owning release lane.
+
+## 2026-07-11 19:35 EDT / 2026-07-11 23:35 UTC
+
+- `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for draft PR `#79`; no workflow dispatch, merge, deploy, secret write, or production mutation occurred.
+- Money-law repair: er-api now must carry the exact UTC publish date, including weekends; the separately lag-tolerant Frankfurter/ECB tripwire keeps its 96-hour budget. The publisher selects the latest trusted archive strictly before the publish date and refuses any live-primary or exact-date-fallback currency removal while allowing additions. Archive reads verify their internal source date, publication refuses date relabeling, and package validation repeats both source-date and prior-set containment gates.
+- Fresh proof:
+  - Adversarial focused suite -> `67/67`, including 100-vs-166 live and fallback refusal, strictly-prior archive selection, corrupt/date-mismatched archive refusal, weekend same-day primary behavior, lagged ECB acceptance, addition allowance, no-relabeling, and artifact-level prior-set containment.
+  - `npm run check` -> live generation accepted `166` same-day er-api currencies and a `30`-currency independent intersection (`0.336%` maximum drift, Frankfurter one day behind); strict package validation passed; Node suite `470/470`; Worker suite `13/13`.
+  - Wrangler `4.110.0` root dry-run -> bundle OK with canonical bindings; `npm run smoke:deploy` -> `OK (date=2026-07-11, historyPoints=30)` against the existing deployment.
+- Runbook contract: the midnight run may fail closed while er-api rolls its daily table; the scheduled `03:00` run is the later retry. A prior-day primary is never published as today, and a currency retirement requires an explicit reviewed code change.
+- Current boundary: production remains untouched and still predates this draft branch. Exact next slice is PR review/check settlement and normal merge/deploy routing by the owning release lane.
+
+## 2026-07-11 18:56 EDT / 2026-07-11 22:56 UTC
+
+- `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for the stale FX PR reconciliation in draft PR `#79`, branched from `origin/main` `00056a5942dfafa6da090464cd240b68b68a9fe1`; no workflow dispatch, deploy, secret write, or production mutation occurred.
+- Recovered delta: the daily publisher keeps the full er-api table authoritative and cross-checks its major-currency intersection against Frankfurter/ECB. Invalid/partial/future/stale primary data, a missing or non-unit EUR self-rate, and >5% cross-source disagreements fail before snapshot mutation; the explicit exact-date archive fallback remains available. Frankfurter failure only removes the tripwire, and Frankfurter can never replace the full table with its majors-only set. Generated artifacts carry bounded source/agreement metadata, and package validation rechecks both the EUR-base invariant and persisted disagreement evidence.
+- Fresh proof:
+  - `npm run check` -> live generation saw `166` authoritative currencies and a `30`-currency independent intersection (`0.336%` maximum drift, Frankfurter dated one day behind); strict package validation passed; Node suite `461/461`; Worker suite `13/13`.
+  - Focused reconciliation and artifact-gate suite -> `58/58`; includes missing/non-unit EUR self-rate refusal at both source and artifact layers, partial-secondary refusal, exact-date fallback preservation, stale/future source refusal, unavailable or undersized-tripwire behavior, and persisted >5% disagreement refusal.
+  - `npm run smoke:deploy` -> `OK (date=2026-07-11, historyPoints=30)` against the existing deployment.
+  - Read-only live proof -> Worker and web mirror exact USD/EUR quote parity for `2026-07-11`; both history routes returned the same eight points; Worker coverage reported `mismatchCount=0`, empty `signals`, and zero freshness lag.
+- Stale PR classification:
+  - `#39` is superseded by merged `#37` (`b205774d`); current main already owns the cron trigger and scheduled handler. Close as duplicate.
+  - `#40` contains the still-real single-source correctness gap, but its majors-only fallback contradicts the current `>=100` currency release gate. This branch is the fail-closed replacement; retire `#40` after the replacement PR is linked.
+  - `#41` is salvage-only: its dashboard queries `fx_fallback_served_total`, which neither that branch nor current main emits. Split emitted pipeline metrics from dashboard cleanup before revalidation.
+  - `#42` is stacked on `#41`, inherits the non-emitted metric, and needs Grafana credentials for live provisioning/notification proof. Rebase only after the metric contract exists.
+  - `#43` is salvage/rewrite-only: current main still retains `internal/fx` and `cmd/fx-publish`, so its Cloudflare/JS-canonical ADR direction remains useful. Do not merge unchanged because it claims exact Go quorum semantics were ported (the safe replacement deliberately omits the majors-only fallback/quorum path) and its Wrangler entrypoint receipt names `worker/src/index.mjs` instead of current `worker/src/worker-entry.mjs`.
+- Current boundary: production `/health` remains release `094801ebe8c77862f16ecf8d9492920564c09d3c`, which predates source main and this branch. Local deploy credentials are incomplete, so no deploy claim is available.
+- Exact next slice: let draft PR `#79` checks/review settle, retire `#39/#40`, rewrite the useful ADR slice from `#43` against current architecture, then recover `#41` as a current emitted-metrics slice before revisiting credential-gated `#42`.
+
+<promise>KEEP-GOING: review replacement PR, retire superseded drafts, recover emitted metrics</promise>
+
 ## 2026-07-11 07:33 EDT / 2026-07-11 11:33 UTC
 
 - `GO/branch-proven`, `NO-GO/source-runtime-activation-pending` for global OCR provider accounting on branch `codex/ocr-atomic-accounting-20260711`, rebased onto compatibility source `e88b4fb05a817ef7706a9887aca064039576eb1c`; root and named production config remain exactly `OCR_ACCOUNTING_MODE=legacy`, compatibility shadow remains `false`, and no workflow dispatch, secret write, or deployment happened.
