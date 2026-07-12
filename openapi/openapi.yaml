@@ -4,17 +4,16 @@ info:
   version: 2.0.0
   summary: FX rates, App Attest-gated OCR, and photo sideload for Resplit.
   description: |
-    GCP/Go rewrite contract. This document is the **source of truth** for the
-    static-first FX read path plus the two blast-radius-isolated Cloud Run
-    services (OCR, sideload). Handlers and the iOS client are reconciled against
-    this file.
+    Public contract for the static-first FX read path, the canonical Cloudflare
+    Worker OCR surface, and the blast-radius-isolated sideload service. Handlers
+    and the iOS client are reconciled against this file.
 
     Topology:
       - `/quote` `/history` `/coverage` — thin reads over precomputed static JSON
         (GCS + Cloud CDN). No secrets, no device state. Client divides for
         cross-rates.
-      - `/ocr/*` — dedicated Cloud Run service; only secret-holder (Azure DI key
-        in Secret Manager). App Attest gate, Firestore state, budget kill-switch.
+      - `/ocr/*` — App Attest-gated Cloudflare Worker routes backed by Azure
+        Document Intelligence and, for multi-engine routes, Anthropic vision.
       - `/sideload/*` — dedicated Cloud Run service; V4 signed URLs, App Attest
         gate, own GCS bucket.
       - `/health` — liveness for the FX shim.
@@ -171,7 +170,7 @@ paths:
       summary: Issue a single-use App Attest challenge.
       description: |
         Returns an opaque, short-lived (≈5 min), single-use challenge to be passed
-        to App Attest `attestKey` on device. The server stores it in Firestore and
+        to App Attest `attestKey` on device. The Worker stores it in ATTEST_KV and
         consumes it on `/ocr/attest`.
       responses:
         "200":
@@ -199,7 +198,7 @@ paths:
         App Attest Root CA, checks the nonce extension
         (`SHA256(authData || SHA256(challenge))` against OID 1.2.840.113635.100.8.2),
         verifies `rpIdHash == SHA256(appId)` and `signCount == 0`, then stores the
-        extracted P-256 public key (SPKI) in Firestore `attest_keys` with signCount 0.
+        extracted P-256 public key (SPKI) in ATTEST_KV with signCount 0.
         appId is `QSL6XFT438.com.superfit.Resplit`. The challenge is single-use.
       requestBody:
         required: true
@@ -243,10 +242,10 @@ paths:
         `rpIdHash == SHA256(appId)` and a strictly-increasing `signCount` (replay
         guard), then bumps the stored count.
 
-        Idempotency: keyed `deviceId:SHA256(image)` in Firestore — identical images
+        Idempotency: keyed by authenticated subject plus `SHA256(image)` in ATTEST_KV — identical images
         return the cached envelope without re-billing Azure. Per-device daily rate
-        caps apply; a budget kill-switch can hard-stop scanning. The Azure
-        Document Intelligence key never leaves the service (Secret Manager).
+        caps apply; a budget kill-switch can hard-stop scanning. Provider keys are
+        installed as write-only Worker secrets and never leave the service.
 
         Soft-fail dev path (`X-Resplit-Attest-Soft-Fail: true`) is IP-capped and
         does not hard-block, for development clients without a registered key.
@@ -308,6 +307,7 @@ paths:
                 provider: azure-di-v4
                 scanId: "9f8e7d6c-0000-4000-8000-000000000abc"
                 status: ok
+                kv_extras: "off"
                 raw: { analyzeResult: {} }
         "400":
           $ref: "#/components/responses/BadRequest"
@@ -328,6 +328,7 @@ paths:
                 provider: azure-di-v4
                 scanId: "9f8e7d6c-0000-4000-8000-000000000abc"
                 status: rate_limited
+                kv_extras: "off"
                 raw: null
         "502":
           description: Upstream OCR provider error. Envelope with status `provider_error`.
@@ -335,6 +336,109 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ScanEnvelope"
+        "503":
+          $ref: "#/components/responses/OcrMisconfigured"
+
+  /ocr/dual-scan:
+    post:
+      tags: [ocr]
+      security: [] # App Attest is carried by the documented custom headers below.
+      operationId: postOcrDualScan
+      summary: Scan one receipt with Azure and Anthropic in parallel.
+      description: |
+        Authenticates the image once, then runs the Azure raw-receipt leg and the
+        Anthropic structured-receipt leg concurrently. Azure receives the original
+        image bytes. Only the Anthropic leg is bounded to a 1568 px longest edge
+        and JPEG EXIF-normalized. One successful provider produces HTTP 200 with
+        `status: partial`; an LLM-local transform failure never discards Azure.
+      parameters:
+        - $ref: "#/components/parameters/OcrAttestKeyId"
+        - $ref: "#/components/parameters/OcrAttestAssertion"
+        - $ref: "#/components/parameters/OcrAttestSoftFail"
+        - $ref: "#/components/parameters/OcrClientVersion"
+      requestBody:
+        $ref: "#/components/requestBodies/OcrImage"
+      responses:
+        "200":
+          description: Both providers succeeded, or one provider succeeded truthfully as a partial result.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DualScanEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AttestRejected"
+        "413":
+          $ref: "#/components/responses/OcrPayloadTooLarge"
+        "429":
+          description: Neither requested provider unit was admitted by the active accounting policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DualScanEnvelope"
+        "502":
+          description: Neither provider produced a usable result.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/DualScanEnvelope"
+                  - $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/OcrMisconfigured"
+
+  /ocr/analyze:
+    post:
+      tags: [ocr]
+      security: [] # App Attest is carried by the documented custom headers below.
+      operationId: postOcrAnalyze
+      summary: Scan one receipt into the versioned N-engine analysis envelope.
+      description: |
+        Uses the same authentication, cache, accounting, Azure, and Anthropic
+        execution core as `/ocr/dual-scan`, but returns the v2 extensible
+        `engines[]` shape. `aiModels` contains only engines that succeeded and
+        `llmReasoning` is true only when the Anthropic leg succeeded.
+      parameters:
+        - $ref: "#/components/parameters/OcrAttestKeyId"
+        - $ref: "#/components/parameters/OcrAttestAssertion"
+        - $ref: "#/components/parameters/OcrAttestSoftFail"
+        - $ref: "#/components/parameters/OcrClientVersion"
+      requestBody:
+        $ref: "#/components/requestBodies/OcrImage"
+      responses:
+        "200":
+          description: Both engines succeeded, or one engine succeeded truthfully as a partial result.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/AttestRejected"
+        "413":
+          $ref: "#/components/responses/OcrPayloadTooLarge"
+        "429":
+          description: Neither requested provider unit was admitted by the active accounting policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeEnvelope"
+        "502":
+          description: Neither engine produced a usable result.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AnalyzeEnvelope"
+                  - $ref: "#/components/schemas/Error"
         "503":
           $ref: "#/components/responses/OcrMisconfigured"
 
@@ -408,6 +512,46 @@ components:
       description: Target ISO-4217 currency code (3 letters).
       schema:
         $ref: "#/components/schemas/CurrencyCode"
+    OcrAttestKeyId:
+      name: X-Resplit-Attest-Key-Id
+      in: header
+      required: false
+      description: App Attest keyId. Required unless the explicitly enabled soft-fail development path admits the request.
+      schema: { type: string }
+    OcrAttestAssertion:
+      name: X-Resplit-Attest-Assertion
+      in: header
+      required: false
+      description: Base64 CBOR App Attest assertion over the exact image body.
+      schema: { type: string }
+    OcrAttestSoftFail:
+      name: X-Resplit-Attest-Soft-Fail
+      in: header
+      required: false
+      description: Requests the IP-capped development path; production configuration may refuse it.
+      schema:
+        type: string
+        enum: ["true", "false"]
+    OcrClientVersion:
+      name: X-Resplit-Client-Version
+      in: header
+      required: false
+      description: Numeric client version and optional build suffix used for bounded monitoring classification.
+      schema: { type: string }
+
+  requestBodies:
+    OcrImage:
+      required: true
+      description: Raw receipt image bytes. These exact bytes are the App Attest clientData and remain the Azure input.
+      content:
+        image/jpeg:
+          schema: { type: string, format: binary }
+        image/png:
+          schema: { type: string, format: binary }
+        image/webp:
+          schema: { type: string, format: binary }
+        image/heic:
+          schema: { type: string, format: binary }
 
   headers:
     XRequestId:
@@ -466,6 +610,16 @@ components:
             error: INVALID_SIZE
             message: "Size must be between 1 and 26214400 bytes"
             requestId: "req_abc123"
+    OcrPayloadTooLarge:
+      description: Declared or actual receipt image exceeds the configured OCR ingress limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: OCR_PAYLOAD_TOO_LARGE
+            message: "OCR image exceeds the 10485760 byte limit"
+            requestId: "req_abc123"
     Upstream:
       description: Static archive or upstream dependency failed.
       content:
@@ -477,7 +631,7 @@ components:
             message: "Fetch failed: 503"
             requestId: "req_abc123"
     OcrMisconfigured:
-      description: OCR service is missing a required binding (e.g. Firestore).
+      description: OCR service is missing a required binding (for example ATTEST_KV).
       content:
         application/json:
           schema:
@@ -676,7 +830,7 @@ components:
       type: object
       additionalProperties: false
       description: Versioned OCR envelope. `mode` discriminates the `raw` payload shape.
-      required: [v, mode, provider, scanId, status, raw]
+      required: [v, mode, provider, scanId, status, kv_extras, raw]
       properties:
         v:
           type: integer
@@ -694,10 +848,184 @@ components:
         status:
           type: string
           enum: [ok, rate_limited, provider_error]
+        kv_extras:
+          type: string
+          enum: ["on", "off"]
+          description: Whether the optional Azure key-value extras analysis contributed to this response.
         raw:
           type: [object, "null"]
           description: Azure Document Intelligence AnalyzeResult (v4) when status is ok; null otherwise.
           additionalProperties: true
+
+    MultiEngineScanStatus:
+      type: string
+      enum: [succeeded, partial, rate_limited, provider_error]
+
+    ProviderLegStatus:
+      type: string
+      enum: [succeeded, not_allowed, not_started, provider_error, provider_unavailable, rate_limited]
+
+    ScannedReceipt:
+      type: object
+      additionalProperties: false
+      required: [merchantName, merchantAddress, transactionDate, currencyCode, currencySymbol, lineItems, subtotal, total, extras]
+      properties:
+        merchantName: { type: [string, "null"] }
+        merchantAddress: { type: [string, "null"] }
+        transactionDate: { type: [string, "null"] }
+        currencyCode: { type: [string, "null"] }
+        currencySymbol: { type: [string, "null"] }
+        lineItems:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, amount, quantity]
+            properties:
+              name: { type: string }
+              amount: { type: [number, "null"] }
+              quantity: { type: [number, "null"] }
+        subtotal: { type: [number, "null"] }
+        total: { type: [number, "null"] }
+        extras:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [label, amount, kind]
+            properties:
+              label: { type: string }
+              amount: { type: number }
+              kind:
+                type: string
+                enum: [tax, tip, fee, serviceCharge, mandate, surcharge, discount, credit, rounding, payment, unknown]
+
+    AzureScanLeg:
+      type: object
+      additionalProperties: false
+      required: [status, raw]
+      properties:
+        status:
+          $ref: "#/components/schemas/ProviderLegStatus"
+        raw:
+          type: [object, "null"]
+          additionalProperties: true
+
+    LlmScanLeg:
+      type: object
+      additionalProperties: false
+      required: [status, provider, model, scanned, latencyMs]
+      properties:
+        status:
+          $ref: "#/components/schemas/ProviderLegStatus"
+        provider:
+          type: string
+          const: anthropic
+        model: { type: string }
+        scanned:
+          oneOf:
+            - $ref: "#/components/schemas/ScannedReceipt"
+            - type: "null"
+        latencyMs:
+          type: [number, "null"]
+          minimum: 0
+
+    ScanConsensus:
+      type: object
+      additionalProperties: false
+      required: [totalsAgree, azureTotal, llmTotal, extrasKindsDelta, llmRecoveredAmount]
+      properties:
+        totalsAgree: { type: [boolean, "null"] }
+        azureTotal: { type: [number, "null"] }
+        llmTotal: { type: [number, "null"] }
+        extrasKindsDelta:
+          type: array
+          items: { type: string }
+        llmRecoveredAmount: { type: [number, "null"] }
+
+    DualScanEnvelope:
+      type: object
+      additionalProperties: false
+      required: [v, mode, scanId, status, azure, llm, divergence, llmReasoning, aiModels]
+      properties:
+        v: { type: integer, const: 1 }
+        mode: { type: string, const: dual }
+        scanId: { type: string, format: uuid }
+        status:
+          $ref: "#/components/schemas/MultiEngineScanStatus"
+        azure:
+          $ref: "#/components/schemas/AzureScanLeg"
+        llm:
+          $ref: "#/components/schemas/LlmScanLeg"
+        divergence:
+          oneOf:
+            - $ref: "#/components/schemas/ScanConsensus"
+            - type: "null"
+        llmReasoning: { type: boolean }
+        aiModels:
+          type: array
+          items: { type: string }
+
+    AnalyzeAzureEngine:
+      type: object
+      additionalProperties: false
+      required: [id, kind, provider, model, status, latencyMs, raw]
+      properties:
+        id: { type: string, const: azure }
+        kind: { type: string, const: ocr }
+        provider: { type: string, const: azure-di }
+        model: { type: string, const: prebuilt-receipt }
+        status:
+          $ref: "#/components/schemas/ProviderLegStatus"
+        latencyMs: { type: [number, "null"], minimum: 0 }
+        raw:
+          type: [object, "null"]
+          additionalProperties: true
+
+    AnalyzeLlmEngine:
+      type: object
+      additionalProperties: false
+      required: [id, kind, provider, model, status, latencyMs, scanned]
+      properties:
+        id: { type: string, const: llm }
+        kind: { type: string, const: vision-llm }
+        provider: { type: string, const: anthropic }
+        model: { type: string }
+        status:
+          $ref: "#/components/schemas/ProviderLegStatus"
+        latencyMs: { type: [number, "null"], minimum: 0 }
+        scanned:
+          oneOf:
+            - $ref: "#/components/schemas/ScannedReceipt"
+            - type: "null"
+
+    AnalyzeEngine:
+      oneOf:
+        - $ref: "#/components/schemas/AnalyzeAzureEngine"
+        - $ref: "#/components/schemas/AnalyzeLlmEngine"
+
+    AnalyzeEnvelope:
+      type: object
+      additionalProperties: false
+      required: [v, scanId, status, llmReasoning, aiModels, engines, consensus]
+      properties:
+        v: { type: integer, const: 2 }
+        scanId: { type: string, format: uuid }
+        status:
+          $ref: "#/components/schemas/MultiEngineScanStatus"
+        llmReasoning: { type: boolean }
+        aiModels:
+          type: array
+          items: { type: string }
+        engines:
+          type: array
+          minItems: 2
+          items:
+            $ref: "#/components/schemas/AnalyzeEngine"
+        consensus:
+          oneOf:
+            - $ref: "#/components/schemas/ScanConsensus"
+            - type: "null"
 
     SideloadInitRequest:
       type: object
