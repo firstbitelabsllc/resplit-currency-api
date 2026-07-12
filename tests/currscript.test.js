@@ -394,6 +394,76 @@ test('00:00 additions become a required baseline for a reduced 03:00 primary', a
   assert.ok(captured.includes('fx_currency_set_regression'))
 })
 
+test('03:00 refresh allows changed values and a currency superset', async () => {
+  const publishDate = '2026-07-11'
+  const priorRates = currencyTable(166)
+  const committedSameDayRates = currencyTable(167)
+  const refreshedRates = currencyTable(168)
+  refreshedRates.x000 = 2.25
+
+  const refreshed = await fetchReconciledRates({
+    publishDate,
+    fetchPrimary: async () => ({ source: 'er-api', date: publishDate, rates: refreshedRates }),
+    fetchSecondary: async () => null,
+    loadPriorTrustedSnapshot: () => ({ date: '2026-07-10', rates: priorRates }),
+    loadSameDayCommittedSnapshot: () => ({ date: publishDate, rates: committedSameDayRates }),
+    capture: async () => {},
+    warn: () => {}
+  })
+
+  assert.equal(Object.keys(refreshed.rates).length, 168)
+  assert.equal(refreshed.rates.x000, 2.25)
+  assert.equal(refreshed.reconciliation.trustedCurrencyBaseline.currencyCodes.length, 167)
+  assert.deepEqual(
+    refreshed.reconciliation.trustedCurrencyBaseline.sources.map((source) => source.date),
+    ['2026-07-10', publishDate]
+  )
+})
+
+test('historical backfill ignores future archives and treats an existing target as the no-shrink floor', async () => {
+  const publishDate = resolvePublishDate({
+    env: { PUBLISH_DATE: '2026-04-15' },
+    now: new Date('2026-07-12T00:00:00Z')
+  })
+  const loadedDates = []
+  const priorSnapshot = loadPriorTrustedSnapshotFromArchive({
+    publishDate,
+    minimumCurrencies: 1,
+    listDates: () => ['2026-04-14', '2026-04-15', '2026-04-16', '2026-07-11'],
+    loadSnapshot: (date) => {
+      loadedDates.push(date)
+      return currencyTable(166)
+    }
+  })
+  const targetSnapshot = loadSameDayCommittedSnapshotFromArchive({
+    publishDate,
+    minimumCurrencies: 1,
+    readCommittedFile: () => JSON.stringify({
+      date: publishDate,
+      base: 'eur',
+      rates: currencyTable(167)
+    })
+  })
+
+  assert.deepEqual(loadedDates, ['2026-04-14'])
+  await assert.rejects(
+    () => fetchReconciledRates({
+      publishDate,
+      fetchPrimary: async () => ({
+        source: 'er-api',
+        date: publishDate,
+        rates: currencyTable(166)
+      }),
+      fetchSecondary: async () => null,
+      loadPriorTrustedSnapshot: () => priorSnapshot,
+      loadSameDayCommittedSnapshot: () => targetSnapshot,
+      capture: async () => {},
+      warn: () => {}
+    }),
+    /missing 1 trusted currency.*x165/
+  )
+})
+
 test('exact-date fallback cannot self-authorize a reduction from the committed same-day set', async () => {
   const publishDate = '2026-07-11'
   const priorRates = currencyTable(166)

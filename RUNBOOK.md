@@ -331,8 +331,11 @@ Automatic behavior:
 
 Generated `snapshots/base-rates.json` records the pre-write baseline source dates and code
 sets. Package validation requires the candidate to contain their union and independently
-checks that the receipt includes every code from the latest prior archive. The separate
-day-over-day value-sanity comparison remains anchored only to that strictly prior snapshot.
+checks that the receipt includes every code from the latest prior archive. It also rereads
+`HEAD:snapshot-archive/<publish-date>.json`: same-day metadata must exist if and only if that
+committed file exists, and its code set must match exactly. Any other Git/read/JSON/date/base/
+rate failure refuses publication. The separate day-over-day value-sanity comparison remains
+anchored only to the strictly prior snapshot.
 
 If the primary is permanently unavailable, add and prove a full-coverage replacement in
 [`scripts/lib/sources.js`](scripts/lib/sources.js). Do not promote a majors-only source or

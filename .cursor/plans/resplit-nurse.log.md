@@ -1,5 +1,14 @@
 # Resplit Nurse Log
 
+## 2026-07-11 20:13 EDT / 2026-07-12 00:13 UTC
+
+- `GO/source-proven-draft-open`, `NO-GO/merge-and-deploy-pending` for PR `#79`; production was read only.
+- Review repair: package validation no longer trusts the generated same-day receipt by itself. It independently reads `HEAD:snapshot-archive/<publish-date>.json`, validates the committed JSON/date/base/EUR/count/rates, requires exact metadata presence and code-set equality, and then enforces candidate containment. Only a proven missing path means no same-day baseline; unrelated Git failures fail closed.
+- Regression proof: date-independent adversaries cover omitted/tampered metadata, a committed code omitted from both candidate and receipt, true absence, unrelated Git failure, corrupt/invalid committed snapshots, an allowed `03:00` value refresh with a code superset, and historical backfill ignoring future archives while retaining an existing target-date no-shrink floor.
+- Fresh proof: focused publisher/package tests `70/70`; pinned-date `PUBLISH_DATE=2026-07-11 npm run check` passed Node `484/484` and Worker `13/13` before the two positive-only focused cases were added; Wrangler `4.110.0` root dry-run bundled; read-only production smoke passed for `2026-07-11` with 30 history points; `git diff --check` clean.
+- Separate wall-clock truth: unpinned `npm run check` at `00:10 UTC` refused the still-`2026-07-11` er-api table as stale, which is the intended exact-date fail-closed behavior during the new UTC publish window, not a branch regression.
+- Exact next slice: settle PR review/checks, merge through the owning lane, then run the existing one-shot publish workflow and prove source SHA, workflow result, and live Worker/CDN dates separately.
+
 ## 2026-07-11 19:51 EDT / 2026-07-11 23:51 UTC
 
 - `GO/source-proven-draft-open`, `NO-GO/deploy-unproven` for draft PR `#79`; no workflow dispatch, merge, deploy, secret write, or production mutation occurred.
