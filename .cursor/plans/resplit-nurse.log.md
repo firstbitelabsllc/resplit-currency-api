@@ -1,5 +1,16 @@
 # Resplit Nurse Log
 
+## 2026-07-11 21:06 EDT / 2026-07-12 01:06 UTC
+
+- `GO/recovery-complete` for the post-publish Cloudflare propagation race. PR `#80` carried reviewed head `d925b130`, passed all hosted CodeQL, Cursor, and Graphite gates, and squash-merged as implementation-bearing source `eb7fa395` at `01:02 UTC`.
+- Exactly one recovery dispatch ran from that merged head: workflow `29174669334` completed `success` in 66 seconds. Generation accepted 166 same-day er-api currencies with a 30-currency independent intersection and `0.321%` maximum drift; validation passed with 30 history points. The snapshot step reported `Everything up-to-date`, so canonical snapshot commit `ae8958bc` did not move.
+- Deployment receipts from the green run: Cloudflare primary `4cd2033b`, latest `749ccdd4`, and dated `56a1bf92`; Worker version `3e806a0b-39c1-46e6-9260-ce436ea5290c`; GitHub Pages `357da8b`. Provider-secret continuity proved both `AZURE_OCR_KEY` and `ANTHROPIC_API_KEY` remained installed. The final post-publish smoke passed for `2026-07-12` with 30 history points. The missing cron check-in id is expected for `workflow_dispatch` by the documented monitor contract, not a degraded scheduled-run path.
+- Fresh live proof: stable, latest, and dated Cloudflare surfaces plus GitHub Pages all serve `2026-07-12` with 166 currencies; Cloudflare and GitHub latest payloads are byte-identical (`639df010...`). Worker `/health` reports production release `eb7fa395`; USD/EUR resolves exactly on `2026-07-12`; three-day history ends on that date; coverage is `30/30` with zero gaps, zero mismatches, zero lag, and no signals.
+- Separate historical truth: workflow `29173999975` remains correctly red for the original alias race even though its deployment converged later. The code-bearing source merge, snapshot commit, successful recovery run, immutable deploys, current live aliases, and this later docs-only foldback are distinct receipts.
+- Exact next slice: this repo is green; return to the cross-repo Resplit authority and rerank the highest reachable unclaimed product row. The existing `00:00` and `03:00` UTC workflow schedules own routine FX continuity.
+
+<promise>COMPLETE</promise>
+
 ## 2026-07-11 20:50 EDT / 2026-07-12 00:50 UTC
 
 - `GO/live-package-current`, `NO-GO/recovery-source-unmerged` after workflow run `29173999975`. The run published source head `d1e76003`, committed the `2026-07-12` snapshot as `ae8958bc`, and completed Cloudflare Pages, Worker, and GitHub Pages deploy steps; its final smoke alone failed while the stable Cloudflare alias still served `2026-07-11`. The workflow conclusion remains red even though the deployed aliases converged afterward.
