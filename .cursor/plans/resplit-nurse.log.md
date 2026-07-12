@@ -1,5 +1,15 @@
 # Resplit Nurse Log
 
+## 2026-07-12 19:05 EDT / 2026-07-12 23:05 UTC
+
+- `GO/source-current` for `P8-OPENAPI-MULTI-ENGINE`. Canonical `main` `7d72f1357472404fc87f7b7bcf50d3d50adb96ee` now documents the shipped `POST /ocr/dual-scan` v1 and `POST /ocr/analyze` v2 contracts, including App Attest headers, raw-image media types, truthful partial/rate-limit/provider-error envelopes, nested Azure/Anthropic engine identities, OCR ingress `413`, and both shaped and generic `502` responses.
+- Contract proof exercises the real `handleOcr` route seam through both endpoints with shared cache state while stubbing only external Azure and Anthropic HTTP. It mutation-pins route, method, version, provider-leg, nullable receipt fields, extras-kind vocabulary, legacy `kv_extras`, ingress, and error identities.
+- Fresh proof after independent adversarial review repairs: focused OpenAPI contract `6/6`; full `npm run check` Node `533/533` plus Worker `13/13`; `npm run smoke:deploy` current for `2026-07-12` with 30 history points; Wrangler root dry-run bundles canonical bindings; `git diff --check` clean. Redocly structurally validates the document and reports only eight pre-existing security declarations on unrelated legacy operations; both new routes are clean.
+- Separate truth: this is documentation/test source only. No runtime Worker code, deploy workflow, provider secret, production release, or live route behavior changed. The already-live production release remains the separately proven `eb44108366c1bedec30ac2831528b3fb29039aa8` from the preceding P8 slice.
+- Exact next slice: fold this receipt into iOS NORTH-STAR, then rerank from a fresh Vidux snapshot. Do not reselect the OpenAPI gap unless the live handler contract changes.
+
+<promise>COMPLETE</promise>
+
 ## 2026-07-12 18:50 EDT / 2026-07-12 22:50 UTC
 
 - `GO/merged-and-live` for `P8-LLM-PER-LEG-1568`. PR `#83` carried reviewed head `8b0d6358`, passed local `npm run check` (525 Node + 13 Worker tests), post-rebase focused `110/110`, Wrangler dry-run, smoke, CodeQL, Graphite, and an independent final review; it squash-merged as `eb44108366c1bedec30ac2831528b3fb29039aa8` at `22:48:28Z`.
