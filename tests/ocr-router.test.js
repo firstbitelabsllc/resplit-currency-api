@@ -75,6 +75,44 @@ function scanRequest(imageBytes, headers = {}) {
   })
 }
 
+function concat(...arrs) {
+  const total = arrs.reduce((n, a) => n + a.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const a of arrs) { out.set(a, off); off += a.length }
+  return out
+}
+
+function cborBytes(bytes) {
+  if (bytes.length < 24) return concat(Uint8Array.of(0x40 | bytes.length), bytes)
+  return concat(Uint8Array.of(0x58, bytes.length), bytes)
+}
+
+function cborText(text) {
+  const bytes = new TextEncoder().encode(text)
+  return concat(Uint8Array.of(0x60 | bytes.length), bytes)
+}
+
+function cborAssertion(signature, authenticatorData) {
+  return concat(
+    Uint8Array.of(0xa2),
+    cborText('signature'), cborBytes(signature),
+    cborText('authenticatorData'), cborBytes(authenticatorData),
+  )
+}
+
+function bytesToB64(bytes) {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+async function seedAttestKey(env, keyId) {
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey))
+  await env.ATTEST_KV.put(`attest:${keyId}`, JSON.stringify({ publicKeyB64: bytesToB64(spki), signCount: 0 }))
+}
+
 test('POST /ocr/scan (soft-fail) returns the versioned envelope wrapping the Azure result', async () => {
   stubAzure()
   const env = makeEnv()
@@ -213,6 +251,62 @@ test('cache-first accounting: invalid App Attest cannot read a seeded raw cache 
   assert.equal(response.status, 401, 'authentication must complete before any cache read can return data')
   assert.doesNotMatch(await response.text(), /seeded-cache-must-not-leak/)
   assert.equal(azureCalls.submit, 0)
+})
+
+test('SIG rejects preserve the public 401 contract while logging a PII-free discriminator', async () => {
+  const env = makeEnv()
+  const image = new TextEncoder().encode('IMAGE_BYTES_MUST_NOT_LEAK')
+  const keyId = 'key-id-must-not-leak'
+  await seedAttestKey(env, keyId)
+  const authData = new Uint8Array(37)
+  const cases = [
+    ['der_sequence', Uint8Array.of(0x31), '2.0.0+4023', '2.0.0+4023'],
+    ['der_integer', concat(Uint8Array.of(0x30, 0x26, 0x02, 0x21), new Uint8Array(33).fill(1), Uint8Array.of(0x02, 0x01, 0x01)), 'amFuZUBleGFtcGxlLmNvbQ', 'unknown'],
+    ['verify_false', Uint8Array.of(0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01), 'untrusted version; do-not-log', 'unknown'],
+  ]
+  const warnings = []
+  const assertions = []
+  const unsafeClientVersion = cases[1][2]
+  const originalWarn = console.warn
+  console.warn = (line) => warnings.push(line)
+  const responses = []
+  try {
+    for (const [reason, signature, clientVersion] of cases) {
+      const assertion = bytesToB64(cborAssertion(signature, authData))
+      assertions.push(assertion)
+      responses.push(await handleOcr(scanRequest(image, {
+        'x-resplit-attest-soft-fail': 'false',
+        'x-resplit-attest-key-id': keyId,
+        'x-resplit-attest-assertion': assertion,
+        'x-resplit-client-version': clientVersion,
+      }), env))
+    }
+  } finally {
+    console.warn = originalWarn
+  }
+
+  for (const response of responses) {
+    assert.equal(response.status, 401)
+    const body = await response.json()
+    assert.equal(body.error, 'ATTEST_REJECTED')
+    assert.equal(body.message, 'SIG')
+    assert.equal('reason' in body, false, 'the public rejection contract must not expose the internal discriminator')
+  }
+  const events = warnings
+    .filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
+    .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
+    .filter((event) => event.signal === 'attest_reject')
+  assert.equal(events.length, 3)
+  assert.deepEqual(events.map((event) => event.reason), ['der_sequence', 'der_integer', 'verify_false'])
+  for (const [index, event] of events.entries()) {
+    assert.equal(event.code, 'SIG')
+    assert.equal(event.path, '/ocr/scan')
+    assert.equal(event.client_version, cases[index][3])
+    assert.equal(Object.keys(event).some((key) => /key|assertion|body|hash|signature/i.test(key)), false)
+    assert.doesNotMatch(JSON.stringify(event), /IMAGE_BYTES_MUST_NOT_LEAK|ASSERTION_MUST_NOT_LEAK|key-id-must-not-leak/)
+    assert.equal(JSON.stringify(event).includes(unsafeClientVersion), false)
+    for (const assertion of assertions) assert.equal(JSON.stringify(event).includes(assertion), false)
+  }
 })
 
 test('POST /ocr/scan keeps a successful provider result when the cache write fails and emits one PII-free signal', async () => {

@@ -76,6 +76,17 @@ const LEGACY_PARTIAL_LLM_STATUSES = new Set([
   'provider_unavailable',
   'rate_limited',
 ])
+// `defaultClientVersion()` on iOS emits a numeric CFBundle short version with
+// an optional numeric build suffix (for example, 2.2.0+4023). Do not log an
+// arbitrary caller-controlled token here: App Attest rejects happen before an
+// authenticated product request, so loose header values would create a PII
+// and telemetry-cardinality sink.
+const NATIVE_CLIENT_VERSION = /^\d{1,3}(?:\.\d{1,3}){0,2}(?:\+\d{1,8})?$/
+
+function attestRejectClientVersion(request) {
+  const value = request.headers.get('x-resplit-client-version')?.trim()
+  return value && NATIVE_CLIENT_VERSION.test(value) ? value : 'unknown'
+}
 
 const sha256Hex = async (bytes) => {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
@@ -121,7 +132,17 @@ export async function handleOcr(request, env, ctx) {
     return errorResponse('NOT_FOUND', 'OCR route not found', 404, requestId, RESPONSE_HEADERS)
   } catch (error) {
     if (error instanceof AttestError) {
-      logOcrMonitoringEvent('warn', { signal: 'attest_reject', code: error.code, requestId }, env)
+      const event = {
+        signal: 'attest_reject',
+        code: error.code,
+        requestId,
+        path: url.pathname,
+        client_version: attestRejectClientVersion(request),
+      }
+      // AttestError only admits its fixed SIG diagnostic vocabulary, so this
+      // cannot turn request material into telemetry.
+      if (error.reason) event.reason = error.reason
+      logOcrMonitoringEvent('warn', event, env)
       return errorResponse('ATTEST_REJECTED', error.code, 401, requestId, RESPONSE_HEADERS)
     }
     await captureFxRouteFailure(error, { route: 'ocr', signal: 'ocr_route_exception', requestId, path: url.pathname }, env)
