@@ -1,5 +1,16 @@
 # Resplit Nurse Log
 
+## 2026-07-12 18:50 EDT / 2026-07-12 22:50 UTC
+
+- `GO/merged-and-live` for `P8-LLM-PER-LEG-1568`. PR `#83` carried reviewed head `8b0d6358`, passed local `npm run check` (525 Node + 13 Worker tests), post-rebase focused `110/110`, Wrangler dry-run, smoke, CodeQL, Graphite, and an independent final review; it squash-merged as `eb44108366c1bedec30ac2831528b3fb29039aa8` at `22:48:28Z`.
+- The Anthropic leg now bounds supported still images to a 1568 px longest edge, normalizes JPEG EXIF orientation before provider submission, keeps Azure on the original bytes, and fails the LLM leg closed before paid work for GIF, unreadable dimensions, transform failure, or unsafe decode size. Azure success remains available as a truthful partial result when the LLM transform fails.
+- Real Worker proof before merge: a 4032x3024 EXIF-orientation-6 JPEG transformed to 1176x1568 in Cloudflare remote execution on 3/3 HTTP 200 attempts with stable SHA-256 `adbba7b963a1bf6b3e6b4802f52e57a3ab879e3653b82070700ca9a55b4288ba` and no 128 MiB isolate failure.
+- Exactly one canonical deploy dispatch ran from merged head `eb441083`: workflow `29212244275` completed `success` in 63 seconds. Secret continuity, Cloudflare Pages, FX Worker, GitHub Pages, and deployed-endpoint smoke all passed.
+- Fresh live proof is separate and exact: `https://fx.resplit.app/health` reports production release `eb44108366c1bedec30ac2831528b3fb29039aa8`; `npm run smoke:deploy` passes for `2026-07-12` with 30 history points. Source, merge, deploy workflow, and production readback now converge.
+- Exact next slice: fold this receipt into the iOS NORTH-STAR scoreboard, then rerank the highest reachable unclaimed Resplit product row. Do not reselect P8 image bounding unless live telemetry contradicts this release.
+
+<promise>COMPLETE</promise>
+
 ## 2026-07-11 21:06 EDT / 2026-07-12 01:06 UTC
 
 - `GO/recovery-complete` for the post-publish Cloudflare propagation race. PR `#80` carried reviewed head `d925b130`, passed all hosted CodeQL, Cursor, and Graphite gates, and squash-merged as implementation-bearing source `eb7fa395` at `01:02 UTC`.
