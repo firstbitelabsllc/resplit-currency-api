@@ -122,7 +122,7 @@ function heicBytes() {
 
 test('rescue: a valid JPEG mislabeled image/jpg has media_type corrected so the LLM leg succeeds', async () => {
   stubAnthropic()
-  const res = await scanReceiptWithAnthropic(jpegBytes(), 'image/jpg', env())
+  const res = await scanReceiptWithAnthropic(jpegWithDimensions(800, 600), 'image/jpg', env())
   // On current main the declared 'image/jpg' is forwarded verbatim -> Anthropic 400
   // -> the paid rescue leg dies. With the fix it is sniffed to 'image/jpeg'.
   assert.equal(res.ok, true, 'the paid rescue leg must succeed for a valid JPEG mislabeled image/jpg')
@@ -181,20 +181,29 @@ test('oversize dimensions: a PNG over 8000 px/axis skips the call with llm_image
 
 // --- No false rejections: the happy path and fail-open are preserved -----------
 
-test('happy path: a truthful image/jpeg within limits still calls Anthropic and succeeds', async () => {
+test('happy path: a truthful image/jpeg at or below the 1568px LLM bound still calls Anthropic and succeeds', async () => {
   stubAnthropic()
-  const res = await scanReceiptWithAnthropic(jpegWithDimensions(1200, 1600), 'image/jpeg', env())
+  const res = await scanReceiptWithAnthropic(jpegWithDimensions(1200, 1500), 'image/jpeg', env())
   assert.equal(res.ok, true)
   assert.equal(fetchCalls, 1)
   assert.equal(lastBody.messages[0].content[0].source.media_type, 'image/jpeg')
 })
 
-test('fail-open: unidentifiable bytes with a supported declared type still call Anthropic (no false reject)', async () => {
+test('unidentifiable bytes with a supported declared type fail before the paid provider', async () => {
   stubAnthropic()
   const res = await scanReceiptWithAnthropic(new Uint8Array([1, 2, 3]), 'image/jpeg', env())
-  assert.equal(res.ok, true)
-  assert.equal(fetchCalls, 1)
-  assert.equal(lastBody.messages[0].content[0].source.media_type, 'image/jpeg')
+  assert.equal(res.ok, false)
+  assert.equal(res.errorBody, 'llm_image_transform_failed')
+  assert.equal(fetchCalls, 0)
+})
+
+test('GIF fails closed before Photon because logical-screen dimensions do not bound animation frames', async () => {
+  stubAnthropic()
+  const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x20, 0x06, 0xE8, 0x03])
+  const res = await scanReceiptWithAnthropic(gif, 'image/gif', env())
+  assert.equal(res.ok, false)
+  assert.equal(res.errorBody, 'llm_image_transform_failed')
+  assert.equal(fetchCalls, 0)
 })
 
 // --- resolveAnthropicImage pure-resolver unit coverage -------------------------

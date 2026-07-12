@@ -229,6 +229,15 @@ async function withFrozenTime(iso, operation) {
   }
 }
 
+function jpegFixture(seed) {
+  return new Uint8Array([
+    0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08,
+    0x02, 0x58, 0x03, 0x20, 0x03,
+    0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    seed,
+  ])
+}
+
 function shadowFailureEvents(lines) {
   return lines
     .filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
@@ -247,7 +256,7 @@ test('legacy accounting mode performs zero shadow work', async () => {
     OCR_ACCOUNTING_MODE: 'legacy',
   })
 
-  const { response } = await runRequest({ bytes: new Uint8Array([1, 2, 3]), env, ctx })
+  const { response } = await runRequest({ bytes: jpegFixture(123), env, ctx })
 
   assert.equal(response.status, 200)
   assert.equal(calls.azureReceiptSubmit, 1)
@@ -262,7 +271,7 @@ test('the real Worker request entrypoint retains shadow work with ExecutionConte
   const ctx = makeExecutionContext()
 
   const response = await handleRequest(
-    ocrRequest('/ocr/scan', new Uint8Array([1, 2, 4])),
+    ocrRequest('/ocr/scan', jpegFixture(124)),
     env,
     ctx,
   )
@@ -278,7 +287,7 @@ test('shadow accounting starts only after a cache miss and never reserves a cach
   const events = []
   const accounting = makeAccountingBinding({ events })
   const env = makeEnv({ events, accounting })
-  const image = new Uint8Array([9, 8, 7, 6])
+  const image = jpegFixture(98)
 
   await runRequest({ bytes: image, env })
   assert.equal(accounting.records.reservations.length, 1, 'one fresh provider scan must reserve once')
@@ -297,7 +306,7 @@ test('raw shadow reservations charge one Azure unit, or two when key-value extra
   stubProviders()
   const normalAccounting = makeAccountingBinding()
   const normalEnv = makeEnv({ accounting: normalAccounting })
-  await runRequest({ bytes: new Uint8Array([1, 1, 1]), env: normalEnv })
+  await runRequest({ bytes: jpegFixture(111), env: normalEnv })
 
   assert.equal(normalAccounting.records.reservations.length, 1)
   assert.equal(normalAccounting.records.reservations[0].azureUnits, 1)
@@ -308,7 +317,7 @@ test('raw shadow reservations charge one Azure unit, or two when key-value extra
     accounting: extrasAccounting,
     AZURE_OCR_KV_EXTRAS: 'enabled',
   })
-  await runRequest({ bytes: new Uint8Array([2, 2, 2]), env: extrasEnv })
+  await runRequest({ bytes: jpegFixture(222), env: extrasEnv })
 
   assert.equal(extrasAccounting.records.reservations.length, 1)
   assert.equal(extrasAccounting.records.reservations[0].azureUnits, 2)
@@ -322,7 +331,7 @@ test('dual-scan shadow reservations charge one Azure and one Anthropic unit', as
 
   const { response, body } = await runRequest({
     path: '/ocr/dual-scan',
-    bytes: new Uint8Array([3, 3, 3]),
+    bytes: jpegFixture(33),
     env,
   })
 
@@ -341,15 +350,15 @@ test('one stable Durable Object carries rotating UTC-day HMAC subjects without e
   const env = makeEnv({ accounting })
 
   const first = await withFrozenTime('2026-07-10T12:00:00.000Z', () => runRequest({
-    bytes: new Uint8Array([4, 0, 1]),
+    bytes: jpegFixture(41),
     env,
   }))
   const second = await withFrozenTime('2026-07-10T23:59:59.000Z', () => runRequest({
-    bytes: new Uint8Array([4, 0, 2]),
+    bytes: jpegFixture(42),
     env,
   }))
   const nextDay = await withFrozenTime('2026-07-11T00:00:01.000Z', () => runRequest({
-    bytes: new Uint8Array([4, 0, 3]),
+    bytes: jpegFixture(43),
     env,
   }))
 
@@ -393,7 +402,7 @@ async function captureRawResult(options) {
   })
   const ctx = makeExecutionContext()
   const response = await withFrozenTime('2026-07-10T15:00:00.000Z', () => handleOcr(
-    ocrRequest('/ocr/scan', new Uint8Array([7, 0, 7])),
+    ocrRequest('/ocr/scan', jpegFixture(77)),
     env,
     ctx,
   ))

@@ -52,6 +52,15 @@ function dualScanRequest(imageBytes, headers = {}) {
   })
 }
 
+function jpegFixture(seed) {
+  return new Uint8Array([
+    0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08,
+    0x02, 0x58, 0x03, 0x20, 0x03,
+    0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    seed,
+  ])
+}
+
 function azureRaw({ total = 10, tax = 1 } = {}) {
   return {
     status: 'succeeded',
@@ -114,7 +123,7 @@ function stubProviders({ azure = azureRaw(), scanned = scannedReceipt(), anthrop
 test('POST /ocr/analyze returns the exact v2 N-engine envelope on the happy path', async () => {
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const res = await handleOcr(analyzeRequest(new Uint8Array([1, 2, 3])), env)
+  const res = await handleOcr(analyzeRequest(jpegFixture(123)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
 
@@ -192,7 +201,11 @@ test('POST /ocr/analyze preserves the full v2 result and emits grouped cache-deg
 
   let res
   try {
-    res = await handleOcr(analyzeRequest(new TextEncoder().encode('ANALYZE_IMAGE_MUST_NOT_LEAK'), {
+    const leakSentinelImage = new Uint8Array([
+      ...jpegFixture(99),
+      ...new TextEncoder().encode('ANALYZE_IMAGE_MUST_NOT_LEAK'),
+    ])
+    res = await handleOcr(analyzeRequest(leakSentinelImage, {
       'x-resplit-attest-key-id': 'DEVICE_KEY_MUST_NOT_LEAK',
       'x-resplit-client-version': 'CLIENT_VERSION_MUST_NOT_LEAK',
       'x-resplit-trace-id': 'CLIENT_REQUEST_ID_MUST_NOT_LEAK',
@@ -256,7 +269,7 @@ test('POST /ocr/analyze preserves the full v2 result and emits grouped cache-deg
 test('POST /ocr/analyze with a failed LLM leg is partial: llmReasoning false, aiModels azure-only', async () => {
   stubProviders({ anthropicStatus: 500 })
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const res = await handleOcr(analyzeRequest(new Uint8Array([4, 4, 4])), env)
+  const res = await handleOcr(analyzeRequest(jpegFixture(44)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
 
@@ -280,7 +293,7 @@ test('POST /ocr/analyze totals disagreement reports it as consensus, not diverge
     { label: 'Bag fee', amount: 2, kind: 'fee' },
   ] }) })
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const res = await handleOcr(analyzeRequest(new Uint8Array([5, 5, 5])), env)
+  const res = await handleOcr(analyzeRequest(jpegFixture(55)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
   assert.equal(body.status, 'succeeded')
@@ -295,7 +308,7 @@ test('the shared cache serves one scan to BOTH routes, shaped per-route (no cros
   // call) YET render the legacy v1 envelope — never the v2 shape it was cached under.
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const image = new Uint8Array([7, 7, 7])
+  const image = jpegFixture(77)
 
   const analyzeRes = await handleOcr(analyzeRequest(image), env)
   const analyzeBody = await analyzeRes.json()
@@ -330,7 +343,7 @@ test('cache-first accounting: analyze to dual replay uses one paid provider pair
     LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
     SOFT_FAIL_DAILY_CAP: '1',
   })
-  const image = new Uint8Array([8, 6, 7, 5, 3, 0, 9])
+  const image = jpegFixture(86)
   const day = new Date().toISOString().slice(0, 10)
 
   const analyze = await handleOcr(analyzeRequest(image), env)
@@ -351,7 +364,7 @@ test('cache-first accounting: cap-zero multi-engine misses reject before provide
   const cases = [
     {
       request: analyzeRequest,
-      image: new Uint8Array([0, 2, 0, 2, 6]),
+      image: jpegFixture(26),
       expected: {
         v: 2,
         status: 'rate_limited',
@@ -366,7 +379,7 @@ test('cache-first accounting: cap-zero multi-engine misses reject before provide
     },
     {
       request: dualScanRequest,
-      image: new Uint8Array([0, 2, 0, 2, 7]),
+      image: jpegFixture(27),
       expected: {
         v: 1,
         mode: 'dual',
@@ -406,7 +419,7 @@ test('cache-first accounting: invalid App Attest cannot read the shared multi-en
     ANTHROPIC_API_KEY: 'anthropic-key',
     LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
   })
-  const image = new Uint8Array([4, 0, 4, 0, 4])
+  const image = jpegFixture(40)
 
   const seed = await handleOcr(analyzeRequest(image), env)
   assert.equal(seed.status, 200)
@@ -426,7 +439,7 @@ test('cache-first accounting: invalid App Attest cannot read the shared multi-en
 test('POST /ocr/analyze dark mode (no ANTHROPIC_API_KEY) is partial with an azure-only aiModels', async () => {
   stubProviders()
   const env = makeEnv()
-  const res = await handleOcr(analyzeRequest(new Uint8Array([2, 2, 2])), env)
+  const res = await handleOcr(analyzeRequest(jpegFixture(222)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
   assert.equal(body.v, 2)

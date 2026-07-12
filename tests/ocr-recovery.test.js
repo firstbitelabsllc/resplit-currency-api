@@ -126,6 +126,14 @@ function dualScanRequest(imageBytes) {
     method: 'POST', headers: { 'content-type': 'image/jpeg', 'x-resplit-attest-soft-fail': 'true' }, body: imageBytes,
   })
 }
+function jpegFixture(seed) {
+  return new Uint8Array([
+    0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08,
+    0x02, 0x58, 0x03, 0x20, 0x03,
+    0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+    seed,
+  ])
+}
 function azureRaw() {
   return {
     status: 'succeeded',
@@ -171,7 +179,7 @@ test('/ocr/analyze writes one Analytics Engine datapoint per fresh scan (not on 
   stubProviders()
   const ae = makeAE()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true', OCR_SCAN_ANALYTICS: ae })
-  const image = new Uint8Array([1, 2, 3])
+  const image = jpegFixture(123)
 
   await handleOcr(analyzeRequest(image), env)
   assert.equal(ae.points.length, 1, 'one datapoint on the fresh scan')
@@ -197,7 +205,7 @@ test('/ocr/dual-scan tags its own route in the Analytics Engine datapoint', asyn
   stubProviders()
   const ae = makeAE()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true', OCR_SCAN_ANALYTICS: ae })
-  await handleOcr(dualScanRequest(new Uint8Array([4, 4, 4])), env)
+  await handleOcr(dualScanRequest(jpegFixture(44)), env)
   assert.equal(ae.points.length, 1)
   assert.equal(ae.points[0].blobs[1], 'dual-scan')
 })
@@ -206,7 +214,7 @@ test('a failed LLM leg still records a datapoint, partitioned as non-reasoned (i
   stubProviders({ anthropicStatus: 500 })
   const ae = makeAE()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true', OCR_SCAN_ANALYTICS: ae })
-  await handleOcr(analyzeRequest(new Uint8Array([5, 5, 5])), env)
+  await handleOcr(analyzeRequest(jpegFixture(55)), env)
   assert.equal(ae.points.length, 1)
   assert.deepEqual(ae.points[0].indexes, ['0'], 'a failed AI leg is not "reasoned"')
   assert.equal(ae.points[0].blobs[2], 'partial')
@@ -216,7 +224,7 @@ test('a failed LLM leg still records a datapoint, partitioned as non-reasoned (i
 test('scans run cleanly with no Analytics Engine binding bound (write is a no-op)', async () => {
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' }) // no OCR_SCAN_ANALYTICS
-  const res = await handleOcr(analyzeRequest(new Uint8Array([6, 6, 6])), env)
+  const res = await handleOcr(analyzeRequest(jpegFixture(66)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
   assert.equal(body.status, 'succeeded')

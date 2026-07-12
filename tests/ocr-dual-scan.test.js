@@ -54,6 +54,42 @@ function bytesToB64(bytes) {
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
   return btoa(bin)
 }
+function b64ToBytes(value) {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0))
+}
+function jpegWithDimensions(width, height) {
+  return new Uint8Array([
+    0xFF, 0xD8,
+    0xFF, 0xC0,
+    0x00, 0x11,
+    0x08,
+    (height >> 8) & 0xFF, height & 0xFF,
+    (width >> 8) & 0xFF, width & 0xFF,
+    0x03,
+    0x01, 0x22, 0x00,
+    0x02, 0x11, 0x01,
+    0x03, 0x11, 0x01,
+  ])
+}
+function jpegWithPayload(width, height, payload) {
+  const header = jpegWithDimensions(width, height)
+  const suffix = payload instanceof Uint8Array ? payload : new TextEncoder().encode(String(payload))
+  const bytes = new Uint8Array(header.length + suffix.length)
+  bytes.set(header)
+  bytes.set(suffix, header.length)
+  return bytes
+}
+function fakeImageResizer({ outputBytes = jpegWithDimensions(1568, 392), throwOnResize = false } = {}) {
+  const calls = []
+  return {
+    calls,
+    async resize(imageBytes, options) {
+      calls.push({ imageBytes: new Uint8Array(imageBytes), options })
+      if (throwOnResize) throw new Error('photon resize unavailable')
+      return outputBytes
+    },
+  }
+}
 async function buildAuthData(signCount) {
   const rpIdHash = await sha256Bytes(new TextEncoder().encode(APP_ID))
   const ad = new Uint8Array(37)
@@ -116,7 +152,7 @@ let calls
 const realFetch = globalThis.fetch
 
 beforeEach(() => {
-  calls = { azureSubmit: 0, azurePoll: 0, anthropic: 0, anthropicBodies: [] }
+  calls = { azureSubmit: 0, azurePoll: 0, azureBodies: [], anthropic: 0, anthropicBodies: [] }
 })
 afterEach(() => { globalThis.fetch = realFetch })
 
@@ -192,6 +228,7 @@ function stubProviders({ azure = azureRaw(), scanned = scannedReceipt() } = {}) 
     }
     if (init.method === 'POST' && u.includes(':analyze')) {
       calls.azureSubmit++
+      calls.azureBodies.push(new Uint8Array(init.body))
       return new Response('', {
         status: 202,
         headers: {
@@ -212,7 +249,7 @@ test('POST /ocr/dual-scan returns dual succeeded envelope for an attested, allow
   // keyId is the ONLY non-dev-unlock way to reach the paid LLM leg after the auth fix.
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOWED_KEY_IDS: 'kid-1' })
-  const image = new Uint8Array([1, 2, 3])
+  const image = jpegWithDimensions(800, 600)
   const privateKey = await seedAttestedKey(env, 'kid-1')
   const assertionB64 = await buildAssertion(privateKey, image, 1)
   const res = await handleOcr(attestedDualScanRequest(image, { keyId: 'kid-1', assertionB64 }), env)
@@ -244,6 +281,51 @@ test('POST /ocr/dual-scan returns dual succeeded envelope for an attested, allow
   assert.equal(calls.anthropicBodies[0].max_tokens, 4096)
 })
 
+test('POST /ocr/dual-scan keeps Azure bytes original while bounding only the Anthropic leg', async () => {
+  const original = jpegWithDimensions(3136, 784)
+  const transformed = jpegWithDimensions(1568, 392)
+  const resizer = fakeImageResizer({ outputBytes: transformed })
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    __TEST_LLM_IMAGE_RESIZER: resizer.resize,
+  })
+
+  const res = await handleOcr(dualScanRequest(original), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.status, 'succeeded')
+  assert.deepEqual(calls.azureBodies, [original], 'Azure must receive the full-resolution original')
+  assert.deepEqual(resizer.calls, [{
+    imageBytes: original,
+    options: { sourceWidth: 3136, sourceHeight: 784, width: 1568, height: 392, quality: 90, orientation: 1 },
+  }], 'the LLM transform starts from the same original bytes')
+  const llmSource = calls.anthropicBodies[0].messages[0].content[0].source
+  assert.equal(llmSource.media_type, 'image/jpeg')
+  assert.deepEqual(b64ToBytes(llmSource.data), transformed, 'Anthropic receives only the bounded transform')
+})
+
+test('POST /ocr/dual-scan preserves Azure success when the Anthropic image transform fails', async () => {
+  const original = jpegWithDimensions(3136, 784)
+  const resizer = fakeImageResizer({ throwOnResize: true })
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    __TEST_LLM_IMAGE_RESIZER: resizer.resize,
+  })
+
+  const res = await handleOcr(dualScanRequest(original), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.status, 'partial')
+  assert.equal(body.azure.status, 'succeeded')
+  assert.equal(body.llm.status, 'provider_error')
+  assert.deepEqual(calls.azureBodies, [original])
+  assert.equal(calls.anthropic, 0, 'a transform failure must not spend an Anthropic call')
+})
+
 test('POST /ocr/dual-scan keeps both successful provider results when the cache write fails and emits one PII-free signal', async () => {
   stubProviders()
   const env = makeEnv({
@@ -257,7 +339,7 @@ test('POST /ocr/dual-scan keeps both successful provider results when the cache 
     if (key.startsWith('cache:dualScan:')) throw new Error('cache backend unavailable')
     return originalPut(key, value, options)
   }
-  const image = new TextEncoder().encode('DUAL_IMAGE_BYTES_MUST_NOT_LEAK')
+  const image = jpegWithPayload(801, 600, 'DUAL_IMAGE_BYTES_MUST_NOT_LEAK')
   const warnings = []
   const logs = []
   const originalWarn = console.warn
@@ -406,7 +488,7 @@ test('POST /ocr/dual-scan totals disagreement emits an ocr_totals_divergence Sen
       scanned: scannedReceipt({ total: 14 }),
     })
     const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true', SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
-    const res = await handleOcr(dualScanRequest(new Uint8Array([9, 1, 9])), env)
+    const res = await handleOcr(dualScanRequest(jpegWithDimensions(809, 601)), env)
     assert.equal(res.status, 200)
     const body = await res.json()
     assert.equal(body.divergence.totalsAgree, false)
@@ -420,7 +502,7 @@ test('POST /ocr/dual-scan totals disagreement emits an ocr_totals_divergence Sen
     // Agree: default 10 vs 10 -> no divergence capture (fresh image, cache miss).
     const before = captured.scopes.length
     stubProviders()
-    const res2 = await handleOcr(dualScanRequest(new Uint8Array([9, 2, 9])), env)
+    const res2 = await handleOcr(dualScanRequest(jpegWithDimensions(809, 602)), env)
     assert.equal(res2.status, 200)
     const body2 = await res2.json()
     assert.equal(body2.divergence.totalsAgree, true)
@@ -443,7 +525,7 @@ test('POST /ocr/dual-scan divergence reports positive LLM recovered amount for r
     }),
   })
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const res = await handleOcr(dualScanRequest(new Uint8Array([5, 5, 5])), env)
+  const res = await handleOcr(dualScanRequest(jpegWithDimensions(805, 605)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
   assert.equal(body.status, 'succeeded')
@@ -461,7 +543,7 @@ test('POST /ocr/dual-scan divergence reports positive LLM recovered amount for r
 test('POST /ocr/dual-scan soft-fail unlock admits keyless device when LLM_SCAN_ALLOW_SOFT_FAIL=true', async () => {
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const res = await handleOcr(dualScanRequest(new Uint8Array([7, 7, 7])), env)
+  const res = await handleOcr(dualScanRequest(jpegWithDimensions(807, 607)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
   assert.equal(body.status, 'succeeded')
@@ -499,7 +581,7 @@ test('POST /ocr/dual-scan does NOT cache an LLM-failed partial — retry re-runs
   }
 
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const image = new Uint8Array([9, 9, 9])
+  const image = jpegWithDimensions(809, 609)
 
   const res1 = await handleOcr(dualScanRequest(image), env)
   const body1 = await res1.json()
@@ -578,7 +660,7 @@ test('POST /ocr/dual-scan carries the additive llmReasoning + aiModels fields wi
   // divergence), so this asserts the additive fields AND the untouched shape.
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true' })
-  const res = await handleOcr(dualScanRequest(new Uint8Array([3, 1, 4])), env)
+  const res = await handleOcr(dualScanRequest(jpegWithDimensions(803, 604)), env)
   assert.equal(res.status, 200)
   const body = await res.json()
 

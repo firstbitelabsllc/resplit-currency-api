@@ -218,7 +218,12 @@ async function runPartial({ shadow, clientVersion, imageByte }) {
   console.warn = (line) => lines.push(line)
   try {
     const response = await handleOcr(
-      dualScanRequest(new Uint8Array([imageByte, 2, 3]), clientVersion),
+      dualScanRequest(new Uint8Array([
+        0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08,
+        0x02, 0x58, 0x03, 0x20, 0x03,
+        0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+        imageByte,
+      ]), clientVersion),
       env,
       ctx,
     )
