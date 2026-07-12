@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const { performance } = require('node:perf_hooks')
 const { captureIssue, runMonitoredScript } = require('./sentry-monitoring')
 
 const defaultWorkerBase = 'https://fx.resplit.app'
@@ -9,6 +10,14 @@ const allowedRecoveryCoverageSignals = new Set([
 ])
 const defaultPublishGraceMinutes = 45
 const defaultPublishUtcHours = [0, 3]
+// The stable Pages alias briefly served the prior release for 43 seconds after
+// a successful upload on 2026-07-12. Post-publish retries use single-attempt,
+// five-second requests under one monotonic two-minute deadline; stale primary
+// data still hard-fails when that budget or the observation cap is exhausted.
+const defaultCloudflarePropagationAttempts = 25
+const defaultCloudflarePropagationDelayMs = 5_000
+const defaultCloudflarePropagationDeadlineMs = 120_000
+const defaultCloudflarePropagationRequestTimeoutMs = 5_000
 // GitHub Pages CDN propagation lags Cloudflare after each publish, so the
 // github.io fallback can still serve yesterday's snapshot for a while after the
 // primary (Cloudflare) is already fresh. Accept a one-day-stale fallback only
@@ -39,9 +48,12 @@ async function main() {
     process.env.GH_FALLBACK_GRACE_MINUTES,
     defaultGithubFallbackGraceMinutes
   )
-  const latest = await fetchJSONWithRetry(`${cloudflareBase}/latest/usd.json`)
-  const history = await fetchJSONWithRetry(`${cloudflareBase}/history/30d/usd.json`)
-  const meta = await fetchJSONWithRetry(`${cloudflareBase}/meta.json`)
+  const postPublish = process.env.POST_PUBLISH_SMOKE === '1'
+  const { latest, history, meta } = await fetchCloudflareReleaseState({
+    baseUrl: cloudflareBase,
+    expectedDate: requestedDate,
+    postPublish,
+  })
   const freshnessContract = resolveFreshnessContract({
     requestedDate,
     latestDate: latest?.date,
@@ -120,6 +132,11 @@ async function main() {
     assertISODate(point.date, 'cloudflare history point date')
     assertPositive(point?.rates?.usd, `cloudflare history usd->usd at ${point.date}`)
   }
+  if (history.points.at(-1)?.date !== dateToday) {
+    throw new Error(
+      `cloudflare history latest date expected ${dateToday}, got ${history.points.at(-1)?.date || 'missing'}`
+    )
+  }
 
   if (meta.historyDays !== 30) {
     throw new Error(`cloudflare meta historyDays expected 30, got ${meta.historyDays}`)
@@ -136,7 +153,7 @@ async function main() {
     ghFallbackDate: ghFallbackLatest.date,
     expectedDate: dateToday,
     graceMinutes: githubFallbackGraceMinutes,
-    postPublish: process.env.POST_PUBLISH_SMOKE === '1',
+    postPublish,
   })
   if (!ghFallbackAcceptance.accepted) {
     throw new Error(`github fallback latest date expected ${dateToday}, got ${ghFallbackLatest.date}`)
@@ -158,6 +175,143 @@ async function main() {
 
   console.log(
     `smoke-check-deploy: OK (date=${dateToday}, historyPoints=${history.points.length}, cf=${cloudflareBase})`
+  )
+}
+
+async function fetchCloudflareReleaseState({
+  baseUrl,
+  expectedDate,
+  postPublish = false,
+  attempts = defaultCloudflarePropagationAttempts,
+  delayMs = defaultCloudflarePropagationDelayMs,
+  deadlineMs = defaultCloudflarePropagationDeadlineMs,
+  requestTimeoutMs = defaultCloudflarePropagationRequestTimeoutMs,
+  fetchJson,
+  wait = sleep,
+  now = () => performance.now(),
+  warn = console.warn,
+} = {}) {
+  const normalizedBase = String(baseUrl || '').replace(/\/+$/, '')
+  const retryExpectedDate = postPublish && /^\d{4}-\d{2}-\d{2}$/.test(expectedDate || '')
+  const boundedAttempts = retryExpectedDate ? parsePositiveInteger(attempts, 1) : 1
+  const boundedDeadlineMs = parsePositiveInteger(
+    deadlineMs,
+    defaultCloudflarePropagationDeadlineMs
+  )
+  const boundedRequestTimeoutMs = parsePositiveInteger(
+    requestTimeoutMs,
+    defaultCloudflarePropagationRequestTimeoutMs
+  )
+  const fetchReleaseJson = fetchJson || (
+    retryExpectedDate ? fetchJSONOnce : fetchJSONWithRetry
+  )
+  const deadlineAt = retryExpectedDate ? now() + boundedDeadlineMs : null
+  let latest = null
+  let history = null
+  let meta = null
+  let lastFetchError = null
+
+  const deadlineError = () => new Error(
+    `cloudflare post-publish propagation deadline exceeded after ${boundedDeadlineMs}ms ` +
+    `(expected=${expectedDate}, latest=${latest?.date || 'missing'}, ` +
+    `history=${Array.isArray(history?.points) ? history.points.at(-1)?.date || 'missing' : 'missing'}, ` +
+    `meta=${meta?.latestDate || 'missing'}${lastFetchError ? `, transport=${lastFetchError.message}` : ''})`
+  )
+
+  for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
+    if (retryExpectedDate && now() >= deadlineAt) {
+      throw deadlineError()
+    }
+
+    const remainingMs = retryExpectedDate ? Math.max(1, deadlineAt - now()) : null
+    const effectiveRequestTimeoutMs = retryExpectedDate
+      ? Math.max(1, Math.ceil(Math.min(boundedRequestTimeoutMs, remainingMs)))
+      : boundedRequestTimeoutMs
+    const fetchRelease = (url) => retryExpectedDate
+      ? fetchReleaseJson(url, { timeoutMs: effectiveRequestTimeoutMs })
+      : fetchReleaseJson(url)
+    const requests = await Promise.allSettled([
+      fetchRelease(`${normalizedBase}/latest/usd.json`),
+      fetchRelease(`${normalizedBase}/history/30d/usd.json`),
+      fetchRelease(`${normalizedBase}/meta.json`),
+    ])
+    const rejected = requests.find((request) => request.status === 'rejected')
+    if (rejected) {
+      lastFetchError = rejected.reason instanceof Error
+        ? rejected.reason
+        : new Error(String(rejected.reason))
+      if (!retryExpectedDate) {
+        throw lastFetchError
+      }
+      if (attempt >= boundedAttempts || now() >= deadlineAt) {
+        throw deadlineError()
+      }
+      const remainingDelayMs = deadlineAt - now()
+      const retryDelayMs = Math.min(delayMs, remainingDelayMs)
+      warn(
+        `smoke-check-deploy: retrying Cloudflare Pages transport ` +
+        `(attempt=${attempt}/${boundedAttempts}, expected=${expectedDate}, ` +
+        `remainingMs=${Math.max(0, Math.ceil(remainingDelayMs))}, error=${lastFetchError.message})`
+      )
+      await wait(retryDelayMs)
+      continue
+    }
+
+    if (retryExpectedDate && now() >= deadlineAt) {
+      throw deadlineError()
+    }
+
+    lastFetchError = null
+    const observed = requests.map((request) => request.value)
+    latest = observed[0]
+    history = observed[1]
+    meta = observed[2]
+    const historyLatestDate = Array.isArray(history?.points)
+      ? history.points.at(-1)?.date
+      : null
+
+    if (
+      !retryExpectedDate ||
+      (
+        latest?.date === expectedDate &&
+        meta?.latestDate === expectedDate &&
+        historyLatestDate === expectedDate
+      )
+    ) {
+      return { latest, history, meta }
+    }
+
+    const previousDate = dateDaysBeforeUTC(expectedDate, 1)
+    const observedDates = [latest?.date, historyLatestDate, meta?.latestDate]
+    const propagationPending =
+      observedDates.every((date) => date === expectedDate || date === previousDate) &&
+      observedDates.some((date) => date === previousDate)
+    if (!propagationPending) {
+      return { latest, history, meta }
+    }
+
+    if (attempt < boundedAttempts && now() < deadlineAt) {
+      const remainingDelayMs = deadlineAt - now()
+      const retryDelayMs = Math.min(delayMs, remainingDelayMs)
+      warn(
+        `smoke-check-deploy: waiting for Cloudflare Pages propagation ` +
+        `(attempt=${attempt}/${boundedAttempts}, expected=${expectedDate}, ` +
+        `latest=${latest?.date || 'missing'}, history=${historyLatestDate || 'missing'}, ` +
+        `meta=${meta?.latestDate || 'missing'})`
+      )
+      await wait(retryDelayMs)
+    }
+  }
+
+  if (retryExpectedDate && now() >= deadlineAt) {
+    throw deadlineError()
+  }
+
+  throw new Error(
+    `cloudflare latest date expected ${expectedDate}, got ${latest?.date || 'missing'} ` +
+    `after ${boundedAttempts} post-publish propagation attempts ` +
+    `(history latestDate ${Array.isArray(history?.points) ? history.points.at(-1)?.date || 'missing' : 'missing'}, ` +
+    `meta latestDate ${meta?.latestDate || 'missing'})`
   )
 }
 
@@ -435,11 +589,7 @@ async function fetchJSONWithRetry(url, attempts = 8, delayMs = 3_000) {
 
   for (let index = 0; index < attempts; index += 1) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(15_000) })
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-      return await response.json()
+      return await fetchJSONOnce(url)
     } catch (error) {
       lastError = error
       if (index < attempts - 1) {
@@ -449,6 +599,16 @@ async function fetchJSONWithRetry(url, attempts = 8, delayMs = 3_000) {
   }
 
   throw new Error(`Failed to fetch ${url}: ${lastError?.message || 'unknown error'}`)
+}
+
+async function fetchJSONOnce(url, { timeoutMs = 15_000 } = {}) {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(parsePositiveInteger(timeoutMs, 15_000)),
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return await response.json()
 }
 
 function sleep(ms) {
@@ -486,10 +646,15 @@ function parsePositiveInteger(value, fallback) {
 }
 
 module.exports = {
+  defaultCloudflarePropagationAttempts,
+  defaultCloudflarePropagationDelayMs,
+  defaultCloudflarePropagationDeadlineMs,
+  defaultCloudflarePropagationRequestTimeoutMs,
   defaultWorkerBase,
   defaultPublishGraceMinutes,
   defaultGithubFallbackGraceMinutes,
   fetchJSONWithRetry,
+  fetchCloudflareReleaseState,
   isRecoveryCoverageGap,
   isStaticRecoveryHistoryGap,
   main,

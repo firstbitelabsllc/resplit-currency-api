@@ -2,7 +2,12 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const {
+  defaultCloudflarePropagationAttempts,
+  defaultCloudflarePropagationDeadlineMs,
+  defaultCloudflarePropagationDelayMs,
+  defaultCloudflarePropagationRequestTimeoutMs,
   defaultWorkerBase,
+  fetchCloudflareReleaseState,
   isRecoveryCoverageGap,
   isStaticRecoveryHistoryGap,
   resolveFreshnessContract,
@@ -21,6 +26,258 @@ function makeWorkerHealthPayload() {
     timestamp: '2026-03-25T14:00:00.000Z',
   }
 }
+
+test('Cloudflare propagation retry defaults stay bounded', () => {
+  assert.equal(defaultCloudflarePropagationAttempts, 25)
+  assert.equal(defaultCloudflarePropagationDelayMs, 5_000)
+  assert.equal(defaultCloudflarePropagationDeadlineMs, 120_000)
+  assert.equal(defaultCloudflarePropagationRequestTimeoutMs, 5_000)
+})
+
+test('fetchCloudflareReleaseState retries stale post-publish JSON until latest, history, and meta agree', async () => {
+  let cycle = 0
+  const waits = []
+  const warnings = []
+
+  const result = await fetchCloudflareReleaseState({
+    baseUrl: 'https://resplit-currency-api.pages.dev/',
+    expectedDate: '2026-07-12',
+    postPublish: true,
+    attempts: 3,
+    delayMs: 7,
+    fetchJson: async (url) => {
+      if (url.endsWith('/latest/usd.json')) {
+        cycle += 1
+        return { date: cycle < 3 ? '2026-07-11' : '2026-07-12' }
+      }
+      if (url.endsWith('/history/30d/usd.json')) {
+        return { points: [{ date: cycle < 3 ? '2026-07-11' : '2026-07-12' }] }
+      }
+      return { latestDate: cycle < 3 ? '2026-07-11' : '2026-07-12' }
+    },
+    wait: async (ms) => waits.push(ms),
+    warn: (message) => warnings.push(message),
+  })
+
+  assert.deepEqual(result, {
+    latest: { date: '2026-07-12' },
+    history: { points: [{ date: '2026-07-12' }] },
+    meta: { latestDate: '2026-07-12' },
+  })
+  assert.equal(cycle, 3)
+  assert.deepEqual(waits, [7, 7])
+  assert.equal(warnings.length, 2)
+})
+
+test('fetchCloudflareReleaseState refetches a split Pages release as one bundle', async () => {
+  let cycle = 0
+  const result = await fetchCloudflareReleaseState({
+    baseUrl: 'https://resplit-currency-api.pages.dev',
+    expectedDate: '2026-07-12',
+    postPublish: true,
+    attempts: 2,
+    fetchJson: async (url) => {
+      if (url.endsWith('/latest/usd.json')) {
+        cycle += 1
+        return { date: '2026-07-12' }
+      }
+      if (url.endsWith('/history/30d/usd.json')) {
+        return { points: [{ date: cycle === 1 ? '2026-07-11' : '2026-07-12' }] }
+      }
+      return { latestDate: cycle === 1 ? '2026-07-11' : '2026-07-12' }
+    },
+    wait: async () => {},
+    warn: () => {},
+  })
+
+  assert.equal(cycle, 2)
+  assert.equal(result.latest.date, '2026-07-12')
+  assert.equal(result.history.points.at(-1).date, '2026-07-12')
+  assert.equal(result.meta.latestDate, '2026-07-12')
+})
+
+test('fetchCloudflareReleaseState fails closed after the bounded post-publish window', async () => {
+  let latestRequests = 0
+  const waits = []
+
+  await assert.rejects(
+    fetchCloudflareReleaseState({
+      baseUrl: 'https://resplit-currency-api.pages.dev',
+      expectedDate: '2026-07-12',
+      postPublish: true,
+      attempts: 3,
+      delayMs: 11,
+      fetchJson: async (url) => {
+        if (url.endsWith('/latest/usd.json')) {
+          latestRequests += 1
+          return { date: '2026-07-11' }
+        }
+        if (url.endsWith('/history/30d/usd.json')) {
+          return { points: [{ date: '2026-07-11' }] }
+        }
+        return { latestDate: '2026-07-11' }
+      },
+      wait: async (ms) => waits.push(ms),
+      warn: () => {},
+    }),
+    /cloudflare latest date expected 2026-07-12, got 2026-07-11 after 3 post-publish propagation attempts/
+  )
+
+  assert.equal(latestRequests, 3)
+  assert.deepEqual(waits, [11, 11])
+})
+
+test('fetchCloudflareReleaseState enforces one deadline across transport attempts and waits', async () => {
+  let elapsedMs = 0
+  let latestRequests = 0
+  const requestTimeouts = []
+  const waits = []
+
+  await assert.rejects(
+    fetchCloudflareReleaseState({
+      baseUrl: 'https://resplit-currency-api.pages.dev',
+      expectedDate: '2026-07-12',
+      postPublish: true,
+      attempts: 25,
+      deadlineMs: 120,
+      requestTimeoutMs: 50,
+      delayMs: 20,
+      now: () => elapsedMs,
+      fetchJson: async (url, { timeoutMs }) => {
+        requestTimeouts.push(timeoutMs)
+        if (url.endsWith('/latest/usd.json')) {
+          latestRequests += 1
+          elapsedMs += timeoutMs
+        }
+        throw new Error('simulated transport timeout')
+      },
+      wait: async (ms) => {
+        waits.push(ms)
+        elapsedMs += ms
+      },
+      warn: () => {},
+    }),
+    /cloudflare post-publish propagation deadline exceeded after 120ms/
+  )
+
+  assert.equal(elapsedMs, 120)
+  assert.equal(latestRequests, 2)
+  assert.deepEqual(waits, [20])
+  assert.deepEqual(requestTimeouts, [50, 50, 50, 50, 50, 50])
+})
+
+test('fetchCloudflareReleaseState does not accept a fresh bundle that settles at the deadline', async () => {
+  let elapsedMs = 0
+
+  await assert.rejects(
+    fetchCloudflareReleaseState({
+      baseUrl: 'https://resplit-currency-api.pages.dev',
+      expectedDate: '2026-07-12',
+      postPublish: true,
+      deadlineMs: 100,
+      requestTimeoutMs: 100,
+      now: () => elapsedMs,
+      fetchJson: async (url, { timeoutMs }) => {
+        if (url.endsWith('/latest/usd.json')) {
+          elapsedMs += timeoutMs
+          return { date: '2026-07-12' }
+        }
+        if (url.endsWith('/history/30d/usd.json')) {
+          return { points: [{ date: '2026-07-12' }] }
+        }
+        return { latestDate: '2026-07-12' }
+      },
+      wait: async () => assert.fail('deadline settlement must not wait'),
+      warn: () => assert.fail('deadline settlement must not warn'),
+    }),
+    /cloudflare post-publish propagation deadline exceeded after 100ms/
+  )
+})
+
+test('fetchCloudflareReleaseState does not soften stale data outside post-publish smoke', async () => {
+  let requests = 0
+  const result = await fetchCloudflareReleaseState({
+    baseUrl: 'https://resplit-currency-api.pages.dev',
+    expectedDate: '2026-07-12',
+    postPublish: false,
+    attempts: 99,
+    fetchJson: async (url) => {
+      requests += 1
+      if (url.endsWith('/latest/usd.json')) return { date: '2026-07-11' }
+      if (url.endsWith('/history/30d/usd.json')) {
+        return { points: [{ date: '2026-07-11' }] }
+      }
+      return { latestDate: '2026-07-11' }
+    },
+    wait: async () => assert.fail('non-post-publish smoke must not wait'),
+    warn: () => assert.fail('non-post-publish smoke must not warn'),
+  })
+
+  assert.deepEqual(result, {
+    latest: { date: '2026-07-11' },
+    history: { points: [{ date: '2026-07-11' }] },
+    meta: { latestDate: '2026-07-11' },
+  })
+  assert.equal(requests, 3)
+})
+
+test('fetchCloudflareReleaseState preserves the default retry transport outside post-publish smoke', async (t) => {
+  const originalFetch = global.fetch
+  const requestedUrls = []
+  global.fetch = async (url) => {
+    requestedUrls.push(url)
+    let payload
+    if (url.endsWith('/latest/usd.json')) {
+      payload = { date: '2026-07-12' }
+    } else if (url.endsWith('/history/30d/usd.json')) {
+      payload = { points: [{ date: '2026-07-12' }] }
+    } else {
+      payload = { latestDate: '2026-07-12' }
+    }
+    return { ok: true, json: async () => payload }
+  }
+  t.after(() => {
+    global.fetch = originalFetch
+  })
+
+  const result = await fetchCloudflareReleaseState({
+    baseUrl: 'https://resplit-currency-api.pages.dev',
+    expectedDate: '2026-07-12',
+    postPublish: false,
+  })
+
+  assert.deepEqual(result, {
+    latest: { date: '2026-07-12' },
+    history: { points: [{ date: '2026-07-12' }] },
+    meta: { latestDate: '2026-07-12' },
+  })
+  assert.equal(requestedUrls.length, 3)
+})
+
+test('fetchCloudflareReleaseState does not delay malformed, future, or multi-day stale releases', async () => {
+  for (const observedDate of ['invalid', '2026-07-13', '2026-07-10']) {
+    let requests = 0
+    const result = await fetchCloudflareReleaseState({
+      baseUrl: 'https://resplit-currency-api.pages.dev',
+      expectedDate: '2026-07-12',
+      postPublish: true,
+      attempts: 25,
+      fetchJson: async (url) => {
+        requests += 1
+        if (url.endsWith('/latest/usd.json')) return { date: observedDate }
+        if (url.endsWith('/history/30d/usd.json')) {
+          return { points: [{ date: observedDate }] }
+        }
+        return { latestDate: observedDate }
+      },
+      wait: async () => assert.fail(`must not wait for ${observedDate}`),
+      warn: () => assert.fail(`must not warn for ${observedDate}`),
+    })
+
+    assert.equal(result.latest.date, observedDate)
+    assert.equal(requests, 3)
+  }
+})
 
 test('resolveWorkerBase defaults to the canonical production worker host', () => {
   assert.equal(resolveWorkerBase({}), defaultWorkerBase)

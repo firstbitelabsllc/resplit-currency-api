@@ -1,5 +1,13 @@
 # Resplit Nurse Log
 
+## 2026-07-11 20:50 EDT / 2026-07-12 00:50 UTC
+
+- `GO/live-package-current`, `NO-GO/recovery-source-unmerged` after workflow run `29173999975`. The run published source head `d1e76003`, committed the `2026-07-12` snapshot as `ae8958bc`, and completed Cloudflare Pages, Worker, and GitHub Pages deploy steps; its final smoke alone failed while the stable Cloudflare alias still served `2026-07-11`. The workflow conclusion remains red even though the deployed aliases converged afterward.
+- Recovery branch `codex/fx-post-publish-propagation-20260711` is isolated from dirty primary checkouts and based on `origin/main` `ae8958bc`. Post-publish smoke now refetches Cloudflare latest, 30-day history, and metadata as one release bundle only while every observed date is either the requested date or exactly the prior day. It succeeds only when all three reach the requested date, keeps non-post-publish smoke strict, returns malformed/future/multi-day-stale states immediately to the existing hard assertions, and fails after a bounded propagation window instead of accepting stale primary data.
+- Fresh source proof: focused deploy-smoke tests `37/37`; full `PUBLISH_DATE=2026-07-12 npm run check` accepted 166 currencies and passed Node `495/495` plus Worker `13/13`; both normal and post-publish live smokes pinned to `EXPECTED_DATE=2026-07-12` passed with 30 history points; Wrangler `4.110.0` root dry-run bundled canonical production bindings; `node --check` and `git diff --check` are clean. No generated snapshot changed.
+- Separate runtime truth: Cloudflare, GitHub Pages, and Worker already serve the exact `2026-07-12` package from the prior red workflow, while this recovery code is still only an unmerged branch and has not been deployed.
+- Independent exact-diff review is clean. Exact next slice: push the focused PR, merge after hosted checks, then issue one deliberate workflow dispatch from the merged head and prove workflow conclusion, snapshot/source SHA, deploy steps, and live dates separately before reranking FX work.
+
 ## 2026-07-11 20:13 EDT / 2026-07-12 00:13 UTC
 
 - `GO/source-proven-draft-open`, `NO-GO/merge-and-deploy-pending` for PR `#79`; production was read only.
