@@ -8,11 +8,16 @@
 // Device records live in KV (`ATTEST_KV`):
 //   attest:<keyId> -> { publicKeyB64(SPKI), signCount, createdAt }
 
+const SIG_DIAGNOSTIC_REASONS = new Set(['der_sequence', 'der_integer', 'verify_false'])
+
 export class AttestError extends Error {
-  constructor(code, message) {
+  constructor(code, message, reason) {
     super(message)
     this.code = code
     this.name = 'AttestError'
+    // This is an internal, allowlisted log discriminator only. Keep the public
+    // error code stable and never carry key, assertion, or body-derived data.
+    if (code === 'SIG' && SIG_DIAGNOSTIC_REASONS.has(reason)) this.reason = reason
   }
 }
 
@@ -108,21 +113,43 @@ export async function importCoseEcKey(coseBytes) {
 }
 
 // DER ECDSA (SEQUENCE { INTEGER r, INTEGER s }) -> raw 64-byte r||s.
+// ES256's complete DER signature is always below 128 bytes, so non-short-form
+// lengths are invalid here. Every malformed encoding remains the public SIG
+// rejection rather than escaping as a generic Worker exception.
 function derToRawEcdsa(der) {
+  const sequenceError = (message) => new AttestError('SIG', message, 'der_sequence')
+  const integerError = (message) => new AttestError('SIG', message, 'der_integer')
   let pos = 0
-  if (der[pos++] !== 0x30) throw new AttestError('SIG', 'bad DER sig')
-  if (der[pos] & 0x80) pos += 1 + (der[pos] & 0x7f); else pos++
+
+  if (der.length < 2 || der[pos++] !== 0x30) throw sequenceError('bad DER sequence')
+  const sequenceLength = der[pos++]
+  if ((sequenceLength & 0x80) !== 0) throw sequenceError('non-short DER sequence length')
+  const sequenceEnd = pos + sequenceLength
+  if (sequenceEnd !== der.length) throw sequenceError('DER sequence length mismatch')
+
   const readInt = () => {
-    if (der[pos++] !== 0x02) throw new AttestError('SIG', 'bad DER int')
-    const len = der[pos++]
-    let val = der.subarray(pos, pos + len); pos += len
-    while (val.length > 32 && val[0] === 0x00) val = val.subarray(1)
+    if (pos >= sequenceEnd || der[pos++] !== 0x02) throw integerError('bad DER integer tag')
+    if (pos >= sequenceEnd) throw integerError('missing DER integer length')
+    const length = der[pos++]
+    if ((length & 0x80) !== 0 || length === 0 || pos + length > sequenceEnd) {
+      throw integerError('bad DER integer length')
+    }
+    let value = der.subarray(pos, pos + length)
+    pos += length
+    if (value[0] & 0x80) throw integerError('negative DER integer')
+    if (value.length > 1 && value[0] === 0x00) {
+      if ((value[1] & 0x80) === 0) throw integerError('non-minimal DER integer')
+      value = value.subarray(1)
+    }
+    if (value.length > 32) throw integerError('DER integer exceeds P-256 width')
     const out = new Uint8Array(32)
-    out.set(val, 32 - val.length)
+    out.set(value, 32 - value.length)
     return out
   }
+
   const r = readInt()
   const s = readInt()
+  if (pos !== sequenceEnd) throw sequenceError('trailing DER signature data')
   return concat(r, s)
 }
 
@@ -159,7 +186,7 @@ export async function verifyAssertion({ keyId, assertionB64, clientData, appId, 
   )
   const rawSig = derToRawEcdsa(signature)
   const valid = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pubKey, rawSig, signedData)
-  if (!valid) throw new AttestError('SIG', 'assertion signature invalid')
+  if (!valid) throw new AttestError('SIG', 'assertion signature invalid', 'verify_false')
 
   const ad = parseAuthData(authData)
   const expectedRpId = await sha256(new TextEncoder().encode(appId))

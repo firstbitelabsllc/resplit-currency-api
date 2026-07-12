@@ -122,7 +122,7 @@ test('verifyAssertion rejects a signature from the wrong key', async () => {
   const forged = await buildAssertion(attackerKey.privateKey, clientData, 1) // signed by attacker
   await assert.rejects(
     () => verifyAssertion({ keyId, assertionB64: forged, clientData, appId: APP_ID, kv }),
-    (e) => e instanceof AttestError && e.code === 'SIG',
+    (e) => e instanceof AttestError && e.code === 'SIG' && e.reason === 'verify_false',
   )
 })
 
@@ -146,6 +146,29 @@ test('verifyAssertion rejects when the request body (clientData) is tampered', a
   const tampered = new TextEncoder().encode('swapped-image')
   await assert.rejects(
     () => verifyAssertion({ keyId, assertionB64: assertion, clientData: tampered, appId: APP_ID, kv }),
-    (e) => e instanceof AttestError && e.code === 'SIG',
+    (e) => e instanceof AttestError && e.code === 'SIG' && e.reason === 'verify_false',
   )
+})
+
+test('verifyAssertion classifies malformed DER as SIG without leaking a generic runtime error', async () => {
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey))
+  const kv = makeKV()
+  const clientData = new TextEncoder().encode('malformed-signature-image')
+  const authData = await buildAuthData(1)
+  const cases = [
+    ['oversized integer', concat(Uint8Array.of(0x30, 0x26, 0x02, 0x21), new Uint8Array(33).fill(1), Uint8Array.of(0x02, 0x01, 0x01)), 'der_integer'],
+    ['sequence', Uint8Array.of(0x31), 'der_sequence'],
+  ]
+
+  for (const [name, signatureDer, reason] of cases) {
+    const keyId = `malformed-${name}`
+    await kv.put(`attest:${keyId}`, JSON.stringify({ publicKeyB64: bytesToB64(spki), signCount: 0 }))
+    const assertionB64 = bytesToB64(cborAssertion(signatureDer, authData))
+    await assert.rejects(
+      () => verifyAssertion({ keyId, assertionB64, clientData, appId: APP_ID, kv }),
+      (e) => e instanceof AttestError && e.code === 'SIG' && e.reason === reason,
+      `${name} DER must remain a classified SIG rejection`,
+    )
+  }
 })
