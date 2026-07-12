@@ -76,11 +76,16 @@ const LEGACY_PARTIAL_LLM_STATUSES = new Set([
   'provider_unavailable',
   'rate_limited',
 ])
-const SAFE_CLIENT_VERSION = /^[A-Za-z0-9._+-]{1,64}$/
+// `defaultClientVersion()` on iOS emits a numeric CFBundle short version with
+// an optional numeric build suffix (for example, 2.2.0+4023). Do not log an
+// arbitrary caller-controlled token here: App Attest rejects happen before an
+// authenticated product request, so loose header values would create a PII
+// and telemetry-cardinality sink.
+const NATIVE_CLIENT_VERSION = /^\d{1,3}(?:\.\d{1,3}){0,2}(?:\+\d{1,8})?$/
 
 function attestRejectClientVersion(request) {
   const value = request.headers.get('x-resplit-client-version')?.trim()
-  return value && SAFE_CLIENT_VERSION.test(value) ? value : 'unknown'
+  return value && NATIVE_CLIENT_VERSION.test(value) ? value : 'unknown'
 }
 
 const sha256Hex = async (bytes) => {

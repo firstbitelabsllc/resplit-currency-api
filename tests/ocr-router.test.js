@@ -261,6 +261,7 @@ test('SIG rejects preserve the public 401 contract while logging a PII-free disc
   const authData = new Uint8Array(37)
   const cases = [
     ['der_sequence', Uint8Array.of(0x31), '2.0.0+4023', '2.0.0+4023'],
+    ['der_integer', concat(Uint8Array.of(0x30, 0x26, 0x02, 0x21), new Uint8Array(33).fill(1), Uint8Array.of(0x02, 0x01, 0x01)), 'amFuZUBleGFtcGxlLmNvbQ', 'unknown'],
     ['verify_false', Uint8Array.of(0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01), 'untrusted version; do-not-log', 'unknown'],
   ]
   const warnings = []
@@ -295,8 +296,8 @@ test('SIG rejects preserve the public 401 contract while logging a PII-free disc
     .filter((line) => typeof line === 'string' && line.startsWith('[OCR_MONITORING] '))
     .map((line) => JSON.parse(line.replace('[OCR_MONITORING] ', '')))
     .filter((event) => event.signal === 'attest_reject')
-  assert.equal(events.length, 2)
-  assert.deepEqual(events.map((event) => event.reason), ['der_sequence', 'verify_false'])
+  assert.equal(events.length, 3)
+  assert.deepEqual(events.map((event) => event.reason), ['der_sequence', 'der_integer', 'verify_false'])
   for (const [index, event] of events.entries()) {
     assert.equal(event.code, 'SIG')
     assert.equal(event.path, '/ocr/scan')
