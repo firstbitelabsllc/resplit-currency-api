@@ -21,6 +21,7 @@
     "check": "npm run generate && npm run validate:release && npm run test && npm run test:workers"
   },
   "dependencies": {
+    "@cf-wasm/photon": "0.3.6",
     "@peculiar/x509": "^2.0.0",
     "@sentry/cloudflare": "^10.44.0",
     "@sentry/node": "10.54.0",
