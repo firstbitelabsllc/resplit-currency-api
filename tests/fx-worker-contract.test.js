@@ -127,6 +127,43 @@ test('worker quote falls back to latest when the historical year payload is unav
   assert.ok(requested.some(url => url.endsWith('/latest/aed.json')))
 })
 
+test('worker quote preserves the historical year failure when latest is also unavailable', async () => {
+  const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
+  const requested = []
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    requested.push(url)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return makeJsonResponse({
+        earliestDate: '2026-02-20',
+        latestDate: '2026-03-16',
+        availableDates: ['2026-02-20', '2026-02-23', '2026-03-16'],
+        gapCount: 2,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    if (url.endsWith('/archive-years/2026.min.json')) {
+      return new Response('archive down', { status: 503 })
+    }
+    if (url.endsWith('/latest/aed.json')) {
+      return new Response('latest down', { status: 502 })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  await assert.rejects(
+    buildFxQuoteResponse({
+      from: 'AED',
+      to: 'USD',
+      date: '2026-02-23',
+      fetchImpl,
+    }),
+    /503 .*archive-years\/2026\.min\.json/
+  )
+  assert.ok(requested.some(url => url.endsWith('/latest/aed.json')))
+})
+
 test('worker history loads cross-year ranges from year payloads', async () => {
   const { buildFxHistoryResponse } = await import('../worker/src/fx-contract.mjs')
   const requested = []
