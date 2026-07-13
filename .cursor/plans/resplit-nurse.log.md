@@ -1,5 +1,17 @@
 # Resplit Nurse Log
 
+## 2026-07-13 07:13 EDT / 2026-07-13 11:13 UTC
+
+- `GO/merged-and-live` for historical quote recovery when a manifest-referenced yearly archive is unavailable. PR `#91` carried reviewed head `bbc0d8d7`, passed CodeQL, Cursor, Graphite, and independent review, then squash-merged as `a0d78591dc75542338b679957f8380439b7f52ec`.
+- Behavior repair: after a successful archive manifest read, a failed or malformed `archive-years/<year>.min.json` read now attempts the existing latest-rate fallback. A usable latest quote keeps its truthful `today_fallback` response; if latest is also unavailable, the original archive error remains the typed `502` cause. Degraded quote responses now emit correlated `today_fallback_used` or `prior_day_fallback_used` structured telemetry through the existing fail-open logger.
+- Mechanical proof: sealed RED `3f243a1e` exposed the skipped latest fallback, sealed RED `17ceb737` pinned the dual-outage error precedence, and review RED `f2cf786f` exposed the missing recovered-response signal. Final `npm run check` passed Node `564/564` plus Worker `13/13`; post-fix deploy smoke and root plus named-production Wrangler `4.110.0` dry-runs passed. Production dependency audit is clean; the full audit retains one unrelated dev-only moderate `yaml` advisory.
+- Exact-main workflow `29245356258` completed `success` from merge SHA `a0d78591` in `59s`. Rate generation/validation, deployed provider-secret continuity, Cloudflare Pages, the FX Worker, GitHub Pages, and post-deploy smoke passed. The workflow's Sentry-finish step stayed green but skipped its finish call because dispatch start produced no check-in id; GitHub `AZURE_OCR_KEY` was unset while deployed Worker secret continuity passed.
+- Fresh production readback: `GET https://fx.resplit.app/health` returned HTTP `200`, `cache-control: no-store`, exact release `a0d78591dc75542338b679957f8380439b7f52ec`, timestamp `2026-07-13T11:12:22.543Z`, and matching request/trace id `rw-fx-year-fallback-20260713T1112Z`. Worker quote, seven-day coverage, and the Web mirror returned the exact `2026-07-13` AED/USD rate; coverage was `7/7` with zero gaps, zero lag, zero mismatches, and no signals.
+- Production was not faulted to manufacture an archive outage, so organic `today_fallback_used` occurrence remains unproven. No OCR request, paid provider call, secret read/write, or user-adoption event was manufactured; the Grafana API key remains unavailable locally.
+- Exact next slice: fold this source/deploy/runtime receipt into the canonical Resplit Web launch PLAN and ledger, release the bounded claims, then rerank from fresh authority. Do not reopen this row unless a year-archive failure again bypasses latest recovery, hides its correlated fallback signal, or loses the original error when both sources fail.
+
+<promise>COMPLETE: source, merge, deploy, health, and synthetic recovery proof; UNCLAIMED: organic fallback occurrence</promise>
+
 ## 2026-07-13 05:05 EDT / 2026-07-13 09:05 UTC
 
 - `GO/merged-and-live` for FX telemetry fail-open behavior; `OBSERVABILITY/occurrence-unproven` for organic monitoring failures. PR `#89` carried final head `904277dd`, passed CodeQL, Cursor, Graphite, and independent review, then squash-merged as `a374d3fd2495f6320d2ed5b7db74ee293b291eae`.
