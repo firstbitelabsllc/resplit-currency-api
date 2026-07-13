@@ -32,6 +32,32 @@ import { handleOcr } from './ocr/router.mjs'
 const ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
 const QUOTE_HISTORY_CACHE_CONTROL = 'public, s-maxage=3600, stale-while-revalidate=86400'
 
+/**
+ * @template T
+ * @param {() => T | Promise<T>} operation
+ * @param {T} fallback
+ * @returns {Promise<T>}
+ */
+async function runMonitoringBestEffort(operation, fallback) {
+  try {
+    return await operation()
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * @param {'log' | 'warn' | 'error'} method
+ * @param {...unknown} args
+ */
+function writeConsoleBestEffort(method, ...args) {
+  try {
+    console[method](...args)
+  } catch {
+    return
+  }
+}
+
 const handler = {
   /**
    * @param {Request} request
@@ -52,7 +78,7 @@ const handler = {
    */
   async scheduled(controller, env, _ctx) {
     const requestId = `sched-${crypto.randomUUID()}`
-    console.log(`[FX_CANARY] trigger=scheduled cron=${controller.cron} requestId=${requestId}`)
+    writeConsoleBestEffort('log', `[FX_CANARY] trigger=scheduled cron=${controller.cron} requestId=${requestId}`)
     await runScheduledFxCanary(env, { requestId })
   },
 }
@@ -174,14 +200,14 @@ async function handleQuote(request, env) {
       })
     }
 
-    await captureFxRouteFailure(error, {
+    await runMonitoringBestEffort(() => captureFxRouteFailure(error, {
       route: 'quote',
       signal: 'worker_route_exception',
       requestId,
       from,
       to,
       requestedDate: date,
-    }, env)
+    }, env), false)
     return errorResponse('FX_QUOTE_FAILED', message, 502, requestId, {
       'Cache-Control': 'no-store',
     })
@@ -238,7 +264,7 @@ async function handleHistory(request, env) {
       })
     }
 
-    await captureFxRouteFailure(error, {
+    await runMonitoringBestEffort(() => captureFxRouteFailure(error, {
       route: 'history',
       signal: 'worker_route_exception',
       requestId,
@@ -246,7 +272,7 @@ async function handleHistory(request, env) {
       to,
       start,
       end,
-    }, env)
+    }, env), false)
     return errorResponse('FX_HISTORY_FAILED', message, 502, requestId, {
       'Cache-Control': 'no-store',
     })
@@ -289,10 +315,13 @@ async function handleCoverage(request, env) {
     const line = `[FX_DIAGNOSTICS] step=done status=200 ${summary}`
 
     if (report.mismatchCount > 0) {
-      console.warn(line)
-      await captureFxCoverageMismatch(report, 'fx-coverage-route', requestId, env)
+      writeConsoleBestEffort('warn', line)
+      await runMonitoringBestEffort(
+        () => captureFxCoverageMismatch(report, 'fx-coverage-route', requestId, env),
+        false
+      )
     } else {
-      console.log(line)
+      writeConsoleBestEffort('log', line)
       logFxMonitoringEvent('info', {
         signal: 'coverage_ok',
         source: 'fx-coverage-route',
@@ -318,21 +347,21 @@ async function handleCoverage(request, env) {
       `[FX_DIAGNOSTICS] step=error from=${rawFrom} to=${rawTo} anchorDate=${rawAnchorDate ?? 'today'} days=${rawDays} message=${message}`
 
     if (message.startsWith('Invalid ') || message.startsWith('No history points available')) {
-      console.warn(line)
+      writeConsoleBestEffort('warn', line)
       return errorResponse('INVALID_QUERY', message, 400, requestId, {
         'Cache-Control': 'no-store',
       })
     }
 
-    console.error(line)
-    await captureFxCoverageFailure(error, {
+    writeConsoleBestEffort('error', line)
+    await runMonitoringBestEffort(() => captureFxCoverageFailure(error, {
       source: 'fx-coverage-route',
       from: rawFrom,
       to: rawTo,
       anchorDate: rawAnchorDate ?? new Date().toISOString().slice(0, 10),
       requestedDays: rawDays,
       requestId,
-    }, env)
+    }, env), false)
     return errorResponse('FX_DIAGNOSTICS_FAILED', message, 502, requestId, {
       'Cache-Control': 'no-store',
     })
@@ -343,7 +372,7 @@ async function handleFxCanary(request, env) {
   const requestId = resolveRequestId(request)
 
   if (!isAuthorizedCronRequest(request, env)) {
-    console.warn('[FX_CANARY] status=401 unauthorized')
+    writeConsoleBestEffort('warn', '[FX_CANARY] status=401 unauthorized')
     return errorResponse(
       'UNAUTHORIZED',
       'Missing or invalid cron authorization',
@@ -379,7 +408,7 @@ async function handleFxCanary(request, env) {
  */
 async function runScheduledFxCanary(env, { requestId }) {
   const startedAt = Date.now()
-  const checkInId = startFxCanaryCheckIn(env)
+  const checkInId = await runMonitoringBestEffort(() => startFxCanaryCheckIn(env), null)
   let checkInStatus = 'error'
 
   try {
@@ -398,18 +427,19 @@ async function runScheduledFxCanary(env, { requestId }) {
       checkedAt: report.checkedAt,
     }, env)
 
-    console[report.ok ? 'log' : 'error'](
+    writeConsoleBestEffort(
+      report.ok ? 'log' : 'error',
       `[FX_CANARY] status=${report.ok ? 200 : 500} ok=${report.ok} mismatchCount=${report.mismatchCount} failureCount=${report.failureCount}`
     )
 
     if (!report.ok) {
-      await captureFxCanaryIncident(report, requestId, env)
+      await runMonitoringBestEffort(() => captureFxCanaryIncident(report, requestId, env), false)
     }
 
     return report
   } catch (error) {
-    console.error('[FX_CANARY] status=500 FX canary failed', error)
-    await captureFxRouteFailure(error, {
+    writeConsoleBestEffort('error', '[FX_CANARY] status=500 FX canary failed', error)
+    await runMonitoringBestEffort(() => captureFxRouteFailure(error, {
       route: 'cron_fx_canary',
       signal: 'canary_error',
       source: 'fx-canary-cron',
@@ -418,9 +448,17 @@ async function runScheduledFxCanary(env, { requestId }) {
       anchorDate: new Date().toISOString().slice(0, 10),
       requestedDays: 30,
       requestId,
-    }, env)
+    }, env), false)
     throw error
   } finally {
-    await finishFxCanaryCheckIn(checkInId, /** @type {'ok' | 'error'} */ (checkInStatus), startedAt, env)
+    await runMonitoringBestEffort(
+      () => finishFxCanaryCheckIn(
+        checkInId,
+        /** @type {'ok' | 'error'} */ (checkInStatus),
+        startedAt,
+        env
+      ),
+      false
+    )
   }
 }

@@ -10,6 +10,24 @@ function cfAccessRequest(url, options = {}) {
   return new Request(url, { ...options, headers })
 }
 
+async function withRejectingTelemetry(run) {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  monitoring.setSentryWorkerSdkForTests({
+    withScope(callback) {
+      callback({ setLevel() {}, setTag() {}, setContext() {} })
+    },
+    captureException() {},
+    flush() {
+      return Promise.reject(new Error('telemetry flush rejected'))
+    },
+  })
+  try {
+    await run()
+  } finally {
+    monitoring.resetSentryWorkerSdkForTests()
+  }
+}
+
 test('sideload prefix without CF Access header returns 401 AUTH_MISSING', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
 
@@ -78,6 +96,37 @@ test('GET /sideload/photos/:id returns 404 when photo does not exist', async () 
   assert.equal(response.status, 404)
   const body = await response.json()
   assert.equal(body.error, 'NOT_FOUND')
+})
+
+test('rejecting telemetry cannot replace a typed correlated Sideload failure', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const requestId = 'req-sideload-telemetry-reject'
+
+  await withRejectingTelemetry(async () => {
+    const response = await handleRequest(
+      cfAccessRequest('https://example.workers.dev/sideload/photos/abc', {
+        requestId,
+      }),
+      {
+        SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+        SIDELOAD_R2: {
+          get: async () => {
+            throw new Error('storage transport failed')
+          },
+        },
+      }
+    )
+
+    assert.equal(response.status, 502)
+    assert.equal(response.headers.get('x-request-id'), requestId)
+    assert.equal(response.headers.get('x-resplit-trace-id'), requestId)
+    assert.deepEqual(await response.json(), {
+      error: 'SIDELOAD_FAILED',
+      message: 'storage transport failed',
+      requestId,
+      traceId: requestId,
+    })
+  })
 })
 
 test('sideload OPTIONS preflight returns 204 without requiring auth', async () => {

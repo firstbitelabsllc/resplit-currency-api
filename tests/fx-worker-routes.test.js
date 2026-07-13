@@ -20,6 +20,46 @@ function withStubbedFetch(fetchImpl, run) {
     })
 }
 
+async function withThrowingConsole(method, run) {
+  const original = console[method]
+  console[method] = () => {
+    throw new Error(`${method} sink rejected`)
+  }
+  try {
+    await run()
+  } finally {
+    console[method] = original
+  }
+}
+
+async function withRejectingTelemetry(run) {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const scope = {
+    setLevel() {},
+    setTag() {},
+    setContext() {},
+  }
+  monitoring.setSentryWorkerSdkForTests({
+    withScope(callback) {
+      callback(scope)
+    },
+    captureException() {},
+    captureMessage() {},
+    captureCheckIn(payload) {
+      return payload.status === 'in_progress' ? 'rejecting-check-in' : undefined
+    },
+    flush() {
+      return Promise.reject(new Error('telemetry flush rejected'))
+    },
+  })
+
+  try {
+    await run()
+  } finally {
+    monitoring.resetSentryWorkerSdkForTests()
+  }
+}
+
 function enumerateDates(start, end) {
   const dates = []
   const cursor = new Date(`${start}T00:00:00Z`)
@@ -363,6 +403,98 @@ test('worker history route rejects impossible calendar dates', async () => {
   })
 })
 
+test('rejecting telemetry cannot replace typed correlated FX route failures', async t => {
+  const cases = [
+    {
+      name: 'quote',
+      url: 'https://example.workers.dev/quote?from=AED&to=USD&date=2026-03-24',
+      error: 'FX_QUOTE_FAILED',
+    },
+    {
+      name: 'history',
+      url: 'https://example.workers.dev/history?from=AED&to=USD&start=2026-03-23&end=2026-03-24',
+      error: 'FX_HISTORY_FAILED',
+    },
+    {
+      name: 'coverage',
+      url: 'https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30',
+      error: 'FX_DIAGNOSTICS_FAILED',
+    },
+  ]
+
+  for (const routeCase of cases) {
+    await t.test(routeCase.name, async () => {
+      const requestId = `req-${routeCase.name}-telemetry-reject`
+      await withRejectingTelemetry(async () => {
+        await withStubbedFetch(async () => {
+          throw new Error('archive transport failed')
+        }, async () => {
+          const { handleRequest } = await import('../worker/src/index.mjs')
+          const response = await handleRequest(
+            new Request(routeCase.url, {
+              headers: { 'x-resplit-trace-id': requestId },
+            }),
+            { SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1' }
+          )
+
+          assert.equal(response.status, 502)
+          assert.equal(response.headers.get('x-request-id'), requestId)
+          assert.equal(response.headers.get('x-resplit-trace-id'), requestId)
+          assert.deepEqual(await response.json(), {
+            error: routeCase.error,
+            message: 'archive transport failed',
+            requestId,
+            traceId: requestId,
+          })
+        })
+      })
+    })
+  }
+})
+
+test('throwing console sinks cannot replace coverage success or failure responses', async t => {
+  await t.test('successful coverage stays 200 when console.log throws', async () => {
+    const availableDates = enumerateDates('2026-02-23', '2026-03-24')
+    await withThrowingConsole('log', async () => {
+      await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+        const { handleRequest } = await import('../worker/src/index.mjs')
+        const response = await handleRequest(
+          new Request(
+            'https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30',
+            { headers: { 'x-resplit-trace-id': 'req-coverage-console-success' } }
+          ),
+          { ASSET_BASE_URL: 'https://example-assets.dev' }
+        )
+
+        assert.equal(response.status, 200)
+        assert.equal(response.headers.get('x-request-id'), 'req-coverage-console-success')
+        assert.equal((await response.json()).mismatchCount, 0)
+      })
+    })
+  })
+
+  await t.test('failed coverage keeps its typed 502 when console.error throws', async () => {
+    await withThrowingConsole('error', async () => {
+      await withStubbedFetch(async () => {
+        throw new Error('archive transport failed')
+      }, async () => {
+        const { handleRequest } = await import('../worker/src/index.mjs')
+        const response = await handleRequest(
+          new Request(
+            'https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30',
+            { headers: { 'x-resplit-trace-id': 'req-coverage-console-failure' } }
+          ),
+          {}
+        )
+
+        assert.equal(response.status, 502)
+        assert.equal(response.headers.get('x-request-id'), 'req-coverage-console-failure')
+        assert.equal((await response.json()).error, 'FX_DIAGNOSTICS_FAILED')
+      })
+    })
+  })
+})
+
 test('worker coverage route returns request id and no-store diagnostics payload', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   const availableDates = enumerateDates('2026-02-23', '2026-03-24')
@@ -583,7 +715,90 @@ test('worker cron route returns canary report for authorized requests', async ()
   })
 })
 
-test('worker cron route reports canary_error on unexpected failures', async () => {
+test('rejecting telemetry cannot turn a truthful successful canary into a failure', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const now = new Date()
+  const today = now.toISOString().slice(0, 10)
+  const anchorDates = [0, 7, 30, 180].map(days => {
+    const date = new Date(`${today}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() - days)
+    return date.toISOString().slice(0, 10)
+  })
+  const earliestStart = new Date(`${anchorDates.at(-1)}T00:00:00Z`)
+  earliestStart.setUTCDate(earliestStart.getUTCDate() - 29)
+  const availableDates = enumerateDates(
+    earliestStart.toISOString().slice(0, 10),
+    anchorDates[0]
+  )
+
+  await withRejectingTelemetry(async () => {
+    await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+      const response = await handleRequest(
+        new Request('https://example.workers.dev/cron/fx-canary', {
+          headers: {
+            authorization: 'Bearer top-secret',
+            'x-resplit-trace-id': 'trace-canary-telemetry-reject',
+          },
+        }),
+        {
+          ASSET_BASE_URL: 'https://example-assets.dev',
+          CRON_SECRET: 'top-secret',
+          SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+        }
+      )
+
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('x-request-id'), 'trace-canary-telemetry-reject')
+      const body = await response.json()
+      assert.equal(body.ok, true)
+      assert.equal(body.mismatchCount, 0)
+      assert.equal(body.failureCount, 0)
+    })
+  })
+})
+
+test('throwing console.log cannot turn a truthful successful canary into a failure', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const now = new Date()
+  const today = now.toISOString().slice(0, 10)
+  const anchorDates = [0, 7, 30, 180].map(days => {
+    const date = new Date(`${today}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() - days)
+    return date.toISOString().slice(0, 10)
+  })
+  const earliestStart = new Date(`${anchorDates.at(-1)}T00:00:00Z`)
+  earliestStart.setUTCDate(earliestStart.getUTCDate() - 29)
+  const availableDates = enumerateDates(
+    earliestStart.toISOString().slice(0, 10),
+    anchorDates[0]
+  )
+
+  await withThrowingConsole('log', async () => {
+    await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+      const response = await handleRequest(
+        new Request('https://example.workers.dev/cron/fx-canary', {
+          headers: {
+            authorization: 'Bearer top-secret',
+            'x-resplit-trace-id': 'trace-canary-console-reject',
+          },
+        }),
+        {
+          ASSET_BASE_URL: 'https://example-assets.dev',
+          CRON_SECRET: 'top-secret',
+        }
+      )
+
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('x-request-id'), 'trace-canary-console-reject')
+      const body = await response.json()
+      assert.equal(body.ok, true)
+      assert.equal(body.mismatchCount, 0)
+      assert.equal(body.failureCount, 0)
+    })
+  })
+})
+
+test('worker cron route keeps the truthful canary report when the diagnostics console throws', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   const originalConsoleError = console.error
   const errorLines = []
@@ -616,12 +831,11 @@ test('worker cron route reports canary_error on unexpected failures', async () =
       assert.equal(response.status, 500)
       assert.equal(response.headers.get('x-request-id'), 'req-canary-fail')
       assert.equal(response.headers.get('cache-control'), 'no-store')
-      assert.deepEqual(await response.json(), {
-        error: 'FX_CANARY_FAILED',
-        message: 'FX canary failed',
-        requestId: 'req-canary-fail',
-        traceId: 'req-canary-fail',
-      })
+      const body = await response.json()
+      assert.equal(body.ok, false)
+      assert.equal(body.mismatchCount, 0)
+      assert.equal(body.failureCount, 12)
+      assert.equal(body.results.length, 12)
     })
   } finally {
     console.error = originalConsoleError
@@ -632,14 +846,17 @@ test('worker cron route reports canary_error on unexpected failures', async () =
       return false
     }
     const payload = JSON.parse(line.replace('[FX_MONITORING] ', ''))
-    return payload.signal === 'canary_error' && payload.error === 'console exploded'
+    return payload.signal === 'canary_error' && payload.failureCount === 12
   })
-  assert.ok(monitoringLine, 'expected FX monitoring error log')
+  assert.ok(monitoringLine, 'expected truthful FX canary monitoring log')
 
   const payload = JSON.parse(monitoringLine.replace('[FX_MONITORING] ', ''))
   assert.equal(payload.signal, 'canary_error')
   assert.equal(payload.route, 'cron_fx_canary')
   assert.equal(payload.requestId, 'req-canary-fail')
-  assert.equal(payload.error, 'console exploded')
-  assert.equal(payload.requestedDays, 30)
+  assert.equal(payload.failureCount, 12)
+  assert.ok(
+    errorLines.some(line => line.startsWith('[FX_CANARY] status=500 ok=false')),
+    'expected the failing diagnostics sink to receive the canary summary'
+  )
 })

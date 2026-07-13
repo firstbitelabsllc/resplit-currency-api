@@ -16,7 +16,7 @@ async function withCapturedConsole(method, run) {
   }
 }
 
-async function withMockedSentryCloudflare(run) {
+async function withMockedSentryCloudflare(run, overrides = {}) {
   const monitoring = await import('../worker/src/monitoring.mjs')
   const calls = {
     captureCheckIn: [],
@@ -60,6 +60,7 @@ async function withMockedSentryCloudflare(run) {
       callback(scope)
     },
   }
+  Object.assign(mockedSentry, overrides)
 
   monitoring.setSentryWorkerSdkForTests(mockedSentry)
 
@@ -676,4 +677,134 @@ test('captureFxCoverageFailure reports DSN-enabled failures to Sentry', async ()
       requestId: 'req-coverage-failure',
     })
   })
+})
+
+test('FX monitoring logs stay void and fail open when serialization or the console sink throws', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const circularEvent = { signal: 'circular_log_failure' }
+  circularEvent.self = circularEvent
+
+  assert.equal(monitoring.logFxMonitoringEvent('error', circularEvent, {}), undefined)
+
+  const originalConsoleError = console.error
+  console.error = () => {
+    throw new Error('console sink rejected')
+  }
+  try {
+    assert.equal(
+      monitoring.logFxMonitoringEvent('error', { signal: 'sink_failure' }, {}),
+      undefined
+    )
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('FX Sentry capture boundaries resolve false when scope, capture, or flush fails', async t => {
+  const env = { SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1' }
+  const canaryReport = {
+    checkedAt: '2026-03-26T05:47:58.000Z',
+    mismatchCount: 1,
+    failureCount: 0,
+    results: [{
+      pair: { from: 'AED', to: 'USD' },
+      anchorDate: '2026-03-26',
+      ok: false,
+      summary: 'coverage mismatch',
+    }],
+  }
+  const cases = [
+    {
+      name: 'route scope failure',
+      overrides: {
+        withScope() {
+          throw new Error('scope rejected')
+        },
+      },
+      invoke: monitoring => monitoring.captureFxRouteFailure(new Error('route failed'), {
+        route: 'quote',
+        signal: 'worker_route_exception',
+        requestId: 'req-route-failed',
+      }, env),
+    },
+    {
+      name: 'coverage capture failure',
+      overrides: {
+        captureException() {
+          throw new Error('capture rejected')
+        },
+      },
+      invoke: monitoring => monitoring.captureFxCoverageFailure(new Error('coverage failed'), {
+        source: 'fx-coverage-route',
+        from: 'AED',
+        to: 'USD',
+        anchorDate: '2026-03-26',
+        requestedDays: 30,
+        requestId: 'req-coverage-failed',
+      }, env),
+    },
+    {
+      name: 'canary flush rejection',
+      overrides: {
+        flush() {
+          return Promise.reject(new Error('flush rejected'))
+        },
+      },
+      invoke: monitoring => monitoring.captureFxCanaryIncident(
+        canaryReport,
+        'req-canary-failed',
+        env
+      ),
+    },
+  ]
+
+  for (const failureCase of cases) {
+    await t.test(failureCase.name, async () => {
+      await withMockedSentryCloudflare(async ({ monitoring }) => {
+        assert.equal(await failureCase.invoke(monitoring), false)
+      }, failureCase.overrides)
+    })
+  }
+})
+
+test('FX canary check-in boundaries return null or false when Sentry fails', async t => {
+  const env = { SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1' }
+
+  await t.test('start capture failure returns null', async () => {
+    await withMockedSentryCloudflare(async ({ monitoring }) => {
+      assert.equal(monitoring.startFxCanaryCheckIn(env), null)
+    }, {
+      captureCheckIn() {
+        throw new Error('start check-in rejected')
+      },
+    })
+  })
+
+  for (const failureCase of [
+    {
+      name: 'finish capture failure',
+      overrides: {
+        captureCheckIn() {
+          throw new Error('finish check-in rejected')
+        },
+      },
+    },
+    {
+      name: 'finish flush rejection',
+      overrides: {
+        flush() {
+          return Promise.reject(new Error('finish flush rejected'))
+        },
+      },
+    },
+  ]) {
+    await t.test(failureCase.name, async () => {
+      await withMockedSentryCloudflare(async ({ monitoring }) => {
+        assert.equal(
+          await monitoring.finishFxCanaryCheckIn('check-in-id', 'ok', Date.now(), env),
+          false
+        )
+      }, failureCase.overrides)
+    })
+  }
 })

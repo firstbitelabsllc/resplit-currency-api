@@ -106,13 +106,17 @@ export async function handleSideload(request, env, _ctx) {
   try {
     return await route.handler(ctx, route.params)
   } catch (error) {
-    await captureFxRouteFailure(error, {
-      route: 'sideload',
-      signal: 'sideload_route_exception',
-      requestId,
-      method,
-      path: url.pathname,
-    }, env)
+    try {
+      await captureFxRouteFailure(error, {
+        route: 'sideload',
+        signal: 'sideload_route_exception',
+        requestId,
+        method,
+        path: url.pathname,
+      }, env)
+    } catch {
+      // Telemetry must never replace the route's typed, correlated response.
+    }
     return errorResponse(
       'SIDELOAD_FAILED',
       error instanceof Error ? error.message : String(error),

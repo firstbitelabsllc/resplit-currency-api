@@ -7,6 +7,7 @@ import {
 
 const SURFACE = 'resplit-currency-api'
 let sentrySdk = Sentry
+const SENTRY_FLUSH_TIMEOUT_MS = 2_000
 const FX_CANARY_MONITOR_SLUG = 'resplit-currency-api-fx-canary'
 const FX_CANARY_MONITOR_CONFIG = {
   schedule: {
@@ -172,29 +173,97 @@ function getRuntimeMetadata(env) {
  * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
  */
 export function logFxMonitoringEvent(level, event, env) {
-  const runtime = getRuntimeMetadata(env)
-  const payload = JSON.stringify({
-    timestamp: new Date().toISOString(),
-    surface: runtime.surface,
-    runtime: runtime.runtime,
-    environment: runtime.environment,
-    release: runtime.release,
-    domain: 'fx',
-    ...event,
-  })
-  const line = `[FX_MONITORING] ${payload}`
+  try {
+    const runtime = getRuntimeMetadata(env)
+    const payload = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      surface: runtime.surface,
+      runtime: runtime.runtime,
+      environment: runtime.environment,
+      release: runtime.release,
+      domain: 'fx',
+      ...event,
+    })
+    const line = `[FX_MONITORING] ${payload}`
 
-  switch (level) {
-  case 'info':
-    console.log(line)
-    break
-  case 'warn':
-    console.warn(line)
-    break
-  case 'error':
-    console.error(line)
-    break
+    switch (level) {
+    case 'info':
+      console.log(line)
+      break
+    case 'warn':
+      console.warn(line)
+      break
+    case 'error':
+      console.error(line)
+      break
+    }
+  } catch (error) {
+    writeFxMonitoringFailure(error)
   }
+}
+
+/**
+ * @param {unknown} error
+ */
+function writeFxMonitoringFailure(error) {
+  try {
+    console.error(`[FX_MONITORING] ${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      domain: 'fx',
+      signal: 'monitoring_log_failed',
+      error: asError(error).message,
+    })}`)
+  } catch {
+    return
+  }
+}
+
+/**
+ * @param {string} signal
+ * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
+ * @returns {Promise<boolean>}
+ */
+async function flushSentryBestEffort(signal, env) {
+  try {
+    const flushed = await sentrySdk.flush(SENTRY_FLUSH_TIMEOUT_MS)
+    if (!flushed) {
+      logFxMonitoringEvent('error', {
+        signal: 'sentry_flush_failed',
+        originalSignal: signal,
+        flushTimeoutMs: SENTRY_FLUSH_TIMEOUT_MS,
+      }, env)
+    }
+    return flushed
+  } catch (error) {
+    logFxMonitoringEvent('error', {
+      signal: 'sentry_flush_failed',
+      originalSignal: signal,
+      flushTimeoutMs: SENTRY_FLUSH_TIMEOUT_MS,
+      error: asError(error).message,
+    }, env)
+    return false
+  }
+}
+
+/**
+ * @param {string} signal
+ * @param {{ SENTRY_DSN?: string, SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
+ * @param {() => void} capture
+ * @returns {Promise<boolean>}
+ */
+async function captureWithSentryBestEffort(signal, env, capture) {
+  try {
+    capture()
+  } catch (error) {
+    logFxMonitoringEvent('error', {
+      signal: 'sentry_capture_failed',
+      originalSignal: signal,
+      error: asError(error).message,
+    }, env)
+    return false
+  }
+
+  return flushSentryBestEffort(signal, env)
 }
 
 /**
@@ -236,33 +305,33 @@ export async function captureFxRouteFailure(error, context, env) {
     return false
   }
 
-  sentrySdk.withScope(scope => {
-    scope.setLevel('error')
-    scope.setTag('surface', SURFACE)
-    scope.setTag('runtime', 'worker')
-    scope.setTag('route', context.route)
-    scope.setTag('monitoring.domain', 'fx')
-    scope.setTag('monitoring.signal', context.signal)
-    if (context.source) {
-      scope.setTag('fx.source', context.source)
-    }
-    if (context.requestId) {
-      scope.setTag('request.id', context.requestId)
-    }
-    if (context.from) {
-      scope.setTag('fx.from', context.from)
-    }
-    if (context.to) {
-      scope.setTag('fx.to', context.to)
-    }
-    scope.setContext('fxRoute', {
-      ...context,
-      error: normalizedError.message,
+  return captureWithSentryBestEffort(context.signal, env, () => {
+    sentrySdk.withScope(scope => {
+      scope.setLevel('error')
+      scope.setTag('surface', SURFACE)
+      scope.setTag('runtime', 'worker')
+      scope.setTag('route', context.route)
+      scope.setTag('monitoring.domain', 'fx')
+      scope.setTag('monitoring.signal', context.signal)
+      if (context.source) {
+        scope.setTag('fx.source', context.source)
+      }
+      if (context.requestId) {
+        scope.setTag('request.id', context.requestId)
+      }
+      if (context.from) {
+        scope.setTag('fx.from', context.from)
+      }
+      if (context.to) {
+        scope.setTag('fx.to', context.to)
+      }
+      scope.setContext('fxRoute', {
+        ...context,
+        error: normalizedError.message,
+      })
+      sentrySdk.captureException(normalizedError)
     })
-    sentrySdk.captureException(normalizedError)
   })
-
-  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -335,27 +404,27 @@ export async function captureFxCoverageFailure(error, context, env) {
     return false
   }
 
-  sentrySdk.withScope(scope => {
-    scope.setLevel('error')
-    scope.setTag('surface', SURFACE)
-    scope.setTag('runtime', 'worker')
-    scope.setTag('monitoring.domain', 'fx')
-    scope.setTag('monitoring.signal', 'coverage_failure')
-    scope.setTag('fx.source', context.source)
-    scope.setTag('fx.from', context.from)
-    scope.setTag('fx.to', context.to)
-    if (context.requestId) {
-      scope.setTag('request.id', context.requestId)
-    }
-    scope.setContext('fxCoverageRequest', {
-      anchorDate: context.anchorDate,
-      requestedDays: context.requestedDays,
-      requestId: context.requestId,
+  return captureWithSentryBestEffort('coverage_failure', env, () => {
+    sentrySdk.withScope(scope => {
+      scope.setLevel('error')
+      scope.setTag('surface', SURFACE)
+      scope.setTag('runtime', 'worker')
+      scope.setTag('monitoring.domain', 'fx')
+      scope.setTag('monitoring.signal', 'coverage_failure')
+      scope.setTag('fx.source', context.source)
+      scope.setTag('fx.from', context.from)
+      scope.setTag('fx.to', context.to)
+      if (context.requestId) {
+        scope.setTag('request.id', context.requestId)
+      }
+      scope.setContext('fxCoverageRequest', {
+        anchorDate: context.anchorDate,
+        requestedDays: context.requestedDays,
+        requestId: context.requestId,
+      })
+      sentrySdk.captureException(normalizedError)
     })
-    sentrySdk.captureException(normalizedError)
   })
-
-  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -376,10 +445,6 @@ export async function captureFxCoverageFailure(error, context, env) {
  * @returns {Promise<boolean>}
  */
 export async function captureFxCanaryIncident(report, requestId, env) {
-  if (!isFxMonitoringEnabled(env)) {
-    return false
-  }
-
   const failingChecks = report.results
     .filter(result => !result.ok)
     .map(result => ({
@@ -390,29 +455,33 @@ export async function captureFxCanaryIncident(report, requestId, env) {
       error: result.error,
     }))
 
-  sentrySdk.withScope(scope => {
-    scope.setLevel('error')
-    scope.setTag('surface', SURFACE)
-    scope.setTag('runtime', 'worker')
-    scope.setTag('monitoring.domain', 'fx')
-    scope.setTag('monitoring.signal', 'canary_error')
-    scope.setTag('fx.source', 'fx-canary-cron')
-    if (requestId) {
-      scope.setTag('request.id', requestId)
-    }
-    scope.setContext('fxCanary', {
-      checkedAt: report.checkedAt,
-      mismatchCount: report.mismatchCount,
-      failureCount: report.failureCount,
-      failingChecks,
-      requestId,
-    })
-    sentrySdk.captureMessage(
-      `FX canary failed with ${report.mismatchCount} mismatches and ${report.failureCount} failures`
-    )
-  })
+  if (!isFxMonitoringEnabled(env)) {
+    return false
+  }
 
-  return sentrySdk.flush(2_000)
+  return captureWithSentryBestEffort('canary_error', env, () => {
+    sentrySdk.withScope(scope => {
+      scope.setLevel('error')
+      scope.setTag('surface', SURFACE)
+      scope.setTag('runtime', 'worker')
+      scope.setTag('monitoring.domain', 'fx')
+      scope.setTag('monitoring.signal', 'canary_error')
+      scope.setTag('fx.source', 'fx-canary-cron')
+      if (requestId) {
+        scope.setTag('request.id', requestId)
+      }
+      scope.setContext('fxCanary', {
+        checkedAt: report.checkedAt,
+        mismatchCount: report.mismatchCount,
+        failureCount: report.failureCount,
+        failingChecks,
+        requestId,
+      })
+      sentrySdk.captureMessage(
+        `FX canary failed with ${report.mismatchCount} mismatches and ${report.failureCount} failures`
+      )
+    })
+  })
 }
 
 /**
@@ -424,13 +493,23 @@ export function startFxCanaryCheckIn(env) {
     return null
   }
 
-  return sentrySdk.captureCheckIn(
-    {
-      monitorSlug: FX_CANARY_MONITOR_SLUG,
-      status: 'in_progress',
-    },
-    FX_CANARY_MONITOR_CONFIG
-  )
+  try {
+    return sentrySdk.captureCheckIn(
+      {
+        monitorSlug: FX_CANARY_MONITOR_SLUG,
+        status: 'in_progress',
+      },
+      FX_CANARY_MONITOR_CONFIG
+    )
+  } catch (error) {
+    logFxMonitoringEvent('error', {
+      signal: 'sentry_capture_failed',
+      originalSignal: 'canary_checkin',
+      phase: 'start',
+      error: asError(error).message,
+    }, env)
+    return null
+  }
 }
 
 /**
@@ -445,14 +524,14 @@ export async function finishFxCanaryCheckIn(checkInId, status, startedAt, env) {
     return false
   }
 
-  sentrySdk.captureCheckIn({
-    checkInId,
-    monitorSlug: FX_CANARY_MONITOR_SLUG,
-    status,
-    duration: Number(((Date.now() - startedAt) / 1000).toFixed(3)),
+  return captureWithSentryBestEffort('canary_checkin', env, () => {
+    sentrySdk.captureCheckIn({
+      checkInId,
+      monitorSlug: FX_CANARY_MONITOR_SLUG,
+      status,
+      duration: Number(((Date.now() - startedAt) / 1000).toFixed(3)),
+    })
   })
-
-  return sentrySdk.flush(2_000)
 }
 
 /**
