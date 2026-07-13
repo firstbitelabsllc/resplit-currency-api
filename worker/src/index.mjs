@@ -32,6 +32,20 @@ import { handleOcr } from './ocr/router.mjs'
 const ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
 const QUOTE_HISTORY_CACHE_CONTROL = 'public, s-maxage=3600, stale-while-revalidate=86400'
 
+/**
+ * @template T
+ * @param {() => T | Promise<T>} operation
+ * @param {T} fallback
+ * @returns {Promise<T>}
+ */
+async function runMonitoringBestEffort(operation, fallback) {
+  try {
+    return await operation()
+  } catch {
+    return fallback
+  }
+}
+
 const handler = {
   /**
    * @param {Request} request
@@ -174,14 +188,14 @@ async function handleQuote(request, env) {
       })
     }
 
-    await captureFxRouteFailure(error, {
+    await runMonitoringBestEffort(() => captureFxRouteFailure(error, {
       route: 'quote',
       signal: 'worker_route_exception',
       requestId,
       from,
       to,
       requestedDate: date,
-    }, env)
+    }, env), false)
     return errorResponse('FX_QUOTE_FAILED', message, 502, requestId, {
       'Cache-Control': 'no-store',
     })
@@ -238,7 +252,7 @@ async function handleHistory(request, env) {
       })
     }
 
-    await captureFxRouteFailure(error, {
+    await runMonitoringBestEffort(() => captureFxRouteFailure(error, {
       route: 'history',
       signal: 'worker_route_exception',
       requestId,
@@ -246,7 +260,7 @@ async function handleHistory(request, env) {
       to,
       start,
       end,
-    }, env)
+    }, env), false)
     return errorResponse('FX_HISTORY_FAILED', message, 502, requestId, {
       'Cache-Control': 'no-store',
     })
@@ -290,7 +304,10 @@ async function handleCoverage(request, env) {
 
     if (report.mismatchCount > 0) {
       console.warn(line)
-      await captureFxCoverageMismatch(report, 'fx-coverage-route', requestId, env)
+      await runMonitoringBestEffort(
+        () => captureFxCoverageMismatch(report, 'fx-coverage-route', requestId, env),
+        false
+      )
     } else {
       console.log(line)
       logFxMonitoringEvent('info', {
@@ -325,14 +342,14 @@ async function handleCoverage(request, env) {
     }
 
     console.error(line)
-    await captureFxCoverageFailure(error, {
+    await runMonitoringBestEffort(() => captureFxCoverageFailure(error, {
       source: 'fx-coverage-route',
       from: rawFrom,
       to: rawTo,
       anchorDate: rawAnchorDate ?? new Date().toISOString().slice(0, 10),
       requestedDays: rawDays,
       requestId,
-    }, env)
+    }, env), false)
     return errorResponse('FX_DIAGNOSTICS_FAILED', message, 502, requestId, {
       'Cache-Control': 'no-store',
     })
@@ -379,7 +396,7 @@ async function handleFxCanary(request, env) {
  */
 async function runScheduledFxCanary(env, { requestId }) {
   const startedAt = Date.now()
-  const checkInId = startFxCanaryCheckIn(env)
+  const checkInId = await runMonitoringBestEffort(() => startFxCanaryCheckIn(env), null)
   let checkInStatus = 'error'
 
   try {
@@ -403,13 +420,13 @@ async function runScheduledFxCanary(env, { requestId }) {
     )
 
     if (!report.ok) {
-      await captureFxCanaryIncident(report, requestId, env)
+      await runMonitoringBestEffort(() => captureFxCanaryIncident(report, requestId, env), false)
     }
 
     return report
   } catch (error) {
     console.error('[FX_CANARY] status=500 FX canary failed', error)
-    await captureFxRouteFailure(error, {
+    await runMonitoringBestEffort(() => captureFxRouteFailure(error, {
       route: 'cron_fx_canary',
       signal: 'canary_error',
       source: 'fx-canary-cron',
@@ -418,9 +435,17 @@ async function runScheduledFxCanary(env, { requestId }) {
       anchorDate: new Date().toISOString().slice(0, 10),
       requestedDays: 30,
       requestId,
-    }, env)
+    }, env), false)
     throw error
   } finally {
-    await finishFxCanaryCheckIn(checkInId, /** @type {'ok' | 'error'} */ (checkInStatus), startedAt, env)
+    await runMonitoringBestEffort(
+      () => finishFxCanaryCheckIn(
+        checkInId,
+        /** @type {'ok' | 'error'} */ (checkInStatus),
+        startedAt,
+        env
+      ),
+      false
+    )
   }
 }
