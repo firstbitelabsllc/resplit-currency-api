@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
+import { setSentryWorkerSdkForTests, resetSentryWorkerSdkForTests } from '../worker/src/monitoring.mjs'
 
 function makeKV() {
   const store = new Map()
@@ -133,6 +134,25 @@ test('POST /ocr/scan (soft-fail) returns the versioned envelope wrapping the Azu
   assert.equal(azureCalls.submit, 1)
   assert.equal(azureCalls.layoutSubmit, 0, 'key-value add-on is opt-in because it doubles Azure analyzes')
   assert.equal(body.kv_extras, 'off', 'flag-off scans declare kv_extras off in the envelope')
+})
+
+test('POST /ocr/scan preserves a successful paid result when structured logging throws', async () => {
+  stubAzure()
+  const originalLog = console.log
+  console.log = () => { throw new Error('log sink unavailable') }
+  let res
+  try {
+    res = await handleOcr(scanRequest(new Uint8Array([1, 4, 1])), makeEnv())
+  } finally {
+    console.log = originalLog
+  }
+
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.v, 1)
+  assert.equal(body.mode, 'raw')
+  assert.equal(body.status, 'ok')
+  assert.equal(azureCalls.submit, 1)
 })
 
 test('POST /ocr/scan merges opt-in Azure layout keyValuePairs into the raw receipt envelope', async () => {
@@ -518,6 +538,38 @@ test('a provider_error 502 reports to Sentry (scan-path failure is not log-only)
   }
 })
 
+test('a provider_error keeps its versioned 502 envelope when OCR Sentry flush rejects', async () => {
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url)
+    if (init.method === 'POST' && u.includes(':analyze')) {
+      return new Response('azure exploded', { status: 500 })
+    }
+    throw new Error(`unexpected fetch ${init.method} ${u}`)
+  }
+  setOcrSentrySdkForTests({
+    captureMessage() {},
+    flush() { return Promise.reject(new Error('OCR Sentry flush unavailable')) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  setSentryWorkerSdkForTests({
+    captureException() {},
+    flush() { return Promise.resolve(true) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  try {
+    const env = makeEnv({ SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
+    const res = await handleOcr(scanRequest(new Uint8Array([3, 4, 3])), env)
+    assert.equal(res.status, 502)
+    const body = await res.json()
+    assert.equal(body.v, 1)
+    assert.equal(body.mode, 'raw')
+    assert.equal(body.status, 'provider_error')
+  } finally {
+    resetOcrSentrySdkForTests()
+    resetSentryWorkerSdkForTests()
+  }
+})
+
 test('an ok scan does NOT report to Sentry (no vanity events on success)', async () => {
   stubAzure()
   const calls = { captureMessage: [] }
@@ -533,6 +585,33 @@ test('an ok scan does NOT report to Sentry (no vanity events on success)', async
     assert.equal(calls.captureMessage.length, 0, 'a successful scan must not emit a Sentry event')
   } finally {
     resetOcrSentrySdkForTests()
+  }
+})
+
+test('an unexpected OCR failure keeps its typed 502 when generic Sentry flush rejects', async () => {
+  const env = makeEnv({ SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
+  env.ATTEST_KV.put = async () => { throw new Error('attest store unavailable') }
+  setSentryWorkerSdkForTests({
+    captureException() {},
+    flush() { return Promise.reject(new Error('Sentry unavailable')) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  try {
+    const request = new Request('https://fx.resplit.app/ocr/challenge', {
+      headers: { 'x-resplit-trace-id': 'ocr-catch-fail-open' },
+    })
+    const res = await handleOcr(request, env)
+    assert.equal(res.status, 502)
+    assert.equal(res.headers.get('x-request-id'), 'ocr-catch-fail-open')
+    assert.equal(res.headers.get('x-resplit-trace-id'), 'ocr-catch-fail-open')
+    assert.deepEqual(await res.json(), {
+      error: 'OCR_FAILED',
+      message: 'attest store unavailable',
+      requestId: 'ocr-catch-fail-open',
+      traceId: 'ocr-catch-fail-open',
+    })
+  } finally {
+    resetSentryWorkerSdkForTests()
   }
 })
 

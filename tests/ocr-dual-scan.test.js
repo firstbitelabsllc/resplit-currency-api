@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
+import { setSentryWorkerSdkForTests, resetSentryWorkerSdkForTests } from '../worker/src/monitoring.mjs'
 
 // --- App Attest assertion builders (attested-path tests) -----------------------
 // Mirrors tests/ocr-attest.test.js so the dual-scan attested branch (attest === 'pass')
@@ -510,6 +511,43 @@ test('POST /ocr/dual-scan totals disagreement emits an ocr_totals_divergence Sen
     assert.equal(newDivScopes.length, 0, 'agreeing totals must not alert')
   } finally {
     resetOcrSentrySdkForTests()
+  }
+})
+
+test('POST /ocr/dual-scan preserves a successful divergent result when OCR Sentry flush rejects', async () => {
+  stubProviders({
+    azure: azureRaw({ total: 12, tax: 1 }),
+    scanned: scannedReceipt({ total: 14 }),
+  })
+  setOcrSentrySdkForTests({
+    captureMessage() {},
+    flush() { return Promise.reject(new Error('OCR Sentry flush unavailable')) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  setSentryWorkerSdkForTests({
+    captureException() {},
+    flush() { return Promise.resolve(true) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  try {
+    const env = makeEnv({
+      ANTHROPIC_API_KEY: 'anthropic-key',
+      LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+      SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1',
+    })
+    const res = await handleOcr(dualScanRequest(jpegWithDimensions(810, 601)), env)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.v, 1)
+    assert.equal(body.status, 'succeeded')
+    assert.equal(body.divergence.totalsAgree, false)
+    assert.equal(body.azure.status, 'succeeded')
+    assert.equal(body.llm.status, 'succeeded')
+    assert.equal(calls.azureSubmit, 1)
+    assert.equal(calls.anthropic, 1)
+  } finally {
+    resetOcrSentrySdkForTests()
+    resetSentryWorkerSdkForTests()
   }
 })
 

@@ -59,27 +59,48 @@ function runtimeMetadata(env) {
  * @param {{ SENTRY_ENVIRONMENT?: string, SENTRY_RELEASE?: string }} env
  */
 export function logOcrMonitoringEvent(level, event, env) {
-  const meta = runtimeMetadata(env)
-  const line = `[OCR_MONITORING] ${JSON.stringify({
-    timestamp: new Date().toISOString(),
-    surface: meta.surface,
-    runtime: meta.runtime,
-    environment: meta.environment,
-    release: meta.release,
-    domain: DOMAIN,
-    ...event,
-  })}`
+  try {
+    const meta = runtimeMetadata(env)
+    const line = `[OCR_MONITORING] ${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      surface: meta.surface,
+      runtime: meta.runtime,
+      environment: meta.environment,
+      release: meta.release,
+      domain: DOMAIN,
+      ...event,
+    })}`
 
-  switch (level) {
-  case 'info':
-    console.log(line)
-    break
-  case 'warn':
-    console.warn(line)
-    break
-  case 'error':
-    console.error(line)
-    break
+    switch (level) {
+    case 'info':
+      console.log(line)
+      break
+    case 'warn':
+      console.warn(line)
+      break
+    case 'error':
+      console.error(line)
+      break
+    }
+  } catch {
+    // A failed observability sink must never replace a paid OCR result.
+  }
+}
+
+/**
+ * Sentry is a best-effort side effect after the OCR outcome is already known.
+ * Scope setup, capture, and flush can each fail independently; none may alter
+ * the HTTP envelope the caller receives.
+ *
+ * @param {() => void} capture
+ * @returns {Promise<boolean>}
+ */
+async function captureBestEffort(capture) {
+  try {
+    capture()
+    return await sentrySdk.flush(2_000)
+  } catch {
+    return false
   }
 }
 
@@ -107,38 +128,38 @@ export async function captureOcrProviderFailure(context, env) {
     return false
   }
 
-  sentrySdk.withScope(scope => {
-    scope.setLevel('error')
-    scope.setTag('surface', SURFACE)
-    scope.setTag('runtime', 'worker')
-    scope.setTag('monitoring.domain', DOMAIN)
-    scope.setTag('monitoring.signal', 'ocr_provider_error')
-    if (context.requestId) {
-      scope.setTag('request.id', context.requestId)
-    }
-    if (context.route) {
-      scope.setTag('ocr.route', context.route)
-    }
-    if (context.azureStatus != null) {
-      scope.setTag('ocr.azure_status', String(context.azureStatus))
-    }
-    if (context.clientVersion) {
-      scope.setTag('ocr.client_version', context.clientVersion)
-    }
-    scope.setContext('ocrScan', {
-      scanId: context.scanId,
-      requestId: context.requestId,
-      azureStatus: context.azureStatus ?? null,
-      attest: context.attest,
-      kvExtras: context.kvExtras,
-      totalMs: context.totalMs,
+  return captureBestEffort(() => {
+    sentrySdk.withScope(scope => {
+      scope.setLevel('error')
+      scope.setTag('surface', SURFACE)
+      scope.setTag('runtime', 'worker')
+      scope.setTag('monitoring.domain', DOMAIN)
+      scope.setTag('monitoring.signal', 'ocr_provider_error')
+      if (context.requestId) {
+        scope.setTag('request.id', context.requestId)
+      }
+      if (context.route) {
+        scope.setTag('ocr.route', context.route)
+      }
+      if (context.azureStatus != null) {
+        scope.setTag('ocr.azure_status', String(context.azureStatus))
+      }
+      if (context.clientVersion) {
+        scope.setTag('ocr.client_version', context.clientVersion)
+      }
+      scope.setContext('ocrScan', {
+        scanId: context.scanId,
+        requestId: context.requestId,
+        azureStatus: context.azureStatus ?? null,
+        attest: context.attest,
+        kvExtras: context.kvExtras,
+        totalMs: context.totalMs,
+      })
+      sentrySdk.captureMessage(
+        `OCR scan provider_error (azure_status=${context.azureStatus ?? 'unknown'})`
+      )
     })
-    sentrySdk.captureMessage(
-      `OCR scan provider_error (azure_status=${context.azureStatus ?? 'unknown'})`
-    )
   })
-
-  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -168,46 +189,46 @@ export async function captureOcrLlmFailure(context, env) {
     return false
   }
 
-  sentrySdk.withScope(scope => {
-    scope.setLevel('error')
-    scope.setTag('surface', SURFACE)
-    scope.setTag('runtime', 'worker')
-    scope.setTag('monitoring.domain', DOMAIN)
-    scope.setTag('monitoring.signal', 'ocr_llm_error')
-    if (context.requestId) {
-      scope.setTag('request.id', context.requestId)
-    }
-    if (context.route) {
-      scope.setTag('ocr.route', context.route)
-    }
-    if (context.httpStatus != null) {
-      scope.setTag('ocr.llm_status', String(context.httpStatus))
-    }
-    if (context.model) {
-      scope.setTag('ocr.llm_model', context.model)
-    }
-    if (context.reason) {
-      scope.setTag('ocr.llm_reason', context.reason)
-    }
-    if (context.clientVersion) {
-      scope.setTag('ocr.client_version', context.clientVersion)
-    }
-    scope.setContext('ocrLlmScan', {
-      scanId: context.scanId,
-      requestId: context.requestId,
-      llmStatus: context.llmStatus ?? null,
-      httpStatus: context.httpStatus ?? null,
-      reason: context.reason ?? null,
-      model: context.model ?? null,
-      attest: context.attest,
-      totalMs: context.totalMs,
+  return captureBestEffort(() => {
+    sentrySdk.withScope(scope => {
+      scope.setLevel('error')
+      scope.setTag('surface', SURFACE)
+      scope.setTag('runtime', 'worker')
+      scope.setTag('monitoring.domain', DOMAIN)
+      scope.setTag('monitoring.signal', 'ocr_llm_error')
+      if (context.requestId) {
+        scope.setTag('request.id', context.requestId)
+      }
+      if (context.route) {
+        scope.setTag('ocr.route', context.route)
+      }
+      if (context.httpStatus != null) {
+        scope.setTag('ocr.llm_status', String(context.httpStatus))
+      }
+      if (context.model) {
+        scope.setTag('ocr.llm_model', context.model)
+      }
+      if (context.reason) {
+        scope.setTag('ocr.llm_reason', context.reason)
+      }
+      if (context.clientVersion) {
+        scope.setTag('ocr.client_version', context.clientVersion)
+      }
+      scope.setContext('ocrLlmScan', {
+        scanId: context.scanId,
+        requestId: context.requestId,
+        llmStatus: context.llmStatus ?? null,
+        httpStatus: context.httpStatus ?? null,
+        reason: context.reason ?? null,
+        model: context.model ?? null,
+        attest: context.attest,
+        totalMs: context.totalMs,
+      })
+      sentrySdk.captureMessage(
+        `OCR dual-scan llm_error (reason=${context.reason ?? 'unknown'}, http=${context.httpStatus ?? 'unknown'})`
+      )
     })
-    sentrySdk.captureMessage(
-      `OCR dual-scan llm_error (reason=${context.reason ?? 'unknown'}, http=${context.httpStatus ?? 'unknown'})`
-    )
   })
-
-  return sentrySdk.flush(2_000)
 }
 
 /**
@@ -259,38 +280,38 @@ export async function captureOcrTotalsDivergence(context, env) {
     return false
   }
 
-  sentrySdk.withScope(scope => {
-    scope.setLevel('warning')
-    scope.setTag('surface', SURFACE)
-    scope.setTag('runtime', 'worker')
-    scope.setTag('monitoring.domain', DOMAIN)
-    scope.setTag('monitoring.signal', 'ocr_totals_divergence')
-    if (context.requestId) {
-      scope.setTag('request.id', context.requestId)
-    }
-    if (context.route) {
-      scope.setTag('ocr.route', context.route)
-    }
-    if (context.model) {
-      scope.setTag('ocr.llm_model', context.model)
-    }
-    if (context.clientVersion) {
-      scope.setTag('ocr.client_version', context.clientVersion)
-    }
-    scope.setContext('ocrTotalsDivergence', {
-      scanId: context.scanId,
-      requestId: context.requestId,
-      azureTotal: context.azureTotal ?? null,
-      llmTotal: context.llmTotal ?? null,
-      llmRecoveredAmount: context.llmRecoveredAmount ?? null,
-      extrasKindsDelta: context.extrasKindsDelta ?? null,
-      attest: context.attest,
-      totalMs: context.totalMs,
+  return captureBestEffort(() => {
+    sentrySdk.withScope(scope => {
+      scope.setLevel('warning')
+      scope.setTag('surface', SURFACE)
+      scope.setTag('runtime', 'worker')
+      scope.setTag('monitoring.domain', DOMAIN)
+      scope.setTag('monitoring.signal', 'ocr_totals_divergence')
+      if (context.requestId) {
+        scope.setTag('request.id', context.requestId)
+      }
+      if (context.route) {
+        scope.setTag('ocr.route', context.route)
+      }
+      if (context.model) {
+        scope.setTag('ocr.llm_model', context.model)
+      }
+      if (context.clientVersion) {
+        scope.setTag('ocr.client_version', context.clientVersion)
+      }
+      scope.setContext('ocrTotalsDivergence', {
+        scanId: context.scanId,
+        requestId: context.requestId,
+        azureTotal: context.azureTotal ?? null,
+        llmTotal: context.llmTotal ?? null,
+        llmRecoveredAmount: context.llmRecoveredAmount ?? null,
+        extrasKindsDelta: context.extrasKindsDelta ?? null,
+        attest: context.attest,
+        totalMs: context.totalMs,
+      })
+      sentrySdk.captureMessage(
+        `OCR dual-scan totals_divergence (azure=${context.azureTotal ?? 'null'}, llm=${context.llmTotal ?? 'null'})`
+      )
     })
-    sentrySdk.captureMessage(
-      `OCR dual-scan totals_divergence (azure=${context.azureTotal ?? 'null'}, llm=${context.llmTotal ?? 'null'})`
-    )
   })
-
-  return sentrySdk.flush(2_000)
 }

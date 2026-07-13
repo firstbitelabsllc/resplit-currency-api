@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
+import { setSentryWorkerSdkForTests, resetSentryWorkerSdkForTests } from '../worker/src/monitoring.mjs'
 
 // /ocr/analyze — the v2 N-engine envelope. Same auth/attest/caps/cache pipeline as
 // /ocr/dual-scan (they share one internal implementation), rendered as the versioned
@@ -285,6 +286,39 @@ test('POST /ocr/analyze with a failed LLM leg is partial: llmReasoning false, ai
   // Both legs did not succeed → no consensus to report.
   assert.equal(body.consensus, null)
   assert.equal(calls.anthropic, 1)
+})
+
+test('POST /ocr/analyze preserves an Azure-usable partial when OCR Sentry flush rejects', async () => {
+  stubProviders({ anthropicStatus: 500 })
+  setOcrSentrySdkForTests({
+    captureMessage() {},
+    flush() { return Promise.reject(new Error('OCR Sentry flush unavailable')) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  setSentryWorkerSdkForTests({
+    captureException() {},
+    flush() { return Promise.resolve(true) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  try {
+    const env = makeEnv({
+      ANTHROPIC_API_KEY: 'anthropic-key',
+      LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+      SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1',
+    })
+    const res = await handleOcr(analyzeRequest(jpegFixture(45)), env)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.v, 2)
+    assert.equal(body.status, 'partial')
+    assert.equal(body.engines.find((engine) => engine.id === 'azure').status, 'succeeded')
+    assert.equal(body.engines.find((engine) => engine.id === 'llm').status, 'provider_error')
+    assert.equal(calls.azureSubmit, 1)
+    assert.equal(calls.anthropic, 1)
+  } finally {
+    resetOcrSentrySdkForTests()
+    resetSentryWorkerSdkForTests()
+  }
 })
 
 test('POST /ocr/analyze totals disagreement reports it as consensus, not divergence', async () => {
