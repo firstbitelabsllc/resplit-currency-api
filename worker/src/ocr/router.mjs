@@ -145,7 +145,11 @@ export async function handleOcr(request, env, ctx) {
       logOcrMonitoringEvent('warn', event, env)
       return errorResponse('ATTEST_REJECTED', error.code, 401, requestId, RESPONSE_HEADERS)
     }
-    await captureFxRouteFailure(error, { route: 'ocr', signal: 'ocr_route_exception', requestId, path: url.pathname }, env)
+    try {
+      await captureFxRouteFailure(error, { route: 'ocr', signal: 'ocr_route_exception', requestId, path: url.pathname }, env)
+    } catch {
+      // The typed OCR failure response must survive failure of its observer.
+    }
     logOcrMonitoringEvent('error', { signal: 'ocr_exception', error: String(error?.message || error), requestId }, env)
     return errorResponse('OCR_FAILED', error instanceof Error ? error.message : String(error), 502, requestId, RESPONSE_HEADERS)
   }
