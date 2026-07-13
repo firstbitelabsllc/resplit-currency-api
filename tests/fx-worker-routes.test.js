@@ -20,6 +20,18 @@ function withStubbedFetch(fetchImpl, run) {
     })
 }
 
+async function withThrowingConsole(method, run) {
+  const original = console[method]
+  console[method] = () => {
+    throw new Error(`${method} sink rejected`)
+  }
+  try {
+    await run()
+  } finally {
+    console[method] = original
+  }
+}
+
 async function withRejectingTelemetry(run) {
   const monitoring = await import('../worker/src/monitoring.mjs')
   const scope = {
@@ -440,6 +452,49 @@ test('rejecting telemetry cannot replace typed correlated FX route failures', as
   }
 })
 
+test('throwing console sinks cannot replace coverage success or failure responses', async t => {
+  await t.test('successful coverage stays 200 when console.log throws', async () => {
+    const availableDates = enumerateDates('2026-02-23', '2026-03-24')
+    await withThrowingConsole('log', async () => {
+      await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+        const { handleRequest } = await import('../worker/src/index.mjs')
+        const response = await handleRequest(
+          new Request(
+            'https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30',
+            { headers: { 'x-resplit-trace-id': 'req-coverage-console-success' } }
+          ),
+          { ASSET_BASE_URL: 'https://example-assets.dev' }
+        )
+
+        assert.equal(response.status, 200)
+        assert.equal(response.headers.get('x-request-id'), 'req-coverage-console-success')
+        assert.equal((await response.json()).mismatchCount, 0)
+      })
+    })
+  })
+
+  await t.test('failed coverage keeps its typed 502 when console.error throws', async () => {
+    await withThrowingConsole('error', async () => {
+      await withStubbedFetch(async () => {
+        throw new Error('archive transport failed')
+      }, async () => {
+        const { handleRequest } = await import('../worker/src/index.mjs')
+        const response = await handleRequest(
+          new Request(
+            'https://example.workers.dev/coverage?from=AED&to=USD&anchorDate=2026-03-24&days=30',
+            { headers: { 'x-resplit-trace-id': 'req-coverage-console-failure' } }
+          ),
+          {}
+        )
+
+        assert.equal(response.status, 502)
+        assert.equal(response.headers.get('x-request-id'), 'req-coverage-console-failure')
+        assert.equal((await response.json()).error, 'FX_DIAGNOSTICS_FAILED')
+      })
+    })
+  })
+})
+
 test('worker coverage route returns request id and no-store diagnostics payload', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   const availableDates = enumerateDates('2026-02-23', '2026-03-24')
@@ -694,6 +749,47 @@ test('rejecting telemetry cannot turn a truthful successful canary into a failur
 
       assert.equal(response.status, 200)
       assert.equal(response.headers.get('x-request-id'), 'trace-canary-telemetry-reject')
+      const body = await response.json()
+      assert.equal(body.ok, true)
+      assert.equal(body.mismatchCount, 0)
+      assert.equal(body.failureCount, 0)
+    })
+  })
+})
+
+test('throwing console.log cannot turn a truthful successful canary into a failure', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const now = new Date()
+  const today = now.toISOString().slice(0, 10)
+  const anchorDates = [0, 7, 30, 180].map(days => {
+    const date = new Date(`${today}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() - days)
+    return date.toISOString().slice(0, 10)
+  })
+  const earliestStart = new Date(`${anchorDates.at(-1)}T00:00:00Z`)
+  earliestStart.setUTCDate(earliestStart.getUTCDate() - 29)
+  const availableDates = enumerateDates(
+    earliestStart.toISOString().slice(0, 10),
+    anchorDates[0]
+  )
+
+  await withThrowingConsole('log', async () => {
+    await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+      const response = await handleRequest(
+        new Request('https://example.workers.dev/cron/fx-canary', {
+          headers: {
+            authorization: 'Bearer top-secret',
+            'x-resplit-trace-id': 'trace-canary-console-reject',
+          },
+        }),
+        {
+          ASSET_BASE_URL: 'https://example-assets.dev',
+          CRON_SECRET: 'top-secret',
+        }
+      )
+
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('x-request-id'), 'trace-canary-console-reject')
       const body = await response.json()
       assert.equal(body.ok, true)
       assert.equal(body.mismatchCount, 0)
