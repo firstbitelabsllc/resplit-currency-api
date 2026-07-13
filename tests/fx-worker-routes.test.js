@@ -32,6 +32,19 @@ async function withThrowingConsole(method, run) {
   }
 }
 
+async function withCapturedConsole(method, run) {
+  const original = console[method]
+  const lines = []
+  console[method] = (...args) => {
+    lines.push(args.map(String).join(' '))
+  }
+  try {
+    await run(lines)
+  } finally {
+    console[method] = original
+  }
+}
+
 async function withRejectingTelemetry(run) {
   const monitoring = await import('../worker/src/monitoring.mjs')
   const scope = {
@@ -347,6 +360,69 @@ test('worker quote route returns cache headers and stable request id', async () 
       rate: 0.272295,
       resolutionKind: 'exact',
       warning: null,
+    })
+  })
+})
+
+test('worker quote route emits correlated telemetry when a year outage recovers through latest', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  await withCapturedConsole('warn', async lines => {
+    await withStubbedFetch(async input => {
+      const url = String(input)
+      if (url.endsWith('/archive-manifest.min.json')) {
+        return makeJsonResponse({
+          earliestDate: '2026-02-20',
+          latestDate: '2026-03-16',
+          availableDates: ['2026-02-20', '2026-02-23', '2026-03-16'],
+          gapCount: 2,
+          supportedCurrencies: ['aed', 'eur', 'usd'],
+        })
+      }
+      if (url.endsWith('/archive-years/2026.min.json')) {
+        return new Response('archive down', { status: 503 })
+      }
+      if (url.endsWith('/latest/aed.json')) {
+        return makeJsonResponse({
+          date: '2026-03-16',
+          from: 'aed',
+          rates: { usd: 0.272295 },
+        })
+      }
+      throw new Error(`Unexpected URL: ${url}`)
+    }, async () => {
+      const response = await handleRequest(
+        new Request('https://example.workers.dev/quote?from=AED&to=USD&date=2026-02-23', {
+          headers: { 'x-resplit-trace-id': 'req-quote-year-fallback' },
+        }),
+        { ASSET_BASE_URL: 'https://example-assets.dev' }
+      )
+
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('x-request-id'), 'req-quote-year-fallback')
+      assert.equal((await response.json()).resolutionKind, 'today_fallback')
+    })
+
+    const event = lines
+      .filter(line => line.startsWith('[FX_MONITORING] '))
+      .map(line => JSON.parse(line.slice('[FX_MONITORING] '.length)))
+      .find(payload => payload.signal === 'today_fallback_used')
+    assert.deepEqual(event, {
+      timestamp: event?.timestamp,
+      surface: 'resplit-currency-api',
+      runtime: 'worker',
+      environment: 'production',
+      release: null,
+      domain: 'fx',
+      signal: 'today_fallback_used',
+      source: 'fx-quote-route',
+      route: 'quote',
+      requestId: 'req-quote-year-fallback',
+      from: 'AED',
+      to: 'USD',
+      requestedDate: '2026-02-23',
+      resolvedDate: '2026-03-16',
+      resolutionKind: 'today_fallback',
     })
   })
 })

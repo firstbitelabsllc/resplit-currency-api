@@ -153,14 +153,30 @@ export async function buildFxQuoteResponse({
     throw manifestError
   }
 
-  const historicalQuote = await fetchHistoricalQuoteResponse({
-    manifest,
-    from: fromCode,
-    to: toCode,
-    requestedDate,
-    fetchImpl,
-    baseUrl,
-  })
+  /** @type {FxQuoteResponse | null} */
+  let historicalQuote
+  try {
+    historicalQuote = await fetchHistoricalQuoteResponse({
+      manifest,
+      from: fromCode,
+      to: toCode,
+      requestedDate,
+      fetchImpl,
+      baseUrl,
+    })
+  } catch (historicalError) {
+    const latestQuote = await fetchLatestQuoteResponse({
+      from: fromCode,
+      to: toCode,
+      requestedDate,
+      fetchImpl,
+      baseUrl,
+    })
+    if (latestQuote) {
+      return latestQuote
+    }
+    throw historicalError
+  }
   if (historicalQuote) {
     return historicalQuote
   }

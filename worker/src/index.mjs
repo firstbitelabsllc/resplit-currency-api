@@ -186,6 +186,19 @@ async function handleQuote(request, env) {
       date,
       baseUrl: env.ASSET_BASE_URL || ASSET_BASE_URL,
     })
+    if (response.resolutionKind !== 'exact') {
+      logFxMonitoringEvent('warn', {
+        signal: `${response.resolutionKind}_used`,
+        source: 'fx-quote-route',
+        route: 'quote',
+        requestId,
+        from: response.from,
+        to: response.to,
+        requestedDate: response.requestedDate,
+        resolvedDate: response.resolvedDate,
+        resolutionKind: response.resolutionKind,
+      }, env)
+    }
     return jsonResponse(response, {
       requestId,
       headers: {
