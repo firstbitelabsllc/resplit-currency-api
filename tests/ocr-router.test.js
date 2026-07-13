@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
+import { setSentryWorkerSdkForTests, resetSentryWorkerSdkForTests } from '../worker/src/monitoring.mjs'
 
 function makeKV() {
   const store = new Map()
@@ -133,6 +134,25 @@ test('POST /ocr/scan (soft-fail) returns the versioned envelope wrapping the Azu
   assert.equal(azureCalls.submit, 1)
   assert.equal(azureCalls.layoutSubmit, 0, 'key-value add-on is opt-in because it doubles Azure analyzes')
   assert.equal(body.kv_extras, 'off', 'flag-off scans declare kv_extras off in the envelope')
+})
+
+test('POST /ocr/scan preserves a successful paid result when structured logging throws', async () => {
+  stubAzure()
+  const originalLog = console.log
+  console.log = () => { throw new Error('log sink unavailable') }
+  let res
+  try {
+    res = await handleOcr(scanRequest(new Uint8Array([1, 4, 1])), makeEnv())
+  } finally {
+    console.log = originalLog
+  }
+
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.v, 1)
+  assert.equal(body.mode, 'raw')
+  assert.equal(body.status, 'ok')
+  assert.equal(azureCalls.submit, 1)
 })
 
 test('POST /ocr/scan merges opt-in Azure layout keyValuePairs into the raw receipt envelope', async () => {
@@ -515,6 +535,38 @@ test('a provider_error 502 reports to Sentry (scan-path failure is not log-only)
     assert.equal(calls.scopes[0].tags['ocr.azure_status'], '500')
   } finally {
     resetOcrSentrySdkForTests()
+  }
+})
+
+test('a provider_error keeps its versioned 502 envelope when OCR Sentry flush rejects', async () => {
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url)
+    if (init.method === 'POST' && u.includes(':analyze')) {
+      return new Response('azure exploded', { status: 500 })
+    }
+    throw new Error(`unexpected fetch ${init.method} ${u}`)
+  }
+  setOcrSentrySdkForTests({
+    captureMessage() {},
+    flush() { return Promise.reject(new Error('OCR Sentry flush unavailable')) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  setSentryWorkerSdkForTests({
+    captureException() {},
+    flush() { return Promise.resolve(true) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  try {
+    const env = makeEnv({ SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
+    const res = await handleOcr(scanRequest(new Uint8Array([3, 4, 3])), env)
+    assert.equal(res.status, 502)
+    const body = await res.json()
+    assert.equal(body.v, 1)
+    assert.equal(body.mode, 'raw')
+    assert.equal(body.status, 'provider_error')
+  } finally {
+    resetOcrSentrySdkForTests()
+    resetSentryWorkerSdkForTests()
   }
 })
 
