@@ -588,6 +588,33 @@ test('an ok scan does NOT report to Sentry (no vanity events on success)', async
   }
 })
 
+test('an unexpected OCR failure keeps its typed 502 when generic Sentry flush rejects', async () => {
+  const env = makeEnv({ SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
+  env.ATTEST_KV.put = async () => { throw new Error('attest store unavailable') }
+  setSentryWorkerSdkForTests({
+    captureException() {},
+    flush() { return Promise.reject(new Error('Sentry unavailable')) },
+    withScope(cb) { cb({ setLevel() {}, setTag() {}, setContext() {} }) },
+  })
+  try {
+    const request = new Request('https://fx.resplit.app/ocr/challenge', {
+      headers: { 'x-resplit-trace-id': 'ocr-catch-fail-open' },
+    })
+    const res = await handleOcr(request, env)
+    assert.equal(res.status, 502)
+    assert.equal(res.headers.get('x-request-id'), 'ocr-catch-fail-open')
+    assert.equal(res.headers.get('x-resplit-trace-id'), 'ocr-catch-fail-open')
+    assert.deepEqual(await res.json(), {
+      error: 'OCR_FAILED',
+      message: 'attest store unavailable',
+      requestId: 'ocr-catch-fail-open',
+      traceId: 'ocr-catch-fail-open',
+    })
+  } finally {
+    resetSentryWorkerSdkForTests()
+  }
+})
+
 test('GET /ocr/challenge issues a single-use challenge', async () => {
   const env = makeEnv()
   const res = await handleOcr(new Request('https://fx.resplit.app/ocr/challenge', { method: 'GET' }), env)
