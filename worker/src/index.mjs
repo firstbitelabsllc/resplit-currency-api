@@ -46,6 +46,18 @@ async function runMonitoringBestEffort(operation, fallback) {
   }
 }
 
+/**
+ * @param {'log' | 'warn' | 'error'} method
+ * @param {...unknown} args
+ */
+function writeConsoleBestEffort(method, ...args) {
+  try {
+    console[method](...args)
+  } catch {
+    return
+  }
+}
+
 const handler = {
   /**
    * @param {Request} request
@@ -66,7 +78,7 @@ const handler = {
    */
   async scheduled(controller, env, _ctx) {
     const requestId = `sched-${crypto.randomUUID()}`
-    console.log(`[FX_CANARY] trigger=scheduled cron=${controller.cron} requestId=${requestId}`)
+    writeConsoleBestEffort('log', `[FX_CANARY] trigger=scheduled cron=${controller.cron} requestId=${requestId}`)
     await runScheduledFxCanary(env, { requestId })
   },
 }
@@ -303,13 +315,13 @@ async function handleCoverage(request, env) {
     const line = `[FX_DIAGNOSTICS] step=done status=200 ${summary}`
 
     if (report.mismatchCount > 0) {
-      console.warn(line)
+      writeConsoleBestEffort('warn', line)
       await runMonitoringBestEffort(
         () => captureFxCoverageMismatch(report, 'fx-coverage-route', requestId, env),
         false
       )
     } else {
-      console.log(line)
+      writeConsoleBestEffort('log', line)
       logFxMonitoringEvent('info', {
         signal: 'coverage_ok',
         source: 'fx-coverage-route',
@@ -335,13 +347,13 @@ async function handleCoverage(request, env) {
       `[FX_DIAGNOSTICS] step=error from=${rawFrom} to=${rawTo} anchorDate=${rawAnchorDate ?? 'today'} days=${rawDays} message=${message}`
 
     if (message.startsWith('Invalid ') || message.startsWith('No history points available')) {
-      console.warn(line)
+      writeConsoleBestEffort('warn', line)
       return errorResponse('INVALID_QUERY', message, 400, requestId, {
         'Cache-Control': 'no-store',
       })
     }
 
-    console.error(line)
+    writeConsoleBestEffort('error', line)
     await runMonitoringBestEffort(() => captureFxCoverageFailure(error, {
       source: 'fx-coverage-route',
       from: rawFrom,
@@ -360,7 +372,7 @@ async function handleFxCanary(request, env) {
   const requestId = resolveRequestId(request)
 
   if (!isAuthorizedCronRequest(request, env)) {
-    console.warn('[FX_CANARY] status=401 unauthorized')
+    writeConsoleBestEffort('warn', '[FX_CANARY] status=401 unauthorized')
     return errorResponse(
       'UNAUTHORIZED',
       'Missing or invalid cron authorization',
@@ -415,7 +427,8 @@ async function runScheduledFxCanary(env, { requestId }) {
       checkedAt: report.checkedAt,
     }, env)
 
-    console[report.ok ? 'log' : 'error'](
+    writeConsoleBestEffort(
+      report.ok ? 'log' : 'error',
       `[FX_CANARY] status=${report.ok ? 200 : 500} ok=${report.ok} mismatchCount=${report.mismatchCount} failureCount=${report.failureCount}`
     )
 
@@ -425,7 +438,7 @@ async function runScheduledFxCanary(env, { requestId }) {
 
     return report
   } catch (error) {
-    console.error('[FX_CANARY] status=500 FX canary failed', error)
+    writeConsoleBestEffort('error', '[FX_CANARY] status=500 FX canary failed', error)
     await runMonitoringBestEffort(() => captureFxRouteFailure(error, {
       route: 'cron_fx_canary',
       signal: 'canary_error',

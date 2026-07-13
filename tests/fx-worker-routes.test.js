@@ -798,7 +798,7 @@ test('throwing console.log cannot turn a truthful successful canary into a failu
   })
 })
 
-test('worker cron route reports canary_error on unexpected failures', async () => {
+test('worker cron route keeps the truthful canary report when the diagnostics console throws', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   const originalConsoleError = console.error
   const errorLines = []
@@ -831,12 +831,11 @@ test('worker cron route reports canary_error on unexpected failures', async () =
       assert.equal(response.status, 500)
       assert.equal(response.headers.get('x-request-id'), 'req-canary-fail')
       assert.equal(response.headers.get('cache-control'), 'no-store')
-      assert.deepEqual(await response.json(), {
-        error: 'FX_CANARY_FAILED',
-        message: 'FX canary failed',
-        requestId: 'req-canary-fail',
-        traceId: 'req-canary-fail',
-      })
+      const body = await response.json()
+      assert.equal(body.ok, false)
+      assert.equal(body.mismatchCount, 0)
+      assert.equal(body.failureCount, 12)
+      assert.equal(body.results.length, 12)
     })
   } finally {
     console.error = originalConsoleError
@@ -847,14 +846,17 @@ test('worker cron route reports canary_error on unexpected failures', async () =
       return false
     }
     const payload = JSON.parse(line.replace('[FX_MONITORING] ', ''))
-    return payload.signal === 'canary_error' && payload.error === 'console exploded'
+    return payload.signal === 'canary_error' && payload.failureCount === 12
   })
-  assert.ok(monitoringLine, 'expected FX monitoring error log')
+  assert.ok(monitoringLine, 'expected truthful FX canary monitoring log')
 
   const payload = JSON.parse(monitoringLine.replace('[FX_MONITORING] ', ''))
   assert.equal(payload.signal, 'canary_error')
   assert.equal(payload.route, 'cron_fx_canary')
   assert.equal(payload.requestId, 'req-canary-fail')
-  assert.equal(payload.error, 'console exploded')
-  assert.equal(payload.requestedDays, 30)
+  assert.equal(payload.failureCount, 12)
+  assert.ok(
+    errorLines.some(line => line.startsWith('[FX_CANARY] status=500 ok=false')),
+    'expected the failing diagnostics sink to receive the canary summary'
+  )
 })
