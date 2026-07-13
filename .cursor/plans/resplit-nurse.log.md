@@ -1,5 +1,15 @@
 # Resplit Nurse Log
 
+## 2026-07-12 23:46 EDT / 2026-07-13 03:46 UTC
+
+- `GO/merged-and-live` for the observational legacy-partial compatibility shadow; `WATCHING/adoption-unobserved` for exact-build candidates. PR `#84` passed focused `8/8`, full `npm run check` (Node `533/533`, Worker `13/13`), smoke, CodeQL, Cursor, and Graphite, then squash-merged as `3c9a2635536f75b54a3809752935b77c0ee3631f`.
+- Workflow dispatch `29222314257` completed `success` from that exact main SHA. Cloudflare deployment version `c371da6b-4652-41be-98fd-4a2070794762` is at 100%; metadata-only readback confirms `OCR_LEGACY_PARTIAL_COMPAT_SHADOW=true`, `OCR_ACCOUNTING_MODE=legacy`, `LLM_SCAN_ALLOW_SOFT_FAIL=true`, and migration tag `ocr-accounting-sqlite-v1`.
+- Public `https://fx.resplit.app/health` returned `200`, `cache-control: no-store`, release `3c9a2635536f75b54a3809752935b77c0ee3631f`, and trace `86170622-fbf4-49cf-81d0-9511e4918e64`; fresh `npm run smoke:deploy` passed for `2026-07-13` with 30 history points.
+- Separate adoption truth: a bounded 30-second production tail filtered to `ocr_legacy_partial_compat_shadow` observed no organic candidate event. No synthetic OCR request, provider spend, response rewrite, accounting-mode change, cache mutation, secret read, or secret write was used to manufacture telemetry.
+- Exact next slice: passively wait for an organic supported-build partial result, then correlate only bounded build/reason/outcome telemetry. Keep the mapper observational and preserve current response/provider/accounting/cache behavior; do not advance App Attest enforcement or atomic accounting from this activation receipt alone.
+
+<promise>COMPLETE: runtime activation; WATCHING: organic candidate telemetry</promise>
+
 ## 2026-07-12 19:05 EDT / 2026-07-12 23:05 UTC
 
 - `GO/source-current` for `P8-OPENAPI-MULTI-ENGINE`. Canonical `main` `7d72f1357472404fc87f7b7bcf50d3d50adb96ee` now documents the shipped `POST /ocr/dual-scan` v1 and `POST /ocr/analyze` v2 contracts, including App Attest headers, raw-image media types, truthful partial/rate-limit/provider-error envelopes, nested Azure/Anthropic engine identities, OCR ingress `413`, and both shaped and generic `502` responses.
