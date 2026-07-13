@@ -307,7 +307,7 @@ test('the mapper rejects two-minor-unit drift and missing or ambiguous money fie
   )
 })
 
-test('the default-off root and named-production config preserve soft-fail while pinning the shadow rollback rail', () => {
+test('the root and named-production config activate only the observational shadow', () => {
   const wranglerPath = path.join(__dirname, '..', 'wrangler.jsonc')
   const wrangler = JSON.parse(stripJsonComments(fs.readFileSync(wranglerPath, 'utf8')))
   for (const [name, vars] of [
@@ -315,7 +315,7 @@ test('the default-off root and named-production config preserve soft-fail while 
     ['named production', wrangler.env.production.vars],
   ]) {
     assert.equal(vars.LLM_SCAN_ALLOW_SOFT_FAIL, 'true', `${name} soft-fail must remain enabled`)
-    assert.equal(vars.OCR_LEGACY_PARTIAL_COMPAT_SHADOW, 'false', `${name} shadow must default off`)
+    assert.equal(vars.OCR_LEGACY_PARTIAL_COMPAT_SHADOW, 'true', `${name} shadow must be observationally active`)
   }
 })
 
