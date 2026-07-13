@@ -1,5 +1,17 @@
 # Resplit Nurse Log
 
+## 2026-07-13 05:05 EDT / 2026-07-13 09:05 UTC
+
+- `GO/merged-and-live` for FX telemetry fail-open behavior; `OBSERVABILITY/occurrence-unproven` for organic monitoring failures. PR `#89` carried final head `904277dd`, passed CodeQL, Cursor, Graphite, and independent review, then squash-merged as `a374d3fd2495f6320d2ed5b7db74ee293b291eae`.
+- Behavior repair: FX structured-log serialization/sink failures, Sentry scope/capture/rejected-flush/check-in failures, and direct `console.log`/`warn`/`error` diagnostics can no longer replace truthful quote, history, coverage, canary, or Sideload responses. Typed correlated failures remain intact; FX math, source data, OCR, accounting, provider routing, and schedules did not change.
+- Mechanical proof: sealed RED `f829e5d4` exposed 15 telemetry-response failures and sealed RED `00196228` exposed four console-response failures. Final focused coverage passed `74/74`; canonical `npm run check` passed Node `561/561` plus Worker `13/13`; `npm run smoke:deploy`, `git diff --check`, and Wrangler `4.110.0` root plus named-production dry-runs passed with canonical bindings.
+- Exact-main workflow `29237587668` completed `success` from merge SHA `a374d3fd` in `60s`. Rate generation/validation, deployed provider-secret continuity, Cloudflare Pages, the FX Worker, GitHub Pages, and post-deploy smoke passed. The workflow's Sentry-finish step stayed green but skipped its finish call because the dispatch start produced no check-in id; GitHub `AZURE_OCR_KEY` was unset while deployed Worker secret continuity passed. Neither annotation is promoted into provider-call or Sentry-event proof.
+- Fresh production readback: `GET https://fx.resplit.app/health` returned HTTP `200`, `cache-control: no-store`, exact release `a374d3fd2495f6320d2ed5b7db74ee293b291eae`, timestamp `2026-07-13T09:04:22.739Z`, and matching request/trace id `rw-fx-worker-failopen-20260713T0904Z`.
+- Telemetry truth stays separate: Sentry project/auth access returned HTTP `200`; the exact release object returned `404`; release-filtered events and unresolved issues both returned count `0`. This is no indexed exact-release evidence, not proof that any fail-open branch occurred organically. `$GRAFANA_API_KEY` remains absent, so no Grafana/Tempo proof is claimed. No FX fault, canary invocation, OCR request, paid provider call, secret read/write, or adoption event was manufactured.
+- Exact next slice: fold this cross-repo receipt into the canonical Resplit Web launch PLAN, append the ledger receipt, release the bounded claims, then rerank the highest reachable Web/currency correctness, recovery, fallback, or telemetry row from fresh authority. Reopen this row only if diagnostics can again replace a truthful success or typed failure.
+
+<promise>COMPLETE: source, merge, deploy, and health; UNCLAIMED: organic telemetry occurrence and adoption</promise>
+
 ## 2026-07-13 04:14 EDT / 2026-07-13 08:14 UTC
 
 - `GO/merged-and-live` for OCR telemetry fail-open behavior; `OBSERVABILITY/occurrence-unproven` for organic failure events. PR `#87` carried implementation head `16c2bc4e`, passed CodeQL, Cursor, Graphite, and independent review, then squash-merged as `9c4ae95ab49f3f9700dca76faae25ce950d42651`.
