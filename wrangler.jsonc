@@ -50,9 +50,9 @@
     // path until a separately proven activation change moves this out of legacy.
     "OCR_ACCOUNTING_MODE": "legacy",
     // Exact 2.0.0+3798/3801/3811 Azure-only partial compatibility classifier.
-    // Observational only: false means no mapper invocation or added telemetry;
-    // true still leaves the v1 response byte contract unchanged.
-    "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "false",
+    // Observational only: true emits bounded classification telemetry while
+    // leaving the v1 response byte contract and provider work unchanged.
+    "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "true",
     // Server-owned global provider ceilings for the dark SQLite enforcement path.
     // OCR_ACCOUNTING_HMAC_KEY remains a secret and is intentionally not required
     // by the legacy deployment; activation must provision it before changing mode.
@@ -140,8 +140,8 @@
         "SOFT_FAIL_DAILY_CAP": "150",
         // Mirror root dark mode; named environments inherit neither vars nor DO bindings.
         "OCR_ACCOUNTING_MODE": "legacy",
-        // Default-off observational compatibility classifier; response never changes.
-        "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "false",
+        // Mirror the root observational classifier; response and provider work stay unchanged.
+        "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "true",
         "OCR_AZURE_GLOBAL_DAILY_CAP": "6000",
         "OCR_ANTHROPIC_GLOBAL_DAILY_CAP": "3000",
         // pre-launch dev unlock — mirrored from root vars so the two postures don't
