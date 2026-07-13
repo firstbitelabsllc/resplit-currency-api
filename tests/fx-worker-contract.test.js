@@ -84,6 +84,49 @@ test('worker quote falls back to latest when historical manifest is unavailable'
   assert.match(quote.warning, /today/i)
 })
 
+test('worker quote falls back to latest when the historical year payload is unavailable', async () => {
+  const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
+  const requested = []
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    requested.push(url)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return makeJsonResponse({
+        earliestDate: '2026-02-20',
+        latestDate: '2026-03-16',
+        availableDates: ['2026-02-20', '2026-02-23', '2026-03-16'],
+        gapCount: 2,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    if (url.endsWith('/archive-years/2026.min.json')) {
+      return new Response('boom', { status: 503 })
+    }
+    if (url.endsWith('/latest/aed.json')) {
+      return makeJsonResponse({
+        date: '2026-03-16',
+        from: 'aed',
+        rates: { usd: 0.272295 },
+      })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  const quote = await buildFxQuoteResponse({
+    from: 'AED',
+    to: 'USD',
+    date: '2026-02-23',
+    fetchImpl,
+  })
+
+  assert.equal(quote.resolutionKind, 'today_fallback')
+  assert.equal(quote.resolvedDate, '2026-03-16')
+  assert.match(quote.warning, /today/i)
+  assert.ok(requested.some(url => url.endsWith('/archive-years/2026.min.json')))
+  assert.ok(requested.some(url => url.endsWith('/latest/aed.json')))
+})
+
 test('worker history loads cross-year ranges from year payloads', async () => {
   const { buildFxHistoryResponse } = await import('../worker/src/fx-contract.mjs')
   const requested = []
