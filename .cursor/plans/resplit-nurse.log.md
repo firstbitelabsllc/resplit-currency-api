@@ -1,5 +1,17 @@
 # Resplit Nurse Log
 
+## 2026-07-13 04:14 EDT / 2026-07-13 08:14 UTC
+
+- `GO/merged-and-live` for OCR telemetry fail-open behavior; `OBSERVABILITY/occurrence-unproven` for organic failure events. PR `#87` carried implementation head `16c2bc4e`, passed CodeQL, Cursor, Graphite, and independent review, then squash-merged as `9c4ae95ab49f3f9700dca76faae25ce950d42651`.
+- Behavior repair: OCR monitoring log serialization/sink failures, Sentry scope/capture/rejected-flush failures, and the router's generic failure telemetry can no longer replace a paid or otherwise usable OCR response. Raw, dual-scan, and analyze success/partial envelopes survive telemetry failure; typed correlated OCR `502` responses remain intact. Accounting and cache admission behavior did not change.
+- Mechanical proof: untouched-main RED failed `6/60` new fail-open assertions, and the review-added outer-catch RED failed `1/24` with `Error: Sentry unavailable`. Final focused coverage passed `61/61`; full `npm run check` passed Node `542/542` plus Worker `13/13`; root and named-production Wrangler dry-runs passed; `npm run smoke:deploy` passed with 30 history points.
+- Exact-main workflow `29234293858` completed `success` from merge SHA `9c4ae95a` in `67s`. Rate generation/validation, deployed provider-secret continuity, Cloudflare Pages, FX Worker, GitHub Pages, and post-deploy smoke passed. The workflow's Sentry-finish step remained green but skipped the finish call because its start step returned no check-in id; GitHub `AZURE_OCR_KEY` was unset while deployed Worker secret continuity was independently verified. Neither annotation is promoted into provider-call or Sentry-event proof.
+- Fresh production readback: `GET https://fx.resplit.app/health` returned HTTP `200`, `cache-control: no-store`, exact release `9c4ae95ab49f3f9700dca76faae25ce950d42651`, timestamp `2026-07-13T08:08:37.997Z`, and matching request/trace id `f9585a2a-bfee-4785-bfa8-01622f05849b`. A post-deploy local smoke rerun also passed.
+- Telemetry truth stays separate: Sentry project/auth access returned HTTP `200`; the exact release object returned `404`; release-filtered events returned HTTP `200` with count `0`; unresolved issues for the release returned HTTP `200` with count `0`. This is no indexed exact-release evidence, not proof that the new fail-open branches have occurred. `$GRAFANA_API_KEY` is absent, so no Grafana/Tempo proof is claimed. No OCR request, paid provider call, production fault, secret read/write, or user-adoption event was manufactured.
+- Exact next slice: fold this cross-repo receipt into the canonical Resplit Web launch PLAN, release the bounded claims, then rerank the highest reachable Web/currency correctness or telemetry failure from fresh authority. Reopen this row only if monitoring can again replace a successful/partial result or typed error.
+
+<promise>COMPLETE: source, merge, deploy, and health; UNCLAIMED: organic telemetry occurrence and adoption</promise>
+
 ## 2026-07-12 23:46 EDT / 2026-07-13 03:46 UTC
 
 - `GO/merged-and-live` for the observational legacy-partial compatibility shadow; `WATCHING/adoption-unobserved` for exact-build candidates. PR `#84` passed focused `8/8`, full `npm run check` (Node `533/533`, Worker `13/13`), smoke, CodeQL, Cursor, and Graphite, then squash-merged as `3c9a2635536f75b54a3809752935b77c0ee3631f`.
