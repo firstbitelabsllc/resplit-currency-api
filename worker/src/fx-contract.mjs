@@ -381,11 +381,17 @@ async function fetchLatestQuoteResponse({
       return null
     }
 
+    const latestFrom = normalizeCurrencyCode(latestPayload.from)
     const resolvedDate = normalizeDate(latestPayload.date)
+    const todayDate = todayDateString()
+    if (latestFrom !== from || resolvedDate > todayDate) {
+      return null
+    }
+
     const resolutionKind =
       resolvedDate === requestedDate
         ? 'exact'
-        : requestedDate === todayDateString()
+        : requestedDate === todayDate
           ? 'prior_day_fallback'
           : 'today_fallback'
 

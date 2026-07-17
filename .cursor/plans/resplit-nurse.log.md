@@ -1,5 +1,14 @@
 # Resplit Nurse Log
 
+## 2026-07-16 20:09 EDT / 2026-07-17 00:09 UTC
+
+- `GO/source-candidate` for Currency Worker latest-asset identity. `fetchLatestQuoteResponse` now accepts a latest rate only when its normalized declared base matches the requested base and its normalized resolved date is not after the Worker UTC date. A mismatched or future asset returns no quote, preserving the existing archive/manifest/original-error ordering instead of labeling a wrong rate exact or fallback.
+- Preserved RED: two deterministic no-network contract cases failed on untouched `0373679` with missing expected rejection: AED->USD accepted a latest `{from: eur, date: 2026-02-23, rates.usd: 1.2345}` as exact, and a same-base `9999-12-31` latest asset as fallback. After the minimal validator, focused `node --test tests/fx-worker-contract.test.js` passed `7/7`.
+- Full proof: after a pinned `PUBLISH_DATE=2026-07-16 npm run generate` regenerated the ignored local package fixture with `166` currencies, the full canonical `PUBLISH_DATE=2026-07-16 npm run check` passed strict validation plus `566/566` Node and `13/13` Worker tests. The unpinned `npm run check` at 00:06 UTC correctly refused a July 17 package while the upstream primary still reported July 16; that is the intended UTC-midnight provider-freshness guard, not a test or source regression. `npm run smoke:deploy` passed read-only with its documented publish grace for `2026-07-16` through `00:45Z`.
+- Separate live read-only proof: Worker and Web both returned the exact AED->USD `2026-07-16` rate `0.2722972314117398`, resolution `exact`; Worker health was `200` on existing release `0373679db61bd590366becd9559dd5c15cfc4e42`. This candidate is not deployed. No Cloudflare mutation, Redis/Upstash access, secret read/write, OCR request, or paid provider call occurred.
+- Readiness: Cloudflare/Wrangler authenticated. Grafana API and Sentry release/auth credentials remain unavailable, so no live trace or indexed-release telemetry conclusion is claimed.
+- Exact next: commit and land this two-file integrity fence after a fresh main collision check; then fold the exact main receipt into the canonical Web launch PLAN. The scheduled Currency workflow, not this source commit, remains the separate deployment path.
+
 ## 2026-07-13 07:13 EDT / 2026-07-13 11:13 UTC
 
 - `GO/merged-and-live` for historical quote recovery when a manifest-referenced yearly archive is unavailable. PR `#91` carried reviewed head `bbc0d8d7`, passed CodeQL, Cursor, Graphite, and independent review, then squash-merged as `a0d78591dc75542338b679957f8380439b7f52ec`.

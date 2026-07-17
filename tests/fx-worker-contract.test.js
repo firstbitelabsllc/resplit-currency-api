@@ -84,6 +84,64 @@ test('worker quote falls back to latest when historical manifest is unavailable'
   assert.match(quote.warning, /today/i)
 })
 
+test('worker quote rejects a latest asset whose declared base differs from the requested base', async () => {
+  const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return new Response('manifest down', { status: 500 })
+    }
+    if (url.endsWith('/latest/aed.json')) {
+      return makeJsonResponse({
+        date: '2026-02-23',
+        from: 'eur',
+        rates: { usd: 1.2345 },
+      })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  await assert.rejects(
+    buildFxQuoteResponse({
+      from: 'AED',
+      to: 'USD',
+      date: '2026-02-23',
+      fetchImpl,
+    }),
+    /500 .*archive-manifest\.min\.json/
+  )
+})
+
+test('worker quote rejects a future-dated latest asset', async () => {
+  const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return new Response('manifest down', { status: 500 })
+    }
+    if (url.endsWith('/latest/aed.json')) {
+      return makeJsonResponse({
+        date: '9999-12-31',
+        from: 'aed',
+        rates: { usd: 0.272295 },
+      })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  await assert.rejects(
+    buildFxQuoteResponse({
+      from: 'AED',
+      to: 'USD',
+      date: '2026-02-23',
+      fetchImpl,
+    }),
+    /500 .*archive-manifest\.min\.json/
+  )
+})
+
 test('worker quote falls back to latest when the historical year payload is unavailable', async () => {
   const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
   const requested = []
