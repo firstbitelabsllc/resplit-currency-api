@@ -54,6 +54,50 @@ test('worker quote resolves historical data from yearly archive payloads', async
   assert.ok(requested.every(url => !url.includes('/archive/2026-02-23.min.json')))
 })
 
+test('worker quote rejects a manifest-unsupported currency before archive or latest fallback fan-out', async () => {
+  const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
+  let manifestFetches = 0
+  let archiveFetches = 0
+  let latestFetches = 0
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      manifestFetches += 1
+      return makeJsonResponse({
+        earliestDate: '2026-02-20',
+        latestDate: '2026-03-16',
+        availableDates: ['2026-02-20', '2026-02-23', '2026-03-16'],
+        gapCount: 2,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    if (url.endsWith('/archive-years/2026.min.json')) {
+      archiveFetches += 1
+      return makeJsonResponse({})
+    }
+    if (url.endsWith('/latest/aed.json')) {
+      latestFetches += 1
+      return makeJsonResponse({})
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  await assert.rejects(
+    buildFxQuoteResponse({
+      from: 'AED',
+      to: 'ZZZ',
+      date: '2026-02-23',
+      fetchImpl,
+    }),
+    /Invalid currency code: ZZZ/
+  )
+
+  assert.equal(manifestFetches, 1)
+  assert.equal(archiveFetches, 0)
+  assert.equal(latestFetches, 0)
+})
+
 test('worker quote falls back to latest when historical manifest is unavailable', async () => {
   const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
 
@@ -275,4 +319,43 @@ test('worker history loads cross-year ranges from year payloads', async () => {
   assert.equal(history.coverage.availableDays, 3)
   assert.ok(requested.some(url => url.endsWith('/archive-years/2025.min.json')))
   assert.ok(requested.some(url => url.endsWith('/archive-years/2026.min.json')))
+})
+
+test('worker history rejects a manifest-unsupported currency before archive-year fan-out', async () => {
+  const { buildFxHistoryResponse } = await import('../worker/src/fx-contract.mjs')
+  let manifestFetches = 0
+  let archiveFetches = 0
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      manifestFetches += 1
+      return makeJsonResponse({
+        earliestDate: '2026-02-20',
+        latestDate: '2026-03-16',
+        availableDates: ['2026-02-20', '2026-02-23', '2026-03-16'],
+        gapCount: 2,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    if (url.endsWith('/archive-years/2026.min.json')) {
+      archiveFetches += 1
+      return makeJsonResponse({})
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  await assert.rejects(
+    buildFxHistoryResponse({
+      from: 'AED',
+      to: 'ZZZ',
+      start: '2026-02-20',
+      end: '2026-02-23',
+      fetchImpl,
+    }),
+    /Invalid currency code: ZZZ/
+  )
+
+  assert.equal(manifestFetches, 1)
+  assert.equal(archiveFetches, 0)
 })

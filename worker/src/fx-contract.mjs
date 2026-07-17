@@ -152,6 +152,7 @@ export async function buildFxQuoteResponse({
     }
     throw manifestError
   }
+  assertManifestSupportsCurrencyCodes(manifest, fromCode, toCode)
 
   /** @type {FxQuoteResponse | null} */
   let historicalQuote
@@ -248,6 +249,7 @@ export async function buildFxHistoryResponse({
   }
 
   const manifest = await fetchJson(`${baseUrl}/archive-manifest.min.json`, fetchImpl)
+  assertManifestSupportsCurrencyCodes(manifest, fromCode, toCode)
   const requestedDates = enumerateDates(normalizedStart, normalizedEnd)
   const availableDates = manifest.availableDates.filter(
     dateValue => dateValue >= normalizedStart && dateValue <= normalizedEnd
@@ -494,6 +496,28 @@ function normalizeCurrencyCode(value) {
     throw new Error(`Invalid currency code: ${value}`)
   }
   return normalized
+}
+
+/**
+ * @param {ArchiveManifest} manifest
+ * @param {...string} codes
+ */
+function assertManifestSupportsCurrencyCodes(manifest, ...codes) {
+  if (
+    !Array.isArray(manifest.supportedCurrencies) ||
+    manifest.supportedCurrencies.some(currency => typeof currency !== 'string')
+  ) {
+    throw new Error('FX archive manifest supported currencies unavailable')
+  }
+
+  const supportedCurrencies = new Set(
+    manifest.supportedCurrencies.map(currency => currency.toUpperCase())
+  )
+  for (const code of codes) {
+    if (!supportedCurrencies.has(code)) {
+      throw new Error(`Invalid currency code: ${code}`)
+    }
+  }
 }
 
 /**

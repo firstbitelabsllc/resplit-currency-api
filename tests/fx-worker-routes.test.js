@@ -321,6 +321,40 @@ test('worker quote route rejects impossible calendar dates', async () => {
   })
 })
 
+test('worker quote route rejects a manifest-unsupported currency as an invalid query', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  await withStubbedFetch(async input => {
+    const url = String(input)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return makeJsonResponse({
+        earliestDate: '2026-02-20',
+        latestDate: '2026-03-16',
+        availableDates: ['2026-02-20', '2026-02-23', '2026-03-16'],
+        gapCount: 2,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }, async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/quote?from=AED&to=ZZZ&date=2026-02-23', {
+        headers: { 'x-request-id': 'req-quote-unsupported' },
+      }),
+      { ASSET_BASE_URL: 'https://example-assets.dev' }
+    )
+
+    assert.equal(response.status, 400)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(await response.json(), {
+      error: 'INVALID_QUERY',
+      message: 'Invalid currency code: ZZZ',
+      requestId: 'req-quote-unsupported',
+      traceId: 'req-quote-unsupported',
+    })
+  })
+})
+
 test('worker quote route returns cache headers and stable request id', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   await withStubbedFetch(async input => {
@@ -476,6 +510,40 @@ test('worker history route rejects impossible calendar dates', async () => {
     message: 'Invalid date: 2026-02-31',
     requestId: 'req-history-invalid',
     traceId: 'req-history-invalid',
+  })
+})
+
+test('worker history route rejects a manifest-unsupported currency as an invalid query', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+
+  await withStubbedFetch(async input => {
+    const url = String(input)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return makeJsonResponse({
+        earliestDate: '2026-02-20',
+        latestDate: '2026-03-16',
+        availableDates: ['2026-02-20', '2026-02-23', '2026-03-16'],
+        gapCount: 2,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }, async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/history?from=AED&to=ZZZ&start=2026-02-20&end=2026-02-23', {
+        headers: { 'x-request-id': 'req-history-unsupported' },
+      }),
+      { ASSET_BASE_URL: 'https://example-assets.dev' }
+    )
+
+    assert.equal(response.status, 400)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(await response.json(), {
+      error: 'INVALID_QUERY',
+      message: 'Invalid currency code: ZZZ',
+      requestId: 'req-history-unsupported',
+      traceId: 'req-history-unsupported',
+    })
   })
 })
 
