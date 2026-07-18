@@ -7,10 +7,11 @@ const workflowPath = path.join(__dirname, '..', '.github', 'workflows', 'run.yml
 const workflow = fs.readFileSync(workflowPath, 'utf8')
 const continueGuard =
   "steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true'"
+const publishGuard =
+  `(${continueGuard}) && steps.publish_needed.outputs.publish_required == 'true'`
 const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
 const rootWorkerSecretWrites = [
   'printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc --env=""',
-  'printf "%s" "$SENTRY_RELEASE" | npx wrangler secret put SENTRY_RELEASE --config wrangler.jsonc --env=""',
   'printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc --env=""',
   'printf "%s" "$AZURE_OCR_KEY" | npx wrangler secret put AZURE_OCR_KEY --config wrangler.jsonc --env=""',
 ]
@@ -86,6 +87,23 @@ test('workflow keeps both the midnight publish pass and the 03:00 UTC refresh sc
   assert.match(workflow, /schedule:\s*\n\s*-\s*cron:\s*'0 0 \* \* \*'\s*\n\s*-\s*cron:\s*'0 3 \* \* \*'/)
 })
 
+test('workflow serializes duplicate passes and retains an explicit manual recovery escape hatch', () => {
+  assert.match(workflow, /concurrency:\s*\n\s*group: currency-rates-publish\s*\n\s*cancel-in-progress: false/)
+  assert.match(workflow, /actions\/checkout@[\s\S]*?with:\s*\n\s*fetch-depth: 2/)
+  assert.match(workflow, /workflow_dispatch:\s*\n\s*inputs:\s*\n\s*force_publish:/)
+  assert.match(workflow, /type: boolean/)
+  assert.match(workflow, /FORCE_PUBLISH: \$\{\{ inputs\.force_publish && 'true' \|\| 'false' \}\}/)
+})
+
+test('workflow skips publication only after the archive and deployed release guard agree', () => {
+  const decision = stepBlock(workflow, 'Decide whether publication is needed')
+  assert.match(decision, /id: publish_needed/)
+  assert.match(decision, /ARCHIVE_CHANGED: \$\{\{ steps\.commit_snapshot_archive\.outputs\.archive_changed \}\}/)
+  assert.match(decision, /EXPECTED_DATE: \$\{\{ env\.date_today \}\}/)
+  assert.match(decision, /CURRENT_RELEASE: \$\{\{ github\.sha \}\}/)
+  assert.match(decision, /node scripts\/publish-needed\.js >> "\$GITHUB_OUTPUT"/)
+})
+
 test('workflow records whether a stale rerun can safely continue deploy steps', () => {
   assert.match(workflow, /echo "continue_stale_deploy=false" >> "\$GITHUB_OUTPUT"/)
   assert.match(workflow, /echo "continue_stale_deploy=true" >> "\$GITHUB_OUTPUT"/)
@@ -131,6 +149,23 @@ test('every runtime secret write targets only the root Worker, including mutatio
   }
 })
 
+test('workflow stamps the Worker release only after a successful Worker deploy', () => {
+  const deployWorker = stepBlock(workflow, 'Deploy FX Worker')
+  const releaseStamp = stepBlock(workflow, 'Stamp deployed FX Worker release')
+
+  assert.match(deployWorker, new RegExp(`if: \\$\\{\\{ ${publishGuard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\}\\}`))
+  assert.match(releaseStamp, /printf "%s" "\$SENTRY_RELEASE" \| npx wrangler secret put SENTRY_RELEASE --config wrangler\.jsonc --env=""/)
+  assert.ok(
+    workflow.indexOf('      - name: Deploy FX Worker') < workflow.indexOf('      - name: Stamp deployed FX Worker release'),
+    'Worker release stamp must only run after the Worker deployment step'
+  )
+  assert.doesNotMatch(
+    stepBlock(workflow, 'Sync FX Worker runtime secrets'),
+    /secret put SENTRY_RELEASE/,
+    'pre-deploy secret sync must not make health look current before a Worker deploy succeeds'
+  )
+})
+
 test('required OCR secret gate rejects omission, substitution, and order mutations', () => {
   const exactCommand =
     `node scripts/worker-secret-continuity.js ${requiredOcrSecrets.join(' ')}`
@@ -153,15 +188,26 @@ test('required OCR secret gate rejects omission, substitution, and order mutatio
 for (const stepName of [
   'Validate deploy secrets',
   'Sync FX Worker runtime secrets',
-  'Deploy to Cloudflare Pages',
-  'Deploy FX Worker',
-  'Deploy to GitHub Pages',
-  'Smoke check deployed endpoints',
 ]) {
-  test(`${stepName} is guarded by the stale-run deploy condition`, () => {
+  test(`${stepName} preserves runtime-secret continuity on every non-stale run`, () => {
     assert.match(
       workflow,
       new RegExp(`- name: ${stepName}[\\s\\S]*?if: \\$\\{\\{ ${continueGuard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\}\\}`)
+    )
+  })
+}
+
+for (const stepName of [
+  'Deploy to Cloudflare Pages',
+  'Deploy FX Worker',
+  'Stamp deployed FX Worker release',
+  'Deploy to GitHub Pages',
+  'Smoke check deployed endpoints',
+]) {
+  test(`${stepName} is guarded by the stale-run and verified-publish conditions`, () => {
+    assert.match(
+      workflow,
+      new RegExp(`- name: ${stepName}[\\s\\S]*?if: \\$\\{\\{ ${publishGuard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\}\\}`)
     )
   })
 }

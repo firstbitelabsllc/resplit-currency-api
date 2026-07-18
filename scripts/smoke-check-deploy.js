@@ -35,31 +35,60 @@ if (require.main === module) {
 }
 
 async function main() {
-  const cloudflareBase = process.env.CF_PAGES_BASE || 'https://resplit-currency-api.pages.dev'
-  const fallbackBase = process.env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api'
-  const workerBase = resolveWorkerBase()
-  const requestedDate = process.env.EXPECTED_DATE || null
-  const allowLatestFallback = process.env.ALLOW_STALE_DEPLOY_SMOKE === '1'
-  const publishGraceMinutes = parsePositiveInteger(
-    process.env.PUBLISH_GRACE_MINUTES,
-    defaultPublishGraceMinutes
+  const verification = await verifyDeployedRelease()
+  console.log(
+    `smoke-check-deploy: OK (date=${verification.dateToday}, ` +
+    `historyPoints=${verification.history.points.length}, cf=${verification.cloudflareBase})`
   )
-  const githubFallbackGraceMinutes = parsePositiveInteger(
-    process.env.GH_FALLBACK_GRACE_MINUTES,
+}
+
+// Shared by the post-publish smoke and the no-op publication guard. Keeping
+// this verification in one place means a skip only happens when the same
+// deployment contract that normally follows a publish is already true.
+async function verifyDeployedRelease({
+  env = process.env,
+  cloudflareBase = env.CF_PAGES_BASE || 'https://resplit-currency-api.pages.dev',
+  fallbackBase = env.GH_PAGES_BASE || 'https://firstbitelabsllc.github.io/resplit-currency-api',
+  workerBase = resolveWorkerBase(env),
+  requestedDate = env.EXPECTED_DATE || null,
+  allowLatestFallback = env.ALLOW_STALE_DEPLOY_SMOKE === '1',
+  publishGraceMinutes = parsePositiveInteger(env.PUBLISH_GRACE_MINUTES, defaultPublishGraceMinutes),
+  githubFallbackGraceMinutes = parsePositiveInteger(
+    env.GH_FALLBACK_GRACE_MINUTES,
     defaultGithubFallbackGraceMinutes
-  )
-  const postPublish = process.env.POST_PUBLISH_SMOKE === '1'
-  const { latest, history, meta } = await fetchCloudflareReleaseState({
+  ),
+  postPublish = env.POST_PUBLISH_SMOKE === '1',
+  requireFreshGithubFallback = false,
+  fetchCloudflareState = fetchCloudflareReleaseState,
+  fetchJson,
+  captureMissingDatedSnapshotIssue = true,
+  captureIssueFn = captureIssue,
+  warn = console.warn,
+  log = console.log,
+  now,
+} = {}) {
+  const releaseStateOptions = {
     baseUrl: cloudflareBase,
     expectedDate: requestedDate,
     postPublish,
-  })
-  const freshnessContract = resolveFreshnessContract({
+    warn,
+  }
+  if (fetchJson) {
+    releaseStateOptions.fetchJson = fetchJson
+  }
+  const { latest, history, meta } = await fetchCloudflareState(releaseStateOptions)
+  const freshnessOptions = {
     requestedDate,
     latestDate: latest?.date,
     metaLatestDate: meta?.latestDate,
     allowLatestFallback,
     publishGraceMinutes,
+  }
+  if (now) {
+    freshnessOptions.now = now
+  }
+  const freshnessContract = resolveFreshnessContract({
+    ...freshnessOptions,
   })
   const dateToday = freshnessContract.expectedDate
 
@@ -72,7 +101,7 @@ async function main() {
     throw new Error(`cloudflare meta latestDate expected ${dateToday}, got ${meta.latestDate}`)
   }
   if (freshnessContract.mode === 'publish_grace') {
-    console.warn(
+    warn(
       `smoke-check-deploy: WARNING publish window grace accepted ${dateToday}; ` +
       `strict expected ${freshnessContract.strictExpectedDate} until ${freshnessContract.graceEndsAt}`
     )
@@ -81,21 +110,23 @@ async function main() {
   const datedSnapshotUrl = `https://${dateToday}.resplit-currency-api.pages.dev/snapshots/base-rates.json`
   let datedSnapshot
   try {
-    datedSnapshot = await fetchJSONWithRetry(datedSnapshotUrl)
+    datedSnapshot = await (fetchJson || fetchJSONWithRetry)(datedSnapshotUrl)
   } catch (error) {
-    await captureIssue({
-      signal: 'missing_dated_snapshot_deployment',
-      error,
-      context: {
-        workflow: 'daily_publish',
-        requested_date: requestedDate,
-        expected_date: dateToday,
-        url: datedSnapshotUrl
-      }
-    })
+    if (captureMissingDatedSnapshotIssue) {
+      await captureIssueFn({
+        signal: 'missing_dated_snapshot_deployment',
+        error,
+        context: {
+          workflow: 'daily_publish',
+          requested_date: requestedDate,
+          expected_date: dateToday,
+          url: datedSnapshotUrl
+        }
+      })
+    }
     throw error
   }
-  const ghFallbackLatest = await fetchJSONWithRetry(`${fallbackBase}/latest/usd.json`)
+  const ghFallbackLatest = await (fetchJson || fetchJSONWithRetry)(`${fallbackBase}/latest/usd.json`)
 
   assertISODate(datedSnapshot.date, 'dated snapshot date')
   assertISODate(ghFallbackLatest.date, 'github fallback latest date')
@@ -115,7 +146,7 @@ async function main() {
       expectedDays: 30,
     })
     if (staticHistoryRecoveryGap) {
-      console.warn(
+      warn(
         `smoke-check-deploy: WARNING cloudflare static history has recovery archive gaps ` +
         `(historyPoints=${history.points.length}/30, ` +
         `archiveGapCount=${meta.archiveGapCount}, latestDate=${meta.latestDate})`
@@ -149,17 +180,24 @@ async function main() {
   if (datedSnapshot.date !== dateToday) {
     throw new Error(`dated deployment date mismatch: expected ${dateToday}, got ${datedSnapshot.date}`)
   }
-  const ghFallbackAcceptance = resolveGithubFallbackAcceptance({
+  if (requireFreshGithubFallback && ghFallbackLatest.date !== dateToday) {
+    throw new Error(`github fallback latest date expected ${dateToday}, got ${ghFallbackLatest.date}`)
+  }
+  const githubFreshnessOptions = {
     ghFallbackDate: ghFallbackLatest.date,
     expectedDate: dateToday,
     graceMinutes: githubFallbackGraceMinutes,
     postPublish,
-  })
+  }
+  if (now) {
+    githubFreshnessOptions.now = now
+  }
+  const ghFallbackAcceptance = resolveGithubFallbackAcceptance(githubFreshnessOptions)
   if (!ghFallbackAcceptance.accepted) {
     throw new Error(`github fallback latest date expected ${dateToday}, got ${ghFallbackLatest.date}`)
   }
   if (ghFallbackAcceptance.stale) {
-    console.warn(
+    warn(
       `smoke-check-deploy: WARNING github fallback latest date is one day stale ` +
       `(${ghFallbackLatest.date}, expected ${dateToday}) within GitHub Pages propagation grace ` +
       `(until ${ghFallbackAcceptance.graceEndsAt}) — github.io CDN lag behind Cloudflare; ` +
@@ -167,15 +205,27 @@ async function main() {
     )
   }
 
+  let workerHealth = null
   if (workerBase) {
-    await smokeCheckWorker(workerBase, dateToday)
+    workerHealth = await smokeCheckWorker(workerBase, dateToday, {
+      fetchJson: fetchJson || fetchJSONWithRetry,
+    })
   } else {
-    console.log('smoke-check-deploy: skipping worker smoke check (SKIP_WORKER_SMOKE_CHECK=1)')
+    log('smoke-check-deploy: skipping worker smoke check (SKIP_WORKER_SMOKE_CHECK=1)')
   }
 
-  console.log(
-    `smoke-check-deploy: OK (date=${dateToday}, historyPoints=${history.points.length}, cf=${cloudflareBase})`
-  )
+  return {
+    cloudflareBase,
+    dateToday,
+    datedSnapshot,
+    freshnessContract,
+    ghFallbackAcceptance,
+    ghFallbackLatest,
+    history,
+    latest,
+    meta,
+    workerHealth,
+  }
 }
 
 async function fetchCloudflareReleaseState({
@@ -513,6 +563,8 @@ async function smokeCheckWorker(baseUrl, dateToday, { fetchJson = fetchJSONWithR
       `missingDayCount=${coverage.historyCoverage.missingDayCount}, signals=${coverageSignals.join(',')})`
     )
   }
+
+  return health
 }
 
 function assertWorkerHealth(health, normalizedBase) {
@@ -658,6 +710,7 @@ module.exports = {
   isRecoveryCoverageGap,
   isStaticRecoveryHistoryGap,
   main,
+  verifyDeployedRelease,
   resolveExpectedDate,
   resolveFreshnessContract,
   resolveGithubFallbackAcceptance,

@@ -5,9 +5,19 @@ on:
     - cron: '0 0 * * *'
     - cron: '0 3 * * *'
   workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Publish every surface even when the verified release is current'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+concurrency:
+  group: currency-rates-publish
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -21,7 +31,12 @@ jobs:
       SENTRY_RELEASE: ${{ github.sha }}
 
     steps:
+      # The no-op recovery guard compares a just-created archive commit with
+      # its deployed parent. Keep that parent tree available, but do not fetch
+      # an unnecessary full history for this daily job.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
@@ -102,6 +117,22 @@ jobs:
           echo "::error::Snapshot push failed and remote snapshot does not match local output."
           exit 1
 
+      # A second daily pass is a recovery check, not an unconditional second
+      # publication. It still publishes when today's archive changed, a manual
+      # operator asks for a forced recovery, any live surface is stale, or the
+      # Worker has not recorded this source release after a successful deploy.
+      # Runtime secret continuity remains on every non-stale run so an operator
+      # can rotate a secret without needing a data or source-code change.
+      - name: Decide whether publication is needed
+        id: publish_needed
+        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
+        env:
+          ARCHIVE_CHANGED: ${{ steps.commit_snapshot_archive.outputs.archive_changed }}
+          EXPECTED_DATE: ${{ env.date_today }}
+          FORCE_PUBLISH: ${{ inputs.force_publish && 'true' || 'false' }}
+          CURRENT_RELEASE: ${{ github.sha }}
+        run: node scripts/publish-needed.js >> "$GITHUB_OUTPUT"
+
       - name: Validate deploy secrets
         if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
         env:
@@ -127,10 +158,6 @@ jobs:
             echo "::warning::Missing SENTRY_DSN for FX Worker. Worker errors will not reach Sentry."
           fi
 
-          if [ -n "$SENTRY_RELEASE" ]; then
-            printf "%s" "$SENTRY_RELEASE" | npx wrangler secret put SENTRY_RELEASE --config wrangler.jsonc --env=""
-          fi
-
           if [ -n "$CRON_SECRET" ]; then
             printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc --env=""
           else
@@ -151,7 +178,7 @@ jobs:
 
       - name: Deploy to Cloudflare Pages
         id: deploy_cloudflare
-        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
+        if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -161,28 +188,45 @@ jobs:
           npx wrangler pages deploy --project-name=resplit-currency-api --branch=${{ env.date_today }} package
 
       - name: Report Cloudflare deploy failure to Sentry
-        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.deploy_cloudflare.outcome == 'failure' }}
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' && steps.deploy_cloudflare.outcome == 'failure' }}
         env:
           STEP_NAME: deploy_cloudflare
         run: node scripts/sentry-checkin.js issue cloudflare_deploy_failure "Cloudflare Pages deploy failed"
 
       - name: Deploy FX Worker
         id: deploy_fx_worker
-        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
+        if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.jsonc --env=""
 
       - name: Report FX Worker deploy failure to Sentry
-        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.deploy_fx_worker.outcome == 'failure' }}
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' && steps.deploy_fx_worker.outcome == 'failure' }}
         env:
           STEP_NAME: deploy_fx_worker
         run: node scripts/sentry-checkin.js issue fx_worker_deploy_failure "Cloudflare Worker deploy failed"
 
+      # This is intentionally after a successful Worker deploy. The health
+      # endpoint therefore represents a completed Worker release, rather than
+      # a pre-deploy secret write that could mask a failed deployment.
+      - name: Stamp deployed FX Worker release
+        id: stamp_fx_worker_release
+        if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: printf "%s" "$SENTRY_RELEASE" | npx wrangler secret put SENTRY_RELEASE --config wrangler.jsonc --env=""
+
+      - name: Report FX Worker release stamp failure to Sentry
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' && steps.stamp_fx_worker_release.outcome == 'failure' }}
+        env:
+          STEP_NAME: stamp_fx_worker_release
+        run: node scripts/sentry-checkin.js issue fx_worker_release_stamp_failure "Cloudflare Worker release stamp failed"
+
       - name: Deploy to GitHub Pages
         id: deploy_github_pages
-        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
+        if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -202,14 +246,14 @@ jobs:
           git push --force origin gh-pages
 
       - name: Report GitHub Pages deploy failure to Sentry
-        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.deploy_github_pages.outcome == 'failure' }}
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' && steps.deploy_github_pages.outcome == 'failure' }}
         env:
           STEP_NAME: deploy_github_pages
         run: node scripts/sentry-checkin.js issue github_pages_deploy_failure "GitHub Pages deploy failed"
 
       - name: Smoke check deployed endpoints
         id: smoke_check
-        if: ${{ steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true' }}
+        if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' }}
         env:
           EXPECTED_DATE: ${{ env.date_today }}
           # This step runs seconds after THIS run pushed gh-pages: a one-day-stale

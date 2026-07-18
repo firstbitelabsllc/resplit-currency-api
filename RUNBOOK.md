@@ -172,6 +172,20 @@ gh run view <RUN_ID> --repo firstbitelabsllc/resplit-currency-api --log-failed
 gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api
 ```
 
+The normal manual run still validates the generated archive and live release
+state, so it skips expensive duplicate publication when everything is already
+current. For an intentional full recovery (for example, after an external
+provider incident or a manual deployment investigation), force every public
+surface explicitly:
+
+```bash
+gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api -f force_publish=true
+```
+
+Runtime secret validation and synchronization continue on every non-stale run;
+the force input is only for Cloudflare Pages, Worker, GitHub Pages, and the
+post-publish smoke sequence.
+
 ### 2. Data is stale (pipeline succeeds but rates are old)
 
 **Symptoms**: `date` field in JSON shows yesterday or older.

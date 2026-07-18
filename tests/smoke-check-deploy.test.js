@@ -15,6 +15,7 @@ const {
   resolveGithubFallbackAcceptance,
   resolveWorkerBase,
   smokeCheckWorker,
+  verifyDeployedRelease,
 } = require('../scripts/smoke-check-deploy.js')
 
 function makeWorkerHealthPayload() {
@@ -32,6 +33,98 @@ test('Cloudflare propagation retry defaults stay bounded', () => {
   assert.equal(defaultCloudflarePropagationDelayMs, 5_000)
   assert.equal(defaultCloudflarePropagationDeadlineMs, 120_000)
   assert.equal(defaultCloudflarePropagationRequestTimeoutMs, 5_000)
+})
+
+test('verifyDeployedRelease returns the Worker release that a no-op guard must match', async () => {
+  const expectedDate = '2026-07-18'
+  const currentRelease = 'a'.repeat(40)
+  const history = {
+    points: Array.from({ length: 30 }, () => ({ date: expectedDate, rates: { usd: 1 } })),
+  }
+  const fetchCloudflareState = async () => ({
+    latest: { date: expectedDate, rates: { usd: 1 } },
+    history,
+    meta: { latestDate: expectedDate, historyDays: 30 },
+  })
+  const fetchJson = async (url) => {
+    if (url.includes('.pages.dev/snapshots/')) {
+      return { date: expectedDate, rates: { usd: 1 } }
+    }
+    if (url.includes('github.io')) {
+      return { date: expectedDate, rates: { usd: 1 } }
+    }
+    if (url.endsWith('/health')) {
+      return { ...makeWorkerHealthPayload(), release: currentRelease }
+    }
+    if (url.includes('/quote?')) {
+      return {
+        from: 'AED',
+        to: 'USD',
+        requestedDate: expectedDate,
+        resolvedDate: expectedDate,
+        rate: 1,
+      }
+    }
+    if (url.includes('/history?')) {
+      return { points: [{ date: expectedDate, rate: 1 }] }
+    }
+    if (url.includes('/coverage?')) {
+      return {
+        quote: { resolutionKind: 'exact' },
+        historyCoverage: { requestedDays: 30, availableDays: 30, missingDayCount: 0 },
+        mismatchCount: 0,
+        signals: [],
+      }
+    }
+    assert.fail(`unexpected URL ${url}`)
+  }
+
+  const result = await verifyDeployedRelease({
+    requestedDate: expectedDate,
+    fetchCloudflareState,
+    fetchJson,
+    requireFreshGithubFallback: true,
+    captureMissingDatedSnapshotIssue: false,
+    warn: () => {},
+    log: () => {},
+  })
+
+  assert.equal(result.dateToday, expectedDate)
+  assert.equal(result.workerHealth.release, currentRelease)
+})
+
+test('verifyDeployedRelease rejects a stale GitHub fallback when evaluating a no-op skip', async () => {
+  const expectedDate = '2026-07-18'
+  const fetchCloudflareState = async () => ({
+    latest: { date: expectedDate, rates: { usd: 1 } },
+    history: {
+      points: Array.from({ length: 30 }, () => ({ date: expectedDate, rates: { usd: 1 } })),
+    },
+    meta: { latestDate: expectedDate, historyDays: 30 },
+  })
+  const fetchJson = async (url) => {
+    if (url.includes('.pages.dev/snapshots/')) {
+      return { date: expectedDate, rates: { usd: 1 } }
+    }
+    if (url.includes('github.io')) {
+      return { date: '2026-07-17', rates: { usd: 1 } }
+    }
+    assert.fail(`unexpected URL ${url}`)
+  }
+
+  await assert.rejects(
+    verifyDeployedRelease({
+      requestedDate: expectedDate,
+      workerBase: null,
+      fetchCloudflareState,
+      fetchJson,
+      requireFreshGithubFallback: true,
+      captureMissingDatedSnapshotIssue: false,
+      warn: () => {},
+      log: () => {},
+    }),
+    /github fallback latest date expected 2026-07-18, got 2026-07-17/
+  )
 })
 
 test('fetchCloudflareReleaseState retries stale post-publish JSON until latest, history, and meta agree', async () => {
