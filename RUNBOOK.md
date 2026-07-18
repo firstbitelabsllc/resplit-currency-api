@@ -182,9 +182,22 @@ surface explicitly:
 gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api -f force_publish=true
 ```
 
-Runtime secret validation and synchronization continue on every non-stale run;
-the force input is only for Cloudflare Pages, Worker, GitHub Pages, and the
-post-publish smoke sequence.
+Normal FX-data publication deploys Pages and GitHub Pages but leaves a healthy
+unchanged Worker in place: the Worker reads the canonical Pages asset host at
+request time, and the post-publish smoke still proves its public data path.
+Runtime-secret writes run only when a Worker/config/secret-sync input changes.
+GitHub-managed `SENTRY_DSN`, `CRON_SECRET`, and `AZURE_OCR_KEY` are re-synced
+on that path. `ANTHROPIC_API_KEY` intentionally remains Cloudflare-managed:
+rotate it in Cloudflare, then use the Worker-only recovery path to deploy and
+verify its continuity. GitHub does not expose secret value versions, so after
+rotating a GitHub-managed secret run:
+
+```bash
+gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api -f force_worker_release=true
+```
+
+`force_publish=true` remains the full public recovery path; it also forces the
+Worker release and secret sync.
 
 ### 2. Data is stale (pipeline succeeds but rates are old)
 

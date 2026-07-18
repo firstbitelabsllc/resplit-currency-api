@@ -2,6 +2,7 @@
 
 const { execFileSync } = require('node:child_process')
 const { verifyDeployedRelease } = require('./smoke-check-deploy')
+const { compareWorkerReleaseInputs } = require('./worker-release-inputs')
 
 if (require.main === module) {
   main().catch((error) => {
@@ -12,9 +13,9 @@ if (require.main === module) {
 
 // A no-op archive is not enough evidence to skip publication: the preceding
 // attempt might have committed the snapshot but failed on a downstream surface.
-// This guard therefore fails closed unless the existing release verification
-// passes and the Worker reports either the exact checked-out source SHA or the
-// verified parent of a bot-authored, archive-only recovery commit.
+// This guard therefore fails closed unless the existing public verification
+// passes and the healthy Worker either reports the exact source release or has
+// no changed Worker/config/secret-sync inputs since that release.
 async function decidePublication({
   archiveChanged,
   forcePublish,
@@ -22,7 +23,7 @@ async function decidePublication({
   currentRelease,
   env = process.env,
   verifyDeployment = verifyDeployedRelease,
-  releaseEquivalent = isDeployedReleaseEquivalent,
+  releaseEquivalent = isWorkerReleaseEquivalent,
   readCommit,
 } = {}) {
   if (isTrue(forcePublish)) {
@@ -103,6 +104,23 @@ function isDeployedReleaseEquivalent({
   } catch {
     return false
   }
+}
+
+// Pages data is fetched dynamically by the Worker, so a source change outside
+// its deployment inputs does not make a healthy Worker stale. The caller still
+// has to pass the complete Pages, dated snapshot, GitHub Pages, and Worker
+// behavior verification above before this can suppress a publication.
+function isWorkerReleaseEquivalent({
+  deployedRelease,
+  currentRelease,
+  expectedDate,
+  readCommit = readCommitMetadata,
+  compareInputs = compareWorkerReleaseInputs,
+} = {}) {
+  if (isDeployedReleaseEquivalent({ deployedRelease, currentRelease, expectedDate, readCommit })) {
+    return true
+  }
+  return compareInputs({ deployedRelease, currentRelease }).equivalent === true
 }
 
 function readCommitMetadata(currentRelease, {
@@ -186,6 +204,7 @@ module.exports = {
   decidePublication,
   isCommitSha,
   isDeployedReleaseEquivalent,
+  isWorkerReleaseEquivalent,
   isISODate,
   isTrue,
   main,

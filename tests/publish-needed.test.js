@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 const {
   decidePublication,
   isDeployedReleaseEquivalent,
+  isWorkerReleaseEquivalent,
   main,
   readCommitMetadata,
 } = require('../scripts/publish-needed')
@@ -93,6 +94,45 @@ test('an older Worker release keeps publication enabled even when static data is
 
   assert.equal(decision.publishRequired, true)
   assert.equal(decision.reason, 'worker_release_mismatch')
+})
+
+test('verified public data can retain a healthy Worker with unchanged deployment inputs', async () => {
+  const decision = await decidePublication({
+    archiveChanged: 'false',
+    expectedDate,
+    currentRelease,
+    verifyDeployment: async () => ({ workerHealth: { release: 'b'.repeat(40) } }),
+    releaseEquivalent: () => true,
+  })
+
+  assert.deepEqual(decision, { publishRequired: false, reason: 'verified_current' })
+})
+
+test('Worker release equivalence accepts only an injected unchanged-input comparison after exact provenance misses', () => {
+  assert.equal(
+    isWorkerReleaseEquivalent({
+      deployedRelease: 'b'.repeat(40),
+      currentRelease,
+      expectedDate,
+      readCommit: () => {
+        throw new Error('not an archive recovery commit')
+      },
+      compareInputs: () => ({ equivalent: true }),
+    }),
+    true
+  )
+  assert.equal(
+    isWorkerReleaseEquivalent({
+      deployedRelease: 'b'.repeat(40),
+      currentRelease,
+      expectedDate,
+      readCommit: () => {
+        throw new Error('not an archive recovery commit')
+      },
+      compareInputs: () => ({ equivalent: false }),
+    }),
+    false
+  )
 })
 
 test('the 03:00 pass accepts only the bot-authored archive-only commit whose parent was deployed', () => {
