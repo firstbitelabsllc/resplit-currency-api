@@ -18,7 +18,6 @@ import {
   eq,
   decodeCbor,
   parseAuthData,
-  importCoseEcKey,
   recordKey,
 } from './attest.mjs'
 
@@ -47,13 +46,17 @@ function appleRootCert() {
   return cachedRoot
 }
 
+// authData aaguid: development vs production App Attest environment.
+const AAGUID_DEVELOP = new TextEncoder().encode('appattestdevelop')
+const AAGUID_PROD = concat(new TextEncoder().encode('appattest'), new Uint8Array(7))
+
 /**
  * Verify an attestation and register the device key. Runs ONCE per install.
  *
- * @param {{ keyId: string, attestationObjectB64: string, challenge: string, appId: string, kv: KVNamespace }} args
+ * @param {{ keyId: string, attestationObjectB64: string, challenge: string, appId: string, kv: KVNamespace, rootCertPem?: string }} args
  * @returns {Promise<{ ok: true, deviceId: string }>}
  */
-export async function verifyAttestation({ keyId, attestationObjectB64, challenge, appId, kv }) {
+export async function verifyAttestation({ keyId, attestationObjectB64, challenge, appId, kv, rootCertPem }) {
   const att = decodeCbor(b64ToBytes(attestationObjectB64))
   if (att.fmt !== 'apple-appattest') throw new AttestError('FMT', `unexpected fmt ${att.fmt}`)
   const x5c = att.attStmt?.x5c
@@ -66,7 +69,7 @@ export async function verifyAttestation({ keyId, attestationObjectB64, challenge
   const credCert = new X509Certificate(new Uint8Array(x5c[0]))
   let chainOk = false
   try {
-    const root = appleRootCert()
+    const root = rootCertPem ? new X509Certificate(rootCertPem) : appleRootCert()
     if (x5c.length >= 2) {
       const intermediate = new X509Certificate(new Uint8Array(x5c[1]))
       chainOk = (await credCert.verify({ publicKey: await intermediate.publicKey.export() })) &&
@@ -94,14 +97,35 @@ export async function verifyAttestation({ keyId, attestationObjectB64, challenge
   const expectedRpId = await sha256(new TextEncoder().encode(appId))
   if (!eq(ad.rpIdHash, expectedRpId)) throw new AttestError('RPID', 'rpIdHash != sha256(appId)')
   if (ad.signCount !== 0) throw new AttestError('COUNT', 'initial signCount must be 0')
-  if (!ad.publicKeyCose) throw new AttestError('NOKEY', 'attested credential data missing')
+  if (!ad.credentialId || ad.credentialId.length === 0) throw new AttestError('NOKEY', 'attested credential data missing')
 
-  const pubKey = await importCoseEcKey(ad.publicKeyCose)
-  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pubKey))
+  // 4. aaguid names a real App Attest environment (Apple step 8). Both are
+  // accepted here; environment-based enforcement is a rollout decision.
+  let environment
+  if (eq(ad.aaguid, AAGUID_DEVELOP)) environment = 'development'
+  else if (eq(ad.aaguid, AAGUID_PROD)) environment = 'production'
+  else throw new AttestError('AAGUID', 'unknown app-attest environment')
+
+  // 5. keyId binding (Apple steps 5 and 9): SHA256(credCert public key) and the
+  // authData credentialId must both equal the client-supplied keyId. Without
+  // this, keyId is unauthenticated and a valid attestation could be registered
+  // under an arbitrary keyId, poisoning that record for its real owner.
+  const credCertKey = await crypto.subtle.importKey(
+    'spki', new Uint8Array(credCert.publicKey.rawData),
+    { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify'],
+  )
+  const credCertPoint = new Uint8Array(await crypto.subtle.exportKey('raw', credCertKey))
+  const keyIdBytes = b64ToBytes(keyId)
+  if (!eq(await sha256(credCertPoint), keyIdBytes)) throw new AttestError('KEYID', 'sha256(credCert public key) != keyId')
+  if (!eq(ad.credentialId, keyIdBytes)) throw new AttestError('KEYID', 'credentialId != keyId')
+
+  // Store the key Apple certified (credCert), not the client-encoded COSE copy.
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', credCertKey))
 
   await kv.put(recordKey(keyId), JSON.stringify({
     publicKeyB64: bytesToB64(spki),
     signCount: 0,
+    environment,
     createdAt: new Date().toISOString(),
   }))
 

@@ -102,8 +102,9 @@ async function buildAuthData(signCount) {
 async function buildAssertion(privateKey, clientData, signCount) {
   const authData = await buildAuthData(signCount)
   const clientDataHash = await sha256Bytes(clientData)
-  const signedData = concatBytes(authData, clientDataHash)
-  const rawSig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, signedData))
+  // Apple's contract: the ES256 message is nonce = SHA256(authData || clientDataHash).
+  const nonce = await sha256Bytes(concatBytes(authData, clientDataHash))
+  const rawSig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, nonce))
   return bytesToB64(cborAssertion(rawToDer(rawSig), authData))
 }
 // Seed env.ATTEST_KV with a registered key; return the private key for signing.

@@ -173,19 +173,21 @@ export async function verifyAssertion({ keyId, assertionB64, clientData, appId, 
     throw new AttestError('ASSERT_SHAPE', 'assertion missing signature/authenticatorData')
   }
 
-  // App Attest signs the ES256 nonce = SHA256(authenticatorData || clientDataHash).
-  // ECDSA-SHA256 hashes its message once, so hand WebCrypto (authenticatorData ||
-  // clientDataHash) — it SHA-256's that into the nonce. Passing the pre-hashed nonce
-  // would double-hash and reject every valid assertion.
+  // The Secure Enclave signs nonce = SHA256(authenticatorData || clientDataHash)
+  // as an ES256 *message*, so the ECDSA digest is SHA256(nonce). Hand WebCrypto
+  // the nonce and let it apply that second hash. Passing authenticatorData ||
+  // clientDataHash directly (digest = nonce, one hash short) rejects every
+  // genuine Apple assertion — confirmed against node-app-attest and
+  // devicecheck-appattest, and by production verify_false telemetry.
   const clientDataHash = await sha256(clientData)
-  const signedData = concat(authData, clientDataHash)
+  const nonce = await sha256(concat(authData, clientDataHash))
 
   const pubKey = await crypto.subtle.importKey(
     'spki', b64ToBytes(record.publicKeyB64),
     { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'],
   )
   const rawSig = derToRawEcdsa(signature)
-  const valid = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pubKey, rawSig, signedData)
+  const valid = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pubKey, rawSig, nonce)
   if (!valid) throw new AttestError('SIG', 'assertion signature invalid', 'verify_false')
 
   const ad = parseAuthData(authData)

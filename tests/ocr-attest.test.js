@@ -73,11 +73,14 @@ async function buildAuthData(signCount) {
   return ad
 }
 
+// Mirrors the Secure Enclave contract (node-app-attest, devicecheck-appattest):
+// the ES256 message is nonce = SHA256(authData || clientDataHash), so the
+// signature digest is SHA256(nonce).
 async function buildAssertion(privateKey, clientData, signCount) {
   const authData = await buildAuthData(signCount)
   const clientDataHash = await sha256(clientData)
-  const signedData = concat(authData, clientDataHash)
-  const rawSig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, signedData))
+  const nonce = await sha256(concat(authData, clientDataHash))
+  const rawSig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, nonce))
   const der = rawToDer(rawSig)
   return bytesToB64(cborAssertion(der, authData))
 }
@@ -108,6 +111,31 @@ test('verifyAssertion accepts a genuine ES256 assertion and enforces monotonic c
   const a2 = await buildAssertion(keyPair.privateKey, clientData, 2)
   const r2 = await verifyAssertion({ keyId, assertionB64: a2, clientData, appId: APP_ID, kv })
   assert.equal(r2.ok, true)
+})
+
+test('verifyAssertion rejects the one-hash-short contract (digest = nonce instead of SHA256(nonce))', async () => {
+  // Regression pin for the 2026-07 outage: the server verified ECDSA over
+  // (authData || clientDataHash) as the WebCrypto message, making the digest
+  // the nonce itself — one hash short of Apple's contract — so every genuine
+  // assertion failed verify_false. A signature minted under that old contract
+  // must NOT verify; if this test fails, the contract has been reverted.
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey))
+  const keyId = 'old-contract-key'
+  const kv = makeKV()
+  await kv.put(`attest:${keyId}`, JSON.stringify({ publicKeyB64: bytesToB64(spki), signCount: 0 }))
+
+  const clientData = new TextEncoder().encode('image-bytes')
+  const authData = await buildAuthData(1)
+  const clientDataHash = await sha256(clientData)
+  const oldContractMessage = concat(authData, clientDataHash) // digest becomes the nonce — wrong
+  const rawSig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keyPair.privateKey, oldContractMessage))
+  const assertionB64 = bytesToB64(cborAssertion(rawToDer(rawSig), authData))
+
+  await assert.rejects(
+    () => verifyAssertion({ keyId, assertionB64, clientData, appId: APP_ID, kv }),
+    (e) => e instanceof AttestError && e.code === 'SIG' && e.reason === 'verify_false',
+  )
 })
 
 test('verifyAssertion rejects a signature from the wrong key', async () => {
