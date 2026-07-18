@@ -36,7 +36,9 @@ jobs:
         run: echo "::warning::Using shared SENTRY_DSN fallback. Set SENTRY_CURRENCY_API_DSN to route cron events into the dedicated resplit-currency-api Sentry project."
 
       - name: Set date
-        run: echo "date_today=$(date -uI)" >> "$GITHUB_ENV"
+        run: |
+          echo "date_today=$(date -uI)" >> "$GITHUB_ENV"
+          echo "publish_start_epoch=$(date -u +%s)" >> "$GITHUB_ENV"
 
       - name: Start Sentry publish check-in
         id: sentry_checkin
@@ -57,6 +59,19 @@ jobs:
 
       - name: Validate generated artifacts
         run: node scripts/validate-package.js
+
+      # Phase 3: push publish metrics to Grafana Cloud via OTLP-HTTP/JSON. Hard
+      # no-op (exit 0) whenever the OTLP secrets are absent, so this never blocks
+      # a publish and stays green until Grafana credentials are provisioned.
+      - name: Push pipeline metrics to Grafana
+        continue-on-error: true
+        env:
+          GRAFANA_OTLP_ENDPOINT: ${{ secrets.GRAFANA_OTLP_ENDPOINT }}
+          GRAFANA_OTLP_INSTANCE_ID: ${{ secrets.GRAFANA_OTLP_INSTANCE_ID }}
+          GRAFANA_OTLP_API_TOKEN: ${{ secrets.GRAFANA_OTLP_API_TOKEN }}
+        run: |
+          duration=$(( $(date -u +%s) - ${publish_start_epoch:-$(date -u +%s)} ))
+          node scripts/push-pipeline-metrics.js --publish-duration-seconds "$duration"
 
       - name: Commit snapshot archive
         id: commit_snapshot_archive
