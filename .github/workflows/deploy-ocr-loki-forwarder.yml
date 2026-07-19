@@ -20,7 +20,7 @@ concurrency:
 jobs:
   deploy:
     if: github.ref == 'refs/heads/main' && inputs.activate
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       REGION: ${{ vars.GCP_REGION }}
