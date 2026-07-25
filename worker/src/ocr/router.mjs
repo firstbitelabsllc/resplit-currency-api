@@ -988,11 +988,15 @@ function readLlmGate(env, keyId, attest) {
     return { status: 'provider_unavailable', httpStatus: 503, cacheKey: 'provider_unavailable' }
   }
 
-  // PRE-LAUNCH DEV UNLOCK: the iOS client ships SoftFailReceiptScannerAttestationProvider
-  // by default (no attested keyId exists yet), so a keyId allowlist alone is unreachable.
-  // LLM_SCAN_ALLOW_SOFT_FAIL='true' admits soft-fail devices, still bounded by the
-  // SOFT_FAIL_DAILY_CAP per-IP counter and the global LLM daily cap. FLIP TO 'false'
-  // AT PUBLIC LAUNCH (launch checklist row) — then only allowlisted attested keys pass.
+  // DEV UNLOCK for soft-fail (unattested) devices, bounded by the SOFT_FAIL_DAILY_CAP
+  // per-IP counter and the global LLM daily cap.
+  //
+  // The comment that used to sit here claimed the iOS client ships
+  // SoftFailReceiptScannerAttestationProvider "by default", making a keyId allowlist
+  // unreachable. That stopped being true at launch: ResplitApp.swift:142-144 takes the
+  // AppAttestReceiptScannerHeaders() branch in production, so shipping builds DO send a
+  // real keyId and land on attest === 'pass'. Acting on the stale comment is what made
+  // the paid leg dark for the whole user base (Sentry RESPLIT-IOS-A0).
   if (env.LLM_SCAN_ALLOW_SOFT_FAIL === 'true' && attest === 'soft_fail') {
     return { status: 'allowed', httpStatus: 200, cacheKey: 'allowed:soft_fail' }
   }
@@ -1011,6 +1015,20 @@ function readLlmGate(env, keyId, attest) {
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean))
+
+  // An EMPTY allowlist means "no per-key restriction", NOT "deny every attested
+  // device". Both wrangler.jsonc environments ship LLM_SCAN_ALLOWED_KEY_IDS: "",
+  // so the old fall-through 403'd 100% of attested production devices and silently
+  // degraded them to Azure-only — Sentry RESPLIT-IOS-A0, 304 events / 80 users / 14d.
+  //
+  // This is strictly TIGHTER than the status quo, not looser: the soft-fail branch
+  // above already admits UNAUTHENTICATED devices, while everything reaching here has
+  // cleared verifyAssertion(). Spend stays bounded by the global LLM daily caps.
+  // A non-empty allowlist still restricts to exactly those keys.
+  if (allowed.size === 0) {
+    return { status: 'allowed', httpStatus: 200, cacheKey: 'allowed:attested' }
+  }
+
   if (!keyId || !allowed.has(keyId)) {
     return { status: 'not_allowed', httpStatus: 403, cacheKey: `not_allowed:${keyId || 'missing'}` }
   }
