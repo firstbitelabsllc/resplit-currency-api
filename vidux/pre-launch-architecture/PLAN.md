@@ -10,6 +10,15 @@
 
 ## Progress
 
+- 2026-07-26: Raised the Go runtime security floor to
+  `google.golang.org/grpc v1.82.1`, closing Dependabot alert `#28` /
+  `GHSA-hrxh-6v49-42gf`. `go mod tidy` changed only the two matching GCP
+  detector companions, and the runtime contract now rejects gRPC removal or
+  downgrade while requiring the exact patched checksums. Proof: `go test
+  ./...`, focused runtime contract `5/5`, canonical Node `621/621`, Worker
+  `16/16`, and deployment smoke green for `2026-07-26`. Wrangler inputs,
+  production, secrets, and workflows were untouched. The separate Sharp
+  development-tooling alert remains a follow-up.
 - 2026-07-26: Source-ready atomic App Attest assertion replay protection on
   `codex/ocr-atomic-security-20260726`. The already-deployed
   `OCR_ACCOUNTING` Durable Object now serializes `signCount` advancement before

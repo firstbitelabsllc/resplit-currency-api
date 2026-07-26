@@ -1,5 +1,29 @@
 # Resplit Nurse Log
 
+## 2026-07-26 — patched Go gRPC runtime security floor
+
+- `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
+  `codex/grpc-security-1821-20260726` from `origin/main@78cfff81`; no deploy,
+  secret mutation, workflow dispatch, or production mutation occurred.
+- Runtime security delta: `google.golang.org/grpc` is pinned at patched
+  `v1.82.1`, closing Dependabot alert `#28` / `GHSA-hrxh-6v49-42gf`
+  (`<1.82.1`). `go mod tidy` required only the matching GCP detector updates:
+  `opentelemetry-operations-go/detectors/gcp v1.32.0` and
+  `otel/contrib/detectors/gcp v1.43.0`.
+- The release contract now rejects removal or downgrade of the gRPC floor and
+  requires exactly the module and `go.mod` checksums for `v1.82.1`.
+- Fresh proof: `go test ./...`; focused runtime contract `5/5`; canonical
+  `npm run check` with strict validation, Node `621/621`, and Worker `16/16`;
+  `npm run smoke:deploy` green for `2026-07-26` with 30 history points; and
+  `git diff --check` clean.
+- Wrangler inputs did not change, so no deployment dry-run was needed. The
+  separate Sharp development-tooling alert remains deliberately out of this
+  runtime patch.
+- Exact next: pathspec commit, rebase over current `origin/main`, push
+  non-forced to main, and verify remote ancestry.
+
+<promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
+
 ## 2026-07-26 — atomic App Attest assertion replay admission
 
 - `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch

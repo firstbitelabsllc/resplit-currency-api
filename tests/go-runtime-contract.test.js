@@ -6,6 +6,7 @@ const path = require('node:path')
 const repoRoot = path.join(__dirname, '..')
 const requiredGoVersion = '1.26.5'
 const requiredCryptoVersion = 'v0.52.0'
+const requiredGrpcVersion = 'v1.82.1'
 const requiredGoImageDigest = 'sha256:079e59808d2d252516e27e3f3a9c003740dee7f75e55aa71528766d52bcfc16a'
 const requiredRuntimeImageDigest = 'sha256:b7bb25d9f7c31d2bdd1982feb4dafcaf137703c7075dbe2febb41c24212b946f'
 const commandNames = ['fx-publish', 'ocr', 'sideload']
@@ -35,6 +36,14 @@ function assertGoModule(source) {
     crypto[1],
     requiredCryptoVersion,
     `go.mod must pin golang.org/x/crypto ${requiredCryptoVersion}`
+  )
+
+  const grpc = source.match(/^\s*google\.golang\.org\/grpc\s+(v\S+)/m)
+  assert.ok(grpc, 'go.mod must retain google.golang.org/grpc')
+  assert.equal(
+    grpc[1],
+    requiredGrpcVersion,
+    `go.mod must pin google.golang.org/grpc ${requiredGrpcVersion}`
   )
 }
 
@@ -299,11 +308,20 @@ test('Go module pins the patched runtime and crypto floor, including mutations',
     requiredCryptoVersion,
     `${requiredCryptoVersion}/go.mod`,
   ])
+  const grpcSumLines = sum
+    .split('\n')
+    .filter((line) => line.startsWith('google.golang.org/grpc '))
+  assert.deepEqual(grpcSumLines.map((line) => line.split(' ')[1]), [
+    requiredGrpcVersion,
+    `${requiredGrpcVersion}/go.mod`,
+  ])
 
   for (const mutation of [
     source.replace(`go ${requiredGoVersion}`, 'go 1.26'),
     source.replace(requiredCryptoVersion, 'v0.51.0'),
     source.replace(/^\s*golang\.org\/x\/crypto.*\n/m, ''),
+    source.replace(requiredGrpcVersion, 'v1.81.1'),
+    source.replace(/^\s*google\.golang\.org\/grpc.*\n/m, ''),
   ]) {
     assert.notEqual(mutation, source, 'module mutation must alter the fixture')
     assert.throws(() => assertGoModule(mutation))
