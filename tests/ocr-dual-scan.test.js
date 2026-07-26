@@ -429,6 +429,38 @@ test('POST /ocr/dual-scan dark mode returns Azure success plus LLM provider_unav
   assert.equal(calls.anthropic, 0)
 })
 
+test('POST /ocr/dual-scan admits an attested device when the allowlist is EMPTY (RESPLIT-IOS-A0)', async () => {
+  // REGRESSION GUARD. Both wrangler.jsonc environments ship LLM_SCAN_ALLOWED_KEY_IDS: "".
+  // The gate used to read an empty allowlist as "deny everyone", so every attested
+  // production device was 403'd off the paid leg and silently degraded to Azure-only --
+  // Sentry RESPLIT-IOS-A0, 304 events / 80 users / 14d, still firing on build 4840.
+  // An empty allowlist means "no per-key restriction", not "deny every attested device".
+  stubProviders()
+  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOWED_KEY_IDS: '' })
+  const image = jpegWithDimensions(800, 600)
+  const privateKey = await seedAttestedKey(env, 'kid-empty-allowlist')
+  const assertionB64 = await buildAssertion(privateKey, image, 1)
+  const res = await handleOcr(attestedDualScanRequest(image, { keyId: 'kid-empty-allowlist', assertionB64 }), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.status, 'succeeded')
+  assert.equal(body.llm.status, 'succeeded')
+  assert.equal(calls.anthropic, 1)
+})
+
+test('POST /ocr/dual-scan still denies an UNattested device when the allowlist is empty', async () => {
+  // The empty-allowlist admission must not become a blanket unlock: it is gated on
+  // attest === 'pass'. A soft-fail device with the dev unlock OFF stays denied, so the
+  // fix is strictly tighter than the soft-fail branch, never looser.
+  stubProviders()
+  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOWED_KEY_IDS: '', LLM_SCAN_ALLOW_SOFT_FAIL: 'false' })
+  const res = await handleOcr(dualScanRequest(new Uint8Array([7, 7, 7]), { 'x-resplit-attest-key-id': 'kid-spoofed' }), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.llm.status, 'not_allowed')
+  assert.equal(calls.anthropic, 0)
+})
+
 test('POST /ocr/dual-scan allowlist miss returns Azure success plus LLM not_allowed', async () => {
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOWED_KEY_IDS: 'kid-allowed' })
