@@ -20,6 +20,16 @@
   one-engine future-provider fixture is accepted. Proof: focused `22/22`,
   canonical Node `623/623`, Worker `16/16`, and deployment smoke green for
   `2026-07-26`. Runtime provider selection and production were untouched.
+- 2026-07-26: Completed the remaining npm advisory floor on
+  `codex/dev-advisories-postcss-yaml-20260726`. YAML is exact-pinned at patched
+  `2.8.3`, and the transitive Vite PostCSS edge is overridden to patched
+  `8.5.23`, within Vite's existing compatible `^8.5.16` range. The dependency
+  contract rejects manifest/override and resolved-lock downgrades for both.
+  Full and production npm audits are zero. Proof: rebased canonical `npm run
+  check` passed Node `623/623` and Worker Durable Object `16/16`; deploy smoke passed;
+  root and named-production Wrangler dry-runs bundled successfully. No runtime
+  source/config, deploy, secret access/change, workflow dispatch, or production
+  mutation.
 - 2026-07-26: Raised the Go runtime security floor to
   `google.golang.org/grpc v1.82.1`, closing Dependabot alert `#28` /
   `GHSA-hrxh-6v49-42gf`. `go mod tidy` changed only the two matching GCP

@@ -12,7 +12,9 @@ const REQUIRED = Object.freeze({
   braceExpansion: '5.0.6',
   vitestPoolWorkers: '0.18.8',
   wrangler: '4.114.0',
-  sharp: '0.35.2'
+  sharp: '0.35.2',
+  postcss: '8.5.23',
+  yaml: '2.8.3'
 })
 
 function readJson(relativePath) {
@@ -41,8 +43,10 @@ function assertDependencySecurityFloor(manifest, lockfile) {
   const braceLock = lockfile.packages?.['node_modules/brace-expansion']
   const poolLock = lockfile.packages?.['node_modules/@cloudflare/vitest-pool-workers']
   const miniflareLock = lockfile.packages?.['node_modules/miniflare']
+  const postcssLock = lockfile.packages?.['node_modules/postcss']
   const sharpLock = lockfile.packages?.['node_modules/sharp']
   const wranglerLock = lockfile.packages?.['node_modules/wrangler']
+  const yamlLock = lockfile.packages?.['node_modules/yaml']
 
   assertAtLeast(manifest.dependencies?.['@sentry/node'], REQUIRED.sentryNode, 'package @sentry/node')
   assertAtLeast(rootLock?.dependencies?.['@sentry/node'], REQUIRED.sentryNode, 'lock root @sentry/node')
@@ -67,6 +71,13 @@ function assertDependencySecurityFloor(manifest, lockfile) {
   assert.equal(wranglerLock?.version, REQUIRED.wrangler, 'lock resolved wrangler')
   assertAtLeast(miniflareLock?.dependencies?.sharp, REQUIRED.sharp, 'miniflare sharp dependency')
   assertAtLeast(sharpLock?.version, REQUIRED.sharp, 'lock resolved sharp')
+
+  assert.equal(manifest.overrides?.postcss, REQUIRED.postcss, 'package postcss override')
+  assert.equal(postcssLock?.version, REQUIRED.postcss, 'lock resolved postcss')
+
+  assert.equal(manifest.devDependencies?.yaml, REQUIRED.yaml, 'package yaml')
+  assert.equal(rootLock?.devDependencies?.yaml, REQUIRED.yaml, 'lock root yaml')
+  assert.equal(yamlLock?.version, REQUIRED.yaml, 'lock resolved yaml')
 }
 
 function greenFixture() {
@@ -75,9 +86,13 @@ function greenFixture() {
       dependencies: { '@sentry/node': '^10.54.0' },
       devDependencies: {
         '@cloudflare/vitest-pool-workers': '0.18.8',
-        wrangler: '4.114.0'
+        wrangler: '4.114.0',
+        yaml: '2.8.3'
       },
-      overrides: { 'brace-expansion': '5.0.6' }
+      overrides: {
+        'brace-expansion': '5.0.6',
+        postcss: '8.5.23'
+      }
     },
     lockfile: {
       packages: {
@@ -85,7 +100,8 @@ function greenFixture() {
           dependencies: { '@sentry/node': '^10.54.0' },
           devDependencies: {
             '@cloudflare/vitest-pool-workers': '0.18.8',
-            wrangler: '4.114.0'
+            wrangler: '4.114.0',
+            yaml: '2.8.3'
           }
         },
         'node_modules/@sentry/node': { version: '10.54.0' },
@@ -95,8 +111,10 @@ function greenFixture() {
           dependencies: { wrangler: '4.114.0' }
         },
         'node_modules/miniflare': { dependencies: { sharp: '0.35.2' } },
+        'node_modules/postcss': { version: '8.5.23' },
         'node_modules/sharp': { version: '0.35.2' },
-        'node_modules/wrangler': { version: '4.114.0' }
+        'node_modules/wrangler': { version: '4.114.0' },
+        'node_modules/yaml': { version: '2.8.3' }
       }
     }
   }
@@ -116,7 +134,11 @@ test('dependency security floor rejects package, lockfile, and matched-tooling r
     fixture => { fixture.manifest.devDependencies.wrangler = '4.109.0' },
     fixture => { fixture.lockfile.packages['node_modules/@cloudflare/vitest-pool-workers'].dependencies.wrangler = '4.109.0' },
     fixture => { fixture.lockfile.packages['node_modules/miniflare'].dependencies.sharp = '0.35.1' },
-    fixture => { fixture.lockfile.packages['node_modules/sharp'].version = '0.35.1' }
+    fixture => { fixture.lockfile.packages['node_modules/sharp'].version = '0.35.1' },
+    fixture => { fixture.manifest.overrides.postcss = '8.5.17' },
+    fixture => { fixture.lockfile.packages['node_modules/postcss'].version = '8.5.17' },
+    fixture => { fixture.manifest.devDependencies.yaml = '2.8.2' },
+    fixture => { fixture.lockfile.packages['node_modules/yaml'].version = '2.8.2' }
   ]
 
   for (const mutate of mutations) {

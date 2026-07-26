@@ -30,6 +30,28 @@
 
 <promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
 
+## 2026-07-26 — close remaining npm advisories
+
+- `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
+  `codex/dev-advisories-postcss-yaml-20260726`; no runtime source/config,
+  deploy, secret access/change, workflow dispatch, or production mutation.
+- PostCSS high `GHSA-r28c-9q8g-f849` is closed by an exact `8.5.23`
+  override on Vite's existing compatible `^8.5.16` edge. YAML moderate
+  `GHSA-48c2-rrv3-qjmp` is closed by exact pin `2.8.3`.
+- The dependency-floor contract rejects manifest/override and resolved-lock
+  downgrades for both packages. `npm ls` resolves one PostCSS `8.5.23` and one
+  YAML `2.8.3`.
+- Fresh proof: focused dependency floor `2/2`; rebased canonical `npm run
+  check` strict validation plus Node `623/623` and Worker Durable Object `16/16`;
+  deploy smoke green for `2026-07-26`; root and named-production Wrangler
+  `4.114.0` dry-runs green; full and production npm audits both zero;
+  `git diff --check` clean.
+- Transport: this receipt ships in the same pathspec commit as the pins,
+  lockfile, and downgrade guards; runtime deployment remains a separate normal
+  release action and is unclaimed here.
+
+<promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
+
 ## 2026-07-26 — patched Go gRPC runtime security floor
 
 - `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
