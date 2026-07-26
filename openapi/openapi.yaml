@@ -304,7 +304,7 @@ paths:
               example:
                 v: 1
                 mode: raw
-                provider: azure-di-v4
+                provider: azure-di
                 scanId: "9f8e7d6c-0000-4000-8000-000000000abc"
                 status: ok
                 kv_extras: "off"
@@ -325,7 +325,7 @@ paths:
               example:
                 v: 1
                 mode: raw
-                provider: azure-di-v4
+                provider: azure-di
                 scanId: "9f8e7d6c-0000-4000-8000-000000000abc"
                 status: rate_limited
                 kv_extras: "off"
@@ -841,7 +841,8 @@ components:
           description: "`raw` = passthrough Azure AnalyzeResult; `scanned` reserved for server-side ScannedReceipt."
         provider:
           type: string
-          examples: ["azure-di-v4"]
+          description: Informational provider identifier; clients must dispatch on `v` and `mode`, not this value.
+          examples: ["azure-di"]
         scanId:
           type: string
           format: uuid
@@ -850,8 +851,8 @@ components:
           enum: [ok, rate_limited, provider_error]
         kv_extras:
           type: string
-          enum: ["on", "off"]
-          description: Whether the optional Azure key-value extras analysis contributed to this response.
+          enum: ["off", "merged", "empty", "failed"]
+          description: Result of the optional Azure key-value analysis; failures preserve the base receipt result.
         raw:
           type: [object, "null"]
           description: Azure Document Intelligence AnalyzeResult (v4) when status is ok; null otherwise.

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
+import { OCR_PROVIDER } from '../worker/src/ocr/azure.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const openapi = YAML.parse(fs.readFileSync(path.join(repoRoot, 'openapi/openapi.yaml'), 'utf8'))
@@ -85,7 +86,17 @@ test('nested receipt, ingress, error, and legacy raw-envelope schemas match emit
   }
 
   assert.equal(openapi.components.schemas.ScanEnvelope.required.includes('kv_extras'), true)
-  assert.deepEqual(openapi.components.schemas.ScanEnvelope.properties.kv_extras.enum, ['on', 'off'])
+  assert.deepEqual(
+    openapi.components.schemas.ScanEnvelope.properties.kv_extras.enum,
+    ['off', 'merged', 'empty', 'failed'],
+  )
+  assert.deepEqual(openapi.components.schemas.ScanEnvelope.properties.provider.examples, [OCR_PROVIDER])
+  for (const status of ['200', '429']) {
+    assert.equal(
+      openapi.paths['/ocr/scan'].post.responses[status].content['application/json'].example.provider,
+      OCR_PROVIDER,
+    )
+  }
 })
 
 test('wrong route, method, version, or provider-leg identity mutations fail the contract', () => {
