@@ -45,8 +45,8 @@ function currencyTable(count) {
 const noPriorTrustedSnapshot = () => null
 const noSameDayCommittedSnapshot = () => null
 
-test('snapshot retention is pinned to one year', () => {
-  assert.equal(snapshotRetentionDays, 365)
+test('snapshot retention covers at least 13 months of daily snapshots', () => {
+  assert.equal(snapshotRetentionDays, 400)
 })
 
 test('toLowerSorted normalizes keys, filters invalid values, and sorts', () => {

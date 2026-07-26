@@ -21,7 +21,9 @@ const {
 
 const indent = '\t'
 const historyDays = 30
-const snapshotRetentionDays = 365
+// ~13 months of daily snapshots so receipts up to a year old still resolve
+// historical rates through the canonical quote/history contract.
+const snapshotRetentionDays = 400
 const rootDir = path.join(__dirname, 'package')
 const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 
