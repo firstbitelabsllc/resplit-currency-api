@@ -7,6 +7,7 @@ const { stripJsonComments } = require('../scripts/reliability-cockpit.js')
 
 const wranglerPath = path.join(__dirname, '..', 'wrangler.jsonc')
 const wrangler = JSON.parse(stripJsonComments(fs.readFileSync(wranglerPath, 'utf8')))
+const runbook = fs.readFileSync(path.join(__dirname, '..', 'RUNBOOK.md'), 'utf8')
 const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
 
 function assertExactRequiredSecrets(config, scope) {
@@ -41,4 +42,17 @@ test('required-secret declaration rejects omission, substitution, or extras', ()
       /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY/
     )
   }
+})
+
+test('the optional LLM emergency stop is secret-managed and cannot be reset by source vars', () => {
+  assert.equal('LLM_SCAN_KILL_SWITCH' in wrangler.vars, false)
+  assert.equal('LLM_SCAN_KILL_SWITCH' in wrangler.env.production.vars, false)
+  assert.match(
+    runbook,
+    /wrangler secret put LLM_SCAN_KILL_SWITCH[\s\\\n]+--config wrangler\.jsonc --env=""/,
+  )
+  assert.match(
+    runbook,
+    /wrangler secret delete LLM_SCAN_KILL_SWITCH --config wrangler\.jsonc --env=""/,
+  )
 })

@@ -57,6 +57,10 @@ test('the analyze contract pins the shipped v2 N-engine envelope instead of the 
   assert.equal(schema.properties.engines.type, 'array')
   assert.equal(schema.properties.engines.items.$ref, '#/components/schemas/AnalyzeEngine')
   assert.equal('mode' in schema.properties, false)
+  assert.deepEqual(
+    openapi.components.schemas.AnalyzeLlmEngine.properties.diagnostic.enum,
+    ['operator_disabled'],
+  )
 })
 
 test('nested receipt, ingress, error, and legacy raw-envelope schemas match emitted Worker truth', () => {

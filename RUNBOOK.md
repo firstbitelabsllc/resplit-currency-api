@@ -284,6 +284,51 @@ Pass criteria:
 **Re-enable**: unset the variable, or set it to `off`, then rerun the Worker smoke plus one
 controlled `/ocr/scan` proof.
 
+#### Stop only the paid LLM receipt leg
+
+Install `LLM_SCAN_KILL_SWITCH=enabled` as an optional Worker secret when Azure
+receipt parsing should remain available but Anthropic spend must stop:
+
+```bash
+printf "%s" "enabled" | npx wrangler secret put LLM_SCAN_KILL_SWITCH \
+  --config wrangler.jsonc --env=""
+```
+
+The switch is deliberately not a source-defined `wrangler.jsonc` variable: Worker
+secrets survive routine deploys, so the next release cannot silently clear an active
+emergency stop. The switch is evaluated before the
+shared multi-engine cache and before LLM accounting/provider work. `/ocr/analyze`
+keeps its v2 response shape: a successful Azure result returns HTTP `200` with
+top-level `status:"partial"`, an Azure engine with `status:"succeeded"`, and an LLM
+engine with `status:"not_started"` plus `diagnostic:"operator_disabled"`.
+`llmReasoning` remains `false`, `aiModels` contains only `azure-di-v4`, and
+`consensus` is `null`.
+
+The disabled path has its own cache namespace, so a cached dual-engine success
+cannot bypass the switch and a cached disabled partial cannot survive re-enabling.
+It may cache the deterministic Azure-only partial to avoid repeating Azure spend
+while the switch remains enabled. This switch does not alter App Attest, ingress,
+accounting, CORS, or the whole-scan `OCR_SCAN_KILL_SWITCH`.
+
+**Verify**:
+```bash
+curl -sS -X POST "https://fx.resplit.app/ocr/analyze" \
+  -H "content-type: image/jpeg" \
+  -H "x-resplit-attest-soft-fail: true" \
+  --data-binary @/path/to/tiny-receipt.jpg | jq \
+  '{status, llmReasoning, aiModels, engines, consensus}'
+```
+
+**Re-enable**:
+```bash
+npx wrangler secret delete LLM_SCAN_KILL_SWITCH --config wrangler.jsonc --env=""
+```
+
+Then scan a fresh image that has not been submitted during the preceding ten-minute
+cache window. Prove both that the response includes the LLM model in `aiModels` and
+that provider/accounting telemetry records one new Anthropic unit; a response alone
+can be a pre-disable cache replay and is not sufficient proof.
+
 #### Atomic OCR accounting rollout guard
 
 `OCR_ACCOUNTING_MODE=legacy` is the production-safe default. The SQLite Durable

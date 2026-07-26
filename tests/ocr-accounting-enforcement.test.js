@@ -173,6 +173,18 @@ function dualScanRequest(imageBytes) {
   })
 }
 
+function analyzeRequest(imageBytes) {
+  return new Request('https://fx.resplit.app/ocr/analyze', {
+    method: 'POST',
+    headers: {
+      'content-type': 'image/jpeg',
+      'x-resplit-attest-soft-fail': 'true',
+      'cf-connecting-ip': '198.51.100.42',
+    },
+    body: imageBytes,
+  })
+}
+
 function stubAzure({ submitStatus = 202 } = {}) {
   const calls = { submit: 0, poll: 0, anthropic: 0 }
   globalThis.fetch = async (url, init = {}) => {
@@ -377,6 +389,44 @@ test('enforced dual scan commits both provider units after both paid operations 
     reservationId: accounting.records.reservations[0].reservationId,
     azureUnits: 1,
     anthropicUnits: 1,
+  })
+})
+
+test('enforced analyze kill switch reserves and commits Azure only', async () => {
+  const calls = stubAzure()
+  const accounting = makeAccountingBinding({ azureGlobalCap: 1, anthropicGlobalCap: 0 })
+  const env = makeEnv({
+    accounting,
+    ANTHROPIC_API_KEY: 'anthropic-test-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    LLM_SCAN_KILL_SWITCH: 'enabled',
+  })
+
+  const response = await handleOcr(analyzeRequest(new Uint8Array([1, 4, 1, 4])), env)
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.equal(body.status, 'partial')
+  assert.equal(body.engines.find((engine) => engine.id === 'azure').status, 'succeeded')
+  assert.deepEqual(body.engines.find((engine) => engine.id === 'llm'), {
+    id: 'llm',
+    kind: 'vision-llm',
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    status: 'not_started',
+    latencyMs: 0,
+    scanned: null,
+    diagnostic: 'operator_disabled',
+  })
+  assert.equal(calls.submit, 1)
+  assert.equal(calls.anthropic, 0)
+  assert.equal(accounting.records.reservations[0].azureUnits, 1)
+  assert.equal(accounting.records.reservations[0].anthropicUnits, 0)
+  assert.deepEqual(accounting.records.commits[0], {
+    day: accounting.records.reservations[0].day,
+    reservationId: accounting.records.reservations[0].reservationId,
+    azureUnits: 1,
+    anthropicUnits: 0,
   })
 })
 

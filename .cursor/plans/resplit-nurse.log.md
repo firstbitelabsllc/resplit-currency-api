@@ -1,5 +1,41 @@
 # Resplit Nurse Log
 
+## 2026-07-26 — LLM-only receipt scan emergency stop
+
+- `GO/source-ready` on branch `codex/ocr-llm-kill-switch-20260726`;
+  `DEPLOY/UNCLAIMED` until reviewed source lands and the normal Worker release
+  reports the merged SHA. `LLM_SCAN_KILL_SWITCH=enabled` now stops only the paid
+  Anthropic leg while leaving Azure receipt parsing available.
+- `/ocr/analyze` preserves the v2 envelope and HTTP semantics: successful Azure
+  plus operator-disabled LLM returns HTTP `200`, `status:"partial"`,
+  `llmReasoning:false`, Azure-only `aiModels`, `consensus:null`, and an LLM
+  engine with the existing `status:"not_started"` plus additive
+  `diagnostic:"operator_disabled"`. Existing required fields and provider/status
+  vocabulary stay intact.
+- Spend/cache boundary: the switch is resolved before shared-cache access and
+  before LLM accounting/provider work. Its dedicated cache namespace prevents a
+  cached LLM success from bypassing disable and prevents an Azure-only disabled
+  partial from surviving re-enable. The deterministic disabled partial may be
+  cached to avoid repeat Azure spend; transient provider failures remain
+  uncached.
+- Operator durability: the switch is an optional Worker secret, not a
+  source-defined var, so routine deploys cannot overwrite an active emergency
+  stop. Re-enable proof requires a fresh image plus provider/accounting telemetry,
+  not only a possibly cached response.
+- Fresh proof: focused kill-switch/contract/accounting/config tests `36/36`; all OCR tests
+  `202/202`; canonical `npm run check` passed Node `613/613` and Worker
+  `13/13`; `npm run smoke:deploy` passed for `2026-07-26` with 30 history
+  points; root and named-production Wrangler `4.110.0` dry-runs bundled with the
+  optional stop absent from source vars; `git diff --check` clean.
+- Preserved boundaries: App Attest, CORS, ingress limits, Azure accounting,
+  `OCR_SCAN_KILL_SWITCH`, FX routes, and live production were not weakened or
+  mutated. No provider call, secret read/write, deploy, workflow dispatch, or
+  production cache mutation occurred.
+- Exact next: pathspec commit, then hand the reviewed candidate
+  to the owning Resplit launch lane for merge/deploy/runtime proof.
+
+<promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
+
 ## 2026-07-18
 
 - Code Red P0 inference: candidates=[Currency unchanged 03:00 UTC public deployment train, blast radius=three Pages uploads plus Worker and GitHub Pages, proof gap=fail-closed recovery; Resplit Web duplicate Vercel project, blast radius=one extra production build per source push, proof gap=alias/domain inventory; Expenses feature-branch Vercel builds, blast radius=avoidable preview builds, proof gap=source gate landing] selected=Currency duplicate-pass gate because it is the largest immediately landable repeated deployment cost with complete production-contract verification; council_help=[writer=Codex, reviewer=independent Currency review, test-fixture=Node 22 contracts, real-surface-proof=read-only public release probe] deferred=[Resplit dashboard inventory and the isolated Expenses gate].

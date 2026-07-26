@@ -993,6 +993,10 @@ components:
         model: { type: string }
         status:
           $ref: "#/components/schemas/ProviderLegStatus"
+        diagnostic:
+          type: string
+          enum: [operator_disabled]
+          description: Present only when an operator intentionally disabled the paid LLM leg before it started.
         latencyMs: { type: [number, "null"], minimum: 0 }
         scanned:
           oneOf:

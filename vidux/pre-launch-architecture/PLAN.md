@@ -10,6 +10,18 @@
 
 ## Progress
 
+- 2026-07-26: Added a source-ready, operator-controlled LLM-only OCR stop on
+  `codex/ocr-llm-kill-switch-20260726`. `LLM_SCAN_KILL_SWITCH=enabled` leaves
+  Azure active and preserves `/ocr/analyze` v2 as an HTTP 200 partial with the
+  existing LLM `not_started` status plus additive
+  `diagnostic:"operator_disabled"`. The gate is part of the cache namespace and
+  is resolved before LLM accounting/provider work, so cached successes cannot
+  bypass disable and disabled partials cannot survive re-enable. The switch is
+  optional-secret managed so routine deploys cannot overwrite a live stop.
+  Proof: focused `36/36`, OCR `202/202`, full Node `613/613`, Worker `13/13`,
+  deployment smoke green, root/named Wrangler dry-runs green, and independent
+  adversarial review findings closed. This is not merged, deployed, or
+  runtime-proven yet.
 - 2026-06-20: Studio installed a local-only Eve cockpit on clean branch
   `codex/eve-studio-resplit-currency-api-20260620` from `origin/main@5947eafb`.
   Added `agent/`, Eve wrapper skills, read-only `fx-readiness` subagent,

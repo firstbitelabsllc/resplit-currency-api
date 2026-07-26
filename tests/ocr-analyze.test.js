@@ -485,3 +485,139 @@ test('POST /ocr/analyze dark mode (no ANTHROPIC_API_KEY) is partial with an azur
   assert.equal(body.consensus, null)
   assert.equal(calls.anthropic, 0)
 })
+
+test('POST /ocr/analyze LLM kill switch preserves an Azure-success v2 partial without starting Anthropic', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    LLM_SCAN_KILL_SWITCH: 'enabled',
+  })
+  const res = await handleOcr(analyzeRequest(jpegFixture(223)), env)
+  assert.equal(res.status, 200)
+  const body = await res.json()
+
+  assert.deepEqual(Object.keys(body).sort(), [
+    'aiModels', 'consensus', 'engines', 'llmReasoning', 'scanId', 'status', 'v',
+  ])
+  assert.equal(body.v, 2)
+  assert.equal(body.status, 'partial')
+  assert.equal(body.llmReasoning, false)
+  assert.deepEqual(body.aiModels, ['azure-di-v4'])
+  assert.equal(body.consensus, null)
+
+  const azureEngine = body.engines.find((engine) => engine.id === 'azure')
+  const llmEngine = body.engines.find((engine) => engine.id === 'llm')
+  assert.equal(azureEngine.status, 'succeeded')
+  assert.equal(azureEngine.raw.analyzeResult.documents[0].fields.Total.valueCurrency.amount, 10)
+  assert.deepEqual(llmEngine, {
+    id: 'llm',
+    kind: 'vision-llm',
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    status: 'not_started',
+    latencyMs: 0,
+    scanned: null,
+    diagnostic: 'operator_disabled',
+  })
+  assert.equal(calls.azureSubmit, 1)
+  assert.equal(calls.azurePoll, 1)
+  assert.equal(calls.anthropic, 0)
+  assert.equal([...env.ATTEST_KV.store.keys()].some((key) => key.startsWith('llmcount:')), false)
+})
+
+test('LLM kill-switch cache namespace cannot replay a prior LLM success or survive re-enable', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+  })
+  const image = jpegFixture(224)
+
+  const enabled = await handleOcr(analyzeRequest(image), env)
+  assert.equal((await enabled.json()).status, 'succeeded')
+  assert.deepEqual(calls, { azureSubmit: 1, azurePoll: 1, anthropic: 1 })
+
+  env.LLM_SCAN_KILL_SWITCH = 'true'
+  const disabled = await handleOcr(analyzeRequest(image), env)
+  const disabledBody = await disabled.json()
+  assert.equal(disabled.status, 200)
+  assert.equal(disabledBody.status, 'partial')
+  assert.equal(disabledBody.engines.find((engine) => engine.id === 'llm').diagnostic, 'operator_disabled')
+  assert.deepEqual(calls, { azureSubmit: 2, azurePoll: 2, anthropic: 1 })
+
+  const disabledReplay = await handleOcr(analyzeRequest(image), env)
+  assert.equal((await disabledReplay.json()).status, 'partial')
+  assert.deepEqual(calls, { azureSubmit: 2, azurePoll: 2, anthropic: 1 })
+
+  env.LLM_SCAN_KILL_SWITCH = 'false'
+  const reenabled = await handleOcr(analyzeRequest(image), env)
+  const reenabledBody = await reenabled.json()
+  assert.equal(reenabledBody.status, 'succeeded')
+  assert.equal(reenabledBody.engines.find((engine) => engine.id === 'llm').diagnostic, undefined)
+  assert.deepEqual(calls, { azureSubmit: 2, azurePoll: 2, anthropic: 1 })
+
+  const multiEngineKeys = [...env.ATTEST_KV.store.keys()]
+    .filter((key) => key.startsWith('cache:dualScan:v2core:'))
+  assert.equal(multiEngineKeys.length, 2)
+  assert.equal(multiEngineKeys.some((key) => key.includes(':operator_disabled:')), true)
+  assert.equal(multiEngineKeys.some((key) => key.includes(':allowed:soft_fail:')), true)
+})
+
+test('LLM kill switch does not cache a transient Azure failure', async () => {
+  stubProviders({ azure: { status: 'failed' } })
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    LLM_SCAN_KILL_SWITCH: 'true',
+  })
+  const image = jpegFixture(225)
+
+  const first = await handleOcr(analyzeRequest(image), env)
+  assert.equal(first.status, 502)
+  const firstBody = await first.json()
+  assert.equal(firstBody.status, 'provider_error')
+  assert.equal(firstBody.engines.find((engine) => engine.id === 'llm').diagnostic, 'operator_disabled')
+  assert.deepEqual(calls, { azureSubmit: 1, azurePoll: 1, anthropic: 0 })
+
+  const second = await handleOcr(analyzeRequest(image), env)
+  assert.equal(second.status, 502)
+  assert.deepEqual(calls, { azureSubmit: 2, azurePoll: 2, anthropic: 0 })
+  assert.equal(
+    [...env.ATTEST_KV.store.keys()].some((key) => key.startsWith('cache:dualScan:v2core:')),
+    false,
+  )
+})
+
+test('LLM kill switch preserves the exact legacy dual-scan v1 keys and skips Anthropic', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    LLM_SCAN_KILL_SWITCH: 'true',
+  })
+
+  const response = await handleOcr(dualScanRequest(jpegFixture(226)), env)
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(Object.keys(body).sort(), [
+    'aiModels', 'azure', 'divergence', 'llm', 'llmReasoning', 'mode', 'scanId', 'status', 'v',
+  ])
+  assert.equal(body.v, 1)
+  assert.equal(body.mode, 'dual')
+  assert.equal(body.status, 'partial')
+  assert.equal(body.azure.status, 'succeeded')
+  assert.deepEqual(body.llm, {
+    status: 'not_started',
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    scanned: null,
+    latencyMs: 0,
+  })
+  assert.equal(body.llmReasoning, false)
+  assert.deepEqual(body.aiModels, ['azure-di-v4'])
+  assert.equal(body.divergence, null)
+  assert.equal(calls.azureSubmit, 1)
+  assert.equal(calls.anthropic, 0)
+})

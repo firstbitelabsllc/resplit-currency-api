@@ -64,6 +64,8 @@
   // Names only: experimental Wrangler metadata for local-dev warnings and Env
   // type generation. run.yml enforces remote continuity before publication.
   "secrets": {
+    // LLM_SCAN_KILL_SWITCH is an optional operator secret (unset = off), not a
+    // source var. This keeps a live emergency stop intact across routine deploys.
     "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
   },
   "durable_objects": {
@@ -150,6 +152,7 @@
       },
       // Environments do not inherit this local-dev/type-generation metadata.
       "secrets": {
+        // Optional operator secret: LLM_SCAN_KILL_SWITCH (unset = off).
         "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
       },
       "durable_objects": {

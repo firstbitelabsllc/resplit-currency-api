@@ -384,6 +384,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     latencyMs: null,
     httpStatus: 502,
     errorBody: 'llm_leg_threw',
+    diagnostic: null,
     accountingUnits: 0,
   }))
   const { accountingUnits: azureStartedUnits = 0, ...azure } = azureLeg
@@ -396,14 +397,14 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   const status = dualScanStatus(azure.status, llm.status)
   const result = { scanId, status, azure, llm, divergence }
 
-  // Cache ONLY a fully-succeeded LLM leg. Previously an azure-only partial (LLM
-  // failed) was pinned for CACHE_TTL_SECONDS: a transient Anthropic failure then
-  // got served back on EVERY retry of the same image for the whole TTL, so the
-  // user could never recover the LLM leg until it expired. Azure-only partials
-  // now stay uncached and re-run the LLM on retry. (A future all-legs-succeeded
-  // gate would also require azure.status === 'succeeded', but today an LLM
-  // success is the scarce, worth-caching outcome.)
-  if (llm.status === 'succeeded') {
+  // Cache a fully-succeeded LLM leg, plus the deterministic operator-disabled
+  // Azure-only result. Transient LLM failures remain uncached so retries can
+  // recover. The disabled result is safe to cache because readLlmGate() gives it
+  // a dedicated cache namespace; turning the switch back off cannot replay it.
+  if (
+    llm.status === 'succeeded' ||
+    (azure.status === 'succeeded' && llm.diagnostic === 'operator_disabled')
+  ) {
     await writeOcrCacheBestEffort(env, {
       cacheKey,
       value: JSON.stringify(result),
@@ -737,7 +738,7 @@ function analyzeAzureEngine(azure) {
 }
 
 function analyzeLlmEngine(llm) {
-  return {
+  const engine = {
     id: 'llm',
     kind: 'vision-llm',
     provider: LLM_PROVIDER,
@@ -746,6 +747,8 @@ function analyzeLlmEngine(llm) {
     latencyMs: llm.latencyMs ?? null,
     scanned: llm.scanned ?? null,
   }
+  if (llm.diagnostic) engine.diagnostic = llm.diagnostic
+  return engine
 }
 
 function keyValueExtrasEnabled(env) {
@@ -950,6 +953,7 @@ async function runLlmLeg({
       latencyMs: 0,
       httpStatus: gate.httpStatus,
       errorBody: null,
+      diagnostic: gate.diagnostic ?? null,
       accountingUnits: 0,
     }
   }
@@ -964,6 +968,7 @@ async function runLlmLeg({
       latencyMs: 0,
       httpStatus: 429,
       errorBody: null,
+      diagnostic: null,
       accountingUnits: 0,
     }
   }
@@ -979,11 +984,25 @@ async function runLlmLeg({
     // Carries 'llm_truncated' / 'llm_schema_violation:…' / provider error text so the
     // Sentry capture below can tag WHY the paid leg failed, not just that it did.
     errorBody: result.errorBody ?? null,
+    diagnostic: null,
     accountingUnits: result.providerStarted === true ? 1 : 0,
   }
 }
 
 function readLlmGate(env, keyId, attest) {
+  // Operator stop for the paid vision-LLM leg only. Keep it ahead of provider
+  // availability and authorization so the switch is authoritative, and give it a
+  // distinct cache namespace so a previously cached LLM success cannot bypass the
+  // stop. Azure still runs and produces a truthful 200 partial envelope.
+  if (enabledEnvFlag(env.LLM_SCAN_KILL_SWITCH)) {
+    return {
+      status: 'not_started',
+      httpStatus: 200,
+      cacheKey: 'operator_disabled',
+      diagnostic: 'operator_disabled',
+    }
+  }
+
   if (!env.ANTHROPIC_API_KEY) {
     return { status: 'provider_unavailable', httpStatus: 503, cacheKey: 'provider_unavailable' }
   }
@@ -1501,6 +1520,7 @@ function logDualScanMonitoring(env, { result, route, requestId, clientVersion, a
     status: result.status,
     azure_status: result.azure?.status,
     llm_status: result.llm?.status,
+    llm_diagnostic: result.llm?.diagnostic ?? null,
     llm_provider: result.llm?.provider ?? LLM_PROVIDER,
     llm_model: result.llm?.model,
     llm_reasoning: result.llm?.status === 'succeeded',
