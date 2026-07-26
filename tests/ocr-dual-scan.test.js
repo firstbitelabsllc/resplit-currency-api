@@ -137,9 +137,26 @@ function makeKV() {
   }
 }
 
+function makeAttestReplayBinding() {
+  const counters = new Map()
+  const stub = {
+    async advanceAppAttestSignCount({ keyToken, previousSignCount, signCount }) {
+      const floor = Math.max(counters.get(keyToken) ?? 0, previousSignCount)
+      if (signCount <= floor) return { ok: false, error: 'REPLAY', signCount: floor }
+      counters.set(keyToken, signCount)
+      return { ok: true, signCount }
+    },
+  }
+  return {
+    idFromName() { return 'global-test-object' },
+    get() { return stub },
+  }
+}
+
 function makeEnv(extra = {}) {
   return {
     ATTEST_KV: makeKV(),
+    OCR_ACCOUNTING: makeAttestReplayBinding(),
     AZURE_OCR_ENDPOINT: 'https://test.cognitiveservices.azure.com',
     AZURE_OCR_KEY: 'test-key',
     SENTRY_ENVIRONMENT: 'test',
@@ -281,6 +298,62 @@ test('POST /ocr/dual-scan returns dual succeeded envelope for an attested, allow
   // Findings #3/#4: strict tool use + a safer max_tokens ceiling for dense receipts.
   assert.equal(calls.anthropicBodies[0].tools[0].strict, true)
   assert.equal(calls.anthropicBodies[0].max_tokens, 4096)
+})
+
+test('POST /ocr/dual-scan admits one of 24 concurrent identical App Attest assertions', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOWED_KEY_IDS: '',
+  })
+  const image = jpegWithDimensions(800, 600)
+  const keyId = 'kid-concurrent-replay'
+  const privateKey = await seedAttestedKey(env, keyId)
+  const assertionB64 = await buildAssertion(privateKey, image, 1)
+
+  const responses = await Promise.all(
+    Array.from({ length: 24 }, () => handleOcr(
+      attestedDualScanRequest(image, { keyId, assertionB64 }),
+      env
+    ))
+  )
+
+  assert.equal(responses.filter((response) => response.status === 200).length, 1)
+  assert.equal(responses.filter((response) => response.status === 401).length, 23)
+  assert.equal(calls.azureSubmit, 1, 'replayed assertions must be rejected before Azure')
+  assert.equal(calls.anthropic, 1, 'replayed assertions must be rejected before Anthropic')
+})
+
+test('POST /ocr/dual-scan fails closed before providers when replay authority is unavailable', async () => {
+  stubProviders()
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    OCR_ACCOUNTING: {
+      idFromName() { return 'global-test-object' },
+      get() {
+        return {
+          async advanceAppAttestSignCount() {
+            throw new Error('durable object unavailable')
+          },
+        }
+      },
+    },
+  })
+  const image = jpegWithDimensions(800, 600)
+  const keyId = 'kid-replay-store-outage'
+  const privateKey = await seedAttestedKey(env, keyId)
+  const assertionB64 = await buildAssertion(privateKey, image, 1)
+
+  const response = await handleOcr(
+    attestedDualScanRequest(image, { keyId, assertionB64 }),
+    env
+  )
+  const body = await response.json()
+
+  assert.equal(response.status, 503)
+  assert.equal(body.error, 'OCR_MISCONFIGURED')
+  assert.equal(calls.azureSubmit, 0)
+  assert.equal(calls.anthropic, 0)
 })
 
 test('POST /ocr/dual-scan keeps Azure bytes original while bounding only the Anthropic leg', async () => {

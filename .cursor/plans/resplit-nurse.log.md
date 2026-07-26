@@ -1,5 +1,51 @@
 # Resplit Nurse Log
 
+## 2026-07-26 — atomic App Attest assertion replay admission
+
+- `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
+  `codex/ocr-atomic-security-20260726` from `origin/main@4d747f5b`; no secret
+  write, workflow dispatch, Worker deploy, paid OCR call, or production
+  mutation occurred.
+- Security delta: every attested scan route now advances App Attest
+  `signCount` through the already-bound `OcrAccounting` Durable Object before
+  cache or provider work. SQLite sees only a SHA-256 key token. Before the first
+  atomic advance, KV preserves its old floor and installs a uint32-max rollback
+  fence as defense in depth. Rollback safety is defined by retaining this atomic
+  guard; the prior KV-only binary is explicitly not a valid rollback artifact.
+  Installed iOS request/response shapes and the existing replay `401` remain
+  unchanged.
+- Fail-closed boundary: a missing/unavailable/malformed replay RPC returns
+  `503 OCR_MISCONFIGURED` before Azure or Anthropic. A 24-request real-route
+  replay burst admitted one request and made one call to each paid provider;
+  the other 23 requests returned `401`. The real SQLite object admitted one of
+  64 identical counter advances and rejected 63.
+- Fresh proof:
+  - route/crypto/replay focused tests: `40/40`;
+  - `npm run check`: strict release validation, Node `621/621`, Worker
+    `16/16`;
+  - `npm run smoke:deploy`: `OK (date=2026-07-26, historyPoints=30)`;
+  - Wrangler `4.110.0` root and named-production dry-runs bundled with the
+    existing `OCR_ACCOUNTING` Durable Object and unchanged
+    `OCR_ACCOUNTING_MODE=legacy`;
+  - `npm audit --omit=dev`: zero production dependency vulnerabilities;
+  - `git diff --check`: clean.
+- Activation decision: atomic spend accounting was not flipped. Read-only
+  `wrangler secret list` showed that production has no
+  `OCR_ACCOUNTING_HMAC_KEY`, so enforcement would fail closed every cache miss
+  and is not migration-safe under this lane's no-secret/no-production boundary.
+- Exact remaining risks: paid OCR spend counters are still non-atomic in
+  legacy mode; soft-fail App Attest compatibility remains enabled; Sideload
+  CORS remains wildcard; one global Durable Object adds an unmeasured
+  latency/availability dependency for attested cache hits; its pseudonymous,
+  linkable counter tokens have no retention prune; live replay behavior is
+  unclaimed until a normal reviewed merge/deploy reports this source SHA.
+- Independent security review closed `SHIP` with no remaining P1/P2 after the
+  rollback definition and defense-in-depth fence were corrected.
+- Exact next: pathspec commit, then hand the candidate to the owning launch lane
+  for collision check and normal merge/deploy/runtime proof.
+
+<promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
+
 ## 2026-07-26 — LLM-only receipt scan emergency stop
 
 - `GO/source-ready` on branch `codex/ocr-llm-kill-switch-20260726`;

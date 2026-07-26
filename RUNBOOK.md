@@ -361,6 +361,39 @@ first valid reservation on each new UTC day prunes older rows transactionally;
 this bounds SQLite growth while preserving a week of idempotency and incident
 evidence. Do not treat the object as a permanent billing ledger.
 
+#### Atomic App Attest assertion replay guard
+
+Attested `/ocr/scan`, `/ocr/dual-scan`, and `/ocr/analyze` requests advance their
+App Attest `signCount` through the existing `OCR_ACCOUNTING` Durable Object before
+cache access or provider work. The object stores only a SHA-256 token of the App
+Attest key ID. On first atomic use, the Worker preserves the legacy KV counter as
+`legacySignCountFloor` and replaces the old verifier's `signCount` with the
+uint32 maximum before advancing the Durable Object. This is a one-way,
+fail-closed rollback fence: an older KV-only verifier rejects fenced keys instead
+of accepting an assertion already consumed by the Durable Object.
+
+Expected behavior:
+
+- concurrent copies of one valid assertion admit exactly one request; the rest
+  return the existing `401 ATTEST_REJECTED/REPLAY` contract;
+- a missing, unavailable, or malformed replay authority fails closed as
+  `503 OCR_MISCONFIGURED` before Azure, Anthropic, or cache access;
+- a failure to persist the rollback fence fails closed before the Durable Object
+  advance or any paid work;
+- soft-fail requests remain on their existing separate path and do not use an
+  App Attest counter.
+
+Do not remove the `OCR_ACCOUNTING` binding, `OcrAccounting` class export, or
+permanent SQLite migration when rolling back OCR accounting mode. They now also
+own the assertion replay boundary independently of
+`OCR_ACCOUNTING_MODE=legacy|enforce`.
+
+A source rollback must retain the atomic replay guard. A straight rollback to
+the prior KV-only verifier is forbidden: fenced keys usually fail closed, but
+KV propagation and a concurrent re-attestation writer mean the prior binary is
+not a proven replay-safe rollback artifact. Restore the guarded source instead,
+and do not rewrite fenced KV records downward during recovery.
+
 ### 5. Cloudflare token expired or revoked
 
 **Symptoms**: Pipeline runs but Cloudflare deploy step fails.

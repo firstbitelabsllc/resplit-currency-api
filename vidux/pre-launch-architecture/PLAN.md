@@ -10,6 +10,22 @@
 
 ## Progress
 
+- 2026-07-26: Source-ready atomic App Attest assertion replay protection on
+  `codex/ocr-atomic-security-20260726`. The already-deployed
+  `OCR_ACCOUNTING` Durable Object now serializes `signCount` advancement before
+  any OCR cache/provider work; KV installs a uint32-max defense-in-depth fence
+  while preserving its original one-way migration floor. Rollback artifacts
+  must retain the atomic guard; the prior KV-only binary is forbidden. Only an opaque,
+  pseudonymous SHA-256 key token enters SQLite. Concurrent duplicate assertions retain the
+  installed `401 ATTEST_REJECTED/REPLAY` response, while replay-store outages
+  fail closed as `503 OCR_MISCONFIGURED` before Azure or Anthropic. Proof:
+  route/crypto focused `40/40`, canonical Node `621/621`, Worker SQLite
+  `16/16` including a 64-way cap, deploy smoke green for `2026-07-26`, and root
+  plus named-production Wrangler dry-runs with the existing binding. Live
+  production was not mutated. Separate unresolved launch risks: spend
+  accounting remains legacy because deployed secrets do not yet include
+  `OCR_ACCOUNTING_HMAC_KEY`; `LLM_SCAN_ALLOW_SOFT_FAIL=true` and wildcard CORS
+  remain deliberate but security-relevant compatibility debt.
 - 2026-07-26: Added a source-ready, operator-controlled LLM-only OCR stop on
   `codex/ocr-llm-kill-switch-20260726`. `LLM_SCAN_KILL_SWITCH=enabled` leaves
   Azure active and preserves `/ocr/analyze` v2 as an HTTP 200 partial with the

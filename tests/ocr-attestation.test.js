@@ -170,7 +170,14 @@ test('verifyAttestation registers the credCert key and the record verifies a rea
   const rawSig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, built.credKeys.privateKey, nonce))
   const assertionB64 = bytesToB64(cborAssertion(rawToDer(rawSig), assertAuthData))
 
-  const res = await verifyAssertion({ keyId: built.keyId, assertionB64, clientData, appId: APP_ID, kv })
+  const res = await verifyAssertion({
+    keyId: built.keyId,
+    assertionB64,
+    clientData,
+    appId: APP_ID,
+    kv,
+    advanceSignCount: async () => true,
+  })
   assert.equal(res.ok, true)
 })
 

@@ -29,8 +29,13 @@ import {
   OCR_PROVIDER,
 } from './azure.mjs'
 import { scanReceiptWithAnthropic, receiptShapeViolation, LLM_PROVIDER } from './anthropic.mjs'
-import { verifyAssertion, AttestError } from './attest.mjs'
+import {
+  verifyAssertion,
+  AttestError,
+  AttestReplayStoreError,
+} from './attest.mjs'
 import { verifyAttestation } from './attestation.mjs'
+import { advanceAppAttestSignCount } from './attest-replay.mjs'
 import { readOcrImageWithinBudget } from './ingress.mjs'
 import { scheduleOcrAccountingShadow } from './accounting-shadow.mjs'
 import {
@@ -131,6 +136,21 @@ export async function handleOcr(request, env, ctx) {
     }
     return errorResponse('NOT_FOUND', 'OCR route not found', 404, requestId, RESPONSE_HEADERS)
   } catch (error) {
+    if (error instanceof AttestReplayStoreError) {
+      logOcrMonitoringEvent('error', {
+        signal: 'ocr_misconfigured',
+        reason: 'attest_replay_store_unavailable',
+        requestId,
+        path: url.pathname,
+      }, env)
+      return errorResponse(
+        'OCR_MISCONFIGURED',
+        'attest replay store unavailable',
+        503,
+        requestId,
+        RESPONSE_HEADERS
+      )
+    }
     if (error instanceof AttestError) {
       const event = {
         signal: 'attest_reject',
@@ -455,9 +475,9 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   return renderScan(shapeEnvelope, result, requestId)
 }
 
-// Shared App Attest boundary. It intentionally does not mutate accounting: both
-// route families must authenticate before cache access, then debit only on a miss.
-// A verifyAssertion rejection throws AttestError, caught by handleOcr as a 401.
+// Shared App Attest boundary. Every attested request advances replay state in
+// the accounting Durable Object before cache access; paid-provider units are
+// still debited only on a miss. An AttestError is returned as the installed 401.
 async function authenticateScan({ request, env, imageBytes, softFail, keyId, assertionB64 }) {
   if (softFail || !keyId || !assertionB64) {
     const principal = request.headers.get('cf-connecting-ip') || 'unknown'
@@ -465,7 +485,14 @@ async function authenticateScan({ request, env, imageBytes, softFail, keyId, ass
     const azureSubjectCap = resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP)
     return { attest: 'soft_fail', deviceKey, principalKind: 'soft_fail', principal, azureSubjectCap }
   }
-  await verifyAssertion({ keyId, assertionB64, clientData: imageBytes, appId: APP_ID, kv: env.ATTEST_KV })
+  await verifyAssertion({
+    keyId,
+    assertionB64,
+    clientData: imageBytes,
+    appId: APP_ID,
+    kv: env.ATTEST_KV,
+    advanceSignCount: (counter) => advanceAppAttestSignCount({ env, ...counter }),
+  })
   return {
     attest: 'pass',
     deviceKey: keyId,

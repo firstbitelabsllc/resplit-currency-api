@@ -5,12 +5,12 @@ const RESERVATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const RECEIPT_RETENTION_DAYS = 8
 
 /**
- * Dormant SQLite accounting primitive for future OCR admission control.
+ * SQLite authority for App Attest replay protection and OCR admission control.
  *
- * The production OCR router deliberately cannot reach this class while
- * OCR_ACCOUNTING_MODE remains "legacy". A separate adapter may call reserve()
- * in non-enforcing shadow mode after cache misses; the legacy spend gates and
- * every client response remain authoritative until a later reviewed rollout.
+ * Every attested OCR request reaches advanceAppAttestSignCount() regardless of
+ * OCR_ACCOUNTING_MODE. Paid-provider reserve/finalize enforcement remains dark
+ * while the mode is "legacy"; existing spend gates and client response shapes
+ * stay authoritative until a separate reviewed rollout.
  */
 export class OcrAccounting extends DurableObject {
   constructor(ctx, env) {
@@ -183,6 +183,57 @@ export class OcrAccounting extends DurableObject {
   }
 
   /**
+   * Advances one App Attest assertion counter under the same single-object
+   * serialization boundary used by OCR spend admission. The KV counter is
+   * supplied as a one-way migration floor; only the opaque, pseudonymous
+   * SHA-256 key token crosses this boundary.
+   *
+   * @param {unknown} input
+   * @returns {object}
+   */
+  advanceAppAttestSignCount(input) {
+    const advance = validateAttestCounterAdvance(input)
+    if (!advance) return invalidAttestCounterDecision()
+
+    return this.ctx.storage.transactionSync(() => {
+      const sql = this.ctx.storage.sql
+      const existing = firstRow(sql.exec(
+        `SELECT sign_count
+           FROM app_attest_counters
+          WHERE key_token = ?`,
+        advance.keyToken
+      ))
+      const authoritativeFloor = Math.max(
+        existing?.sign_count ?? 0,
+        advance.previousSignCount
+      )
+      if (advance.signCount <= authoritativeFloor) {
+        return {
+          ok: false,
+          error: 'REPLAY',
+          signCount: authoritativeFloor,
+        }
+      }
+
+      sql.exec(
+        `INSERT INTO app_attest_counters (
+           key_token, sign_count, updated_at_ms
+         ) VALUES (?, ?, ?)
+         ON CONFLICT(key_token) DO UPDATE SET
+           sign_count = excluded.sign_count,
+           updated_at_ms = excluded.updated_at_ms`,
+        advance.keyToken,
+        advance.signCount,
+        Date.now()
+      )
+      return {
+        ok: true,
+        signCount: advance.signCount,
+      }
+    })
+  }
+
+  /**
    * Finalize a reservation with the provider units that actually started.
    * Any unused allowed units are released in the same SQLite transaction.
    *
@@ -299,6 +350,15 @@ export class OcrAccounting extends DurableObject {
 
 function initializeSchema(sql) {
   sql.exec(
+    `CREATE TABLE IF NOT EXISTS app_attest_counters (
+       key_token TEXT PRIMARY KEY,
+       sign_count INTEGER NOT NULL CHECK (sign_count >= 0),
+       updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
+       CHECK (length(key_token) = 64),
+       CHECK (key_token NOT GLOB '*[^0-9a-f]*')
+     ) STRICT`
+  )
+  sql.exec(
     `CREATE TABLE IF NOT EXISTS ocr_maintenance (
        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
        last_pruned_day TEXT NOT NULL CHECK (length(last_pruned_day) = 10)
@@ -359,6 +419,18 @@ function initializeSchema(sql) {
        CHECK (length(day) = 10)
      ) STRICT`
   )
+}
+
+function validateAttestCounterAdvance(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const { keyToken, previousSignCount, signCount } = input
+  if (typeof keyToken !== 'string' || !SUBJECT_TOKEN_PATTERN.test(keyToken)) return null
+  if (!isNonNegativeInteger(previousSignCount) || !isNonNegativeInteger(signCount)) return null
+  return { keyToken, previousSignCount, signCount }
+}
+
+function invalidAttestCounterDecision() {
+  return { ok: false, error: 'INVALID_REQUEST' }
 }
 
 function pruneExpiredAccountingRows(sql, currentDay) {

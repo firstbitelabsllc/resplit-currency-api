@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { verifyAssertion, AttestError } from '../worker/src/ocr/attest.mjs'
+import {
+  verifyAssertion,
+  AttestError,
+  AttestReplayStoreError,
+} from '../worker/src/ocr/attest.mjs'
 
 const APP_ID = 'QSL6XFT438.com.superfit.Resplit'
 
@@ -93,24 +97,159 @@ test('verifyAssertion accepts a genuine ES256 assertion and enforces monotonic c
   await kv.put(`attest:${keyId}`, JSON.stringify({ publicKeyB64: bytesToB64(spki), signCount: 0 }))
 
   const clientData = new TextEncoder().encode('fake-image-bytes')
+  let authoritativeCount = 0
+  const advanceSignCount = async ({ previousSignCount, signCount }) => {
+    const floor = Math.max(authoritativeCount, previousSignCount)
+    if (signCount <= floor) return false
+    authoritativeCount = signCount
+    return true
+  }
 
   // First valid assertion (signCount=1) passes.
   const a1 = await buildAssertion(keyPair.privateKey, clientData, 1)
-  const r1 = await verifyAssertion({ keyId, assertionB64: a1, clientData, appId: APP_ID, kv })
+  const r1 = await verifyAssertion({
+    keyId, assertionB64: a1, clientData, appId: APP_ID, kv, advanceSignCount,
+  })
   assert.equal(r1.ok, true)
-  assert.equal(JSON.parse(kv.store.get(`attest:${keyId}`)).signCount, 1)
+  assert.deepEqual(JSON.parse(kv.store.get(`attest:${keyId}`)), {
+    publicKeyB64: bytesToB64(spki),
+    signCount: 0xffffffff,
+    atomicReplayEnabled: true,
+    legacySignCountFloor: 0,
+  })
 
   // Replay at the same counter is rejected.
   const a1again = await buildAssertion(keyPair.privateKey, clientData, 1)
   await assert.rejects(
-    () => verifyAssertion({ keyId, assertionB64: a1again, clientData, appId: APP_ID, kv }),
+    () => verifyAssertion({
+      keyId, assertionB64: a1again, clientData, appId: APP_ID, kv, advanceSignCount,
+    }),
     (e) => e instanceof AttestError && e.code === 'REPLAY',
   )
 
   // Higher counter passes.
   const a2 = await buildAssertion(keyPair.privateKey, clientData, 2)
-  const r2 = await verifyAssertion({ keyId, assertionB64: a2, clientData, appId: APP_ID, kv })
+  const r2 = await verifyAssertion({
+    keyId, assertionB64: a2, clientData, appId: APP_ID, kv, advanceSignCount,
+  })
   assert.equal(r2.ok, true)
+})
+
+test('verifyAssertion installs a fail-closed legacy rollback fence before atomic admission', async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify']
+  )
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey))
+  const keyId = 'rollback-fence-key'
+  const kv = makeKV()
+  await kv.put(`attest:${keyId}`, JSON.stringify({
+    publicKeyB64: bytesToB64(spki),
+    signCount: 7,
+  }))
+  const clientData = new TextEncoder().encode('rollback-fence-image')
+  const assertionB64 = await buildAssertion(keyPair.privateKey, clientData, 8)
+  let storedDuringAdvance
+
+  await verifyAssertion({
+    keyId,
+    assertionB64,
+    clientData,
+    appId: APP_ID,
+    kv,
+    advanceSignCount: async ({ previousSignCount, signCount }) => {
+      storedDuringAdvance = JSON.parse(kv.store.get(`attest:${keyId}`))
+      assert.equal(previousSignCount, 7)
+      assert.equal(signCount, 8)
+      return true
+    },
+  })
+
+  assert.equal(storedDuringAdvance.signCount, 0xffffffff)
+  assert.equal(storedDuringAdvance.atomicReplayEnabled, true)
+  assert.equal(storedDuringAdvance.legacySignCountFloor, 7)
+  assert.equal(8 <= storedDuringAdvance.signCount, true, 'the prior verifier fails closed')
+})
+
+test('verifyAssertion fails closed before atomic admission when rollback fencing cannot persist', async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify']
+  )
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey))
+  const keyId = 'rollback-fence-write-failure'
+  const stored = JSON.stringify({ publicKeyB64: bytesToB64(spki), signCount: 0 })
+  const kv = {
+    async get() { return stored },
+    async put() { throw new Error('KV unavailable') },
+  }
+  const clientData = new TextEncoder().encode('rollback-fence-write-failure-image')
+  const assertionB64 = await buildAssertion(keyPair.privateKey, clientData, 1)
+  let advanceCalls = 0
+
+  await assert.rejects(
+    () => verifyAssertion({
+      keyId,
+      assertionB64,
+      clientData,
+      appId: APP_ID,
+      kv,
+      advanceSignCount: async () => {
+        advanceCalls++
+        return true
+      },
+    }),
+    (error) => (
+      error instanceof AttestReplayStoreError &&
+      error.reason === 'rollback_fence_write_failed'
+    )
+  )
+  assert.equal(advanceCalls, 0)
+})
+
+test('verifyAssertion admits exactly one concurrent replay through an atomic counter authority', async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify']
+  )
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey))
+  const keyId = 'concurrent-key'
+  const kv = makeKV()
+  await kv.put(`attest:${keyId}`, JSON.stringify({
+    publicKeyB64: bytesToB64(spki),
+    signCount: 0,
+  }))
+  const clientData = new TextEncoder().encode('same-image')
+  const assertionB64 = await buildAssertion(keyPair.privateKey, clientData, 1)
+  let authoritativeCount = 0
+  const advanceSignCount = async ({ previousSignCount, signCount }) => {
+    const floor = Math.max(authoritativeCount, previousSignCount)
+    if (signCount <= floor) return false
+    authoritativeCount = signCount
+    return true
+  }
+
+  const results = await Promise.allSettled(
+    Array.from({ length: 32 }, () => verifyAssertion({
+      keyId,
+      assertionB64,
+      clientData,
+      appId: APP_ID,
+      kv,
+      advanceSignCount,
+    }))
+  )
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+  const rejected = results.filter((result) => result.status === 'rejected')
+  assert.equal(rejected.length, 31)
+  assert.equal(rejected.every((result) => (
+    result.reason instanceof AttestError && result.reason.code === 'REPLAY'
+  )), true)
+  assert.equal(authoritativeCount, 1)
 })
 
 test('verifyAssertion rejects the one-hash-short contract (digest = nonce instead of SHA256(nonce))', async () => {

@@ -5,10 +5,12 @@
 // heavy once-per-device ATTESTATION (cert chain to Apple's root) lives in
 // ./attestation.mjs and reuses the helpers exported here.
 //
-// Device records live in KV (`ATTEST_KV`):
-//   attest:<keyId> -> { publicKeyB64(SPKI), signCount, createdAt }
+// Device records live in KV (`ATTEST_KV`). New records start with the legacy
+// { publicKeyB64(SPKI), signCount, createdAt } shape; first atomic use adds
+// { atomicReplayEnabled, legacySignCountFloor } and fences legacy signCount.
 
 const SIG_DIAGNOSTIC_REASONS = new Set(['der_sequence', 'der_integer', 'verify_false'])
+const MAX_APP_ATTEST_SIGN_COUNT = 0xffffffff
 
 export class AttestError extends Error {
   constructor(code, message, reason) {
@@ -18,6 +20,14 @@ export class AttestError extends Error {
     // This is an internal, allowlisted log discriminator only. Keep the public
     // error code stable and never carry key, assertion, or body-derived data.
     if (code === 'SIG' && SIG_DIAGNOSTIC_REASONS.has(reason)) this.reason = reason
+  }
+}
+
+export class AttestReplayStoreError extends Error {
+  constructor(reason) {
+    super(reason)
+    this.name = 'AttestReplayStoreError'
+    this.reason = reason
   }
 }
 
@@ -158,13 +168,30 @@ export const recordKey = (keyId) => `attest:${keyId}`
 /**
  * Verify a per-request assertion against a registered key. Cheap (one ECDSA verify).
  *
- * @param {{ keyId: string, assertionB64: string, clientData: Uint8Array, appId: string, kv: KVNamespace }} args
+ * @param {{ keyId: string, assertionB64: string, clientData: Uint8Array, appId: string, kv: KVNamespace, advanceSignCount: Function }} args
  * @returns {Promise<{ ok: true, deviceId: string }>}
  */
-export async function verifyAssertion({ keyId, assertionB64, clientData, appId, kv }) {
+export async function verifyAssertion({
+  keyId,
+  assertionB64,
+  clientData,
+  appId,
+  kv,
+  advanceSignCount,
+}) {
   const raw = await kv.get(recordKey(keyId))
   if (!raw) throw new AttestError('UNKNOWN_KEY', 'key not registered (attest first)')
-  const record = JSON.parse(raw)
+  let record = JSON.parse(raw)
+  const legacySignCountFloor = record.atomicReplayEnabled === true
+    ? record.legacySignCountFloor
+    : record.signCount
+  if (
+    !Number.isSafeInteger(legacySignCountFloor) ||
+    legacySignCountFloor < 0 ||
+    legacySignCountFloor > MAX_APP_ATTEST_SIGN_COUNT
+  ) {
+    throw new AttestReplayStoreError('invalid_counter_record')
+  }
 
   const assertion = decodeCbor(b64ToBytes(assertionB64))
   const signature = assertion.signature
@@ -193,9 +220,39 @@ export async function verifyAssertion({ keyId, assertionB64, clientData, appId, 
   const ad = parseAuthData(authData)
   const expectedRpId = await sha256(new TextEncoder().encode(appId))
   if (!eq(ad.rpIdHash, expectedRpId)) throw new AttestError('RPID', 'assertion rpIdHash mismatch')
-  if (ad.signCount <= record.signCount) throw new AttestError('REPLAY', 'signCount not monotonic')
+  if (typeof advanceSignCount !== 'function') {
+    throw new AttestReplayStoreError('counter_authority_unavailable')
+  }
+  if (ad.signCount <= legacySignCountFloor) {
+    throw new AttestError('REPLAY', 'signCount not monotonic')
+  }
 
-  record.signCount = ad.signCount
-  await kv.put(recordKey(keyId), JSON.stringify(record))
+  // Fence the legacy verifier before the first atomic advance. A previous
+  // source version compares assertions directly with record.signCount; the
+  // uint32 maximum makes that rollback fail closed instead of reopening an
+  // assertion already consumed by the Durable Object. The original KV floor
+  // remains explicit for one-way migration into the atomic authority.
+  if (record.atomicReplayEnabled !== true) {
+    record = {
+      ...record,
+      signCount: MAX_APP_ATTEST_SIGN_COUNT,
+      atomicReplayEnabled: true,
+      legacySignCountFloor,
+    }
+    try {
+      await kv.put(recordKey(keyId), JSON.stringify(record))
+    } catch {
+      throw new AttestReplayStoreError('rollback_fence_write_failed')
+    }
+  }
+
+  const advanced = await advanceSignCount({
+    keyId,
+    previousSignCount: legacySignCountFloor,
+    signCount: ad.signCount,
+  })
+  if (advanced === false) throw new AttestError('REPLAY', 'signCount not monotonic')
+  if (advanced !== true) throw new AttestReplayStoreError('invalid_counter_decision')
+
   return { ok: true, deviceId: keyId }
 }

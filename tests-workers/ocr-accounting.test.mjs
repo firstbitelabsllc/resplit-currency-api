@@ -27,6 +27,9 @@ function reservation(overrides = {}) {
 
 async function snapshot(stub) {
   return runInDurableObject(stub, (_instance, state) => ({
+    attestCounters: state.storage.sql.exec(
+      'SELECT key_token, sign_count FROM app_attest_counters ORDER BY key_token'
+    ).toArray(),
     global: state.storage.sql.exec(
       'SELECT day, azure_units, anthropic_units, azure_cap, anthropic_cap FROM ocr_global_daily ORDER BY day'
     ).toArray(),
@@ -43,6 +46,63 @@ async function snapshot(stub) {
 }
 
 describe('OcrAccounting SQLite Durable Object', () => {
+  it('admits exactly one of 64 concurrent assertions with the same signCount', async () => {
+    const stub = accountingStub('attest-concurrency')
+    const request = {
+      keyToken: 'b'.repeat(64),
+      previousSignCount: 0,
+      signCount: 1,
+    }
+
+    const decisions = await Promise.all(
+      Array.from({ length: 64 }, () => stub.advanceAppAttestSignCount(request))
+    )
+
+    expect(decisions.filter((decision) => decision.ok)).toHaveLength(1)
+    expect(decisions.filter((decision) => decision.error === 'REPLAY')).toHaveLength(63)
+    expect((await snapshot(stub)).attestCounters).toEqual([{
+      key_token: request.keyToken,
+      sign_count: 1,
+    }])
+  })
+
+  it('uses the legacy KV signCount as a migration and rollback floor', async () => {
+    const stub = accountingStub('attest-kv-floor')
+    const keyToken = 'c'.repeat(64)
+
+    expect(await stub.advanceAppAttestSignCount({
+      keyToken,
+      previousSignCount: 41,
+      signCount: 42,
+    })).toEqual({ ok: true, signCount: 42 })
+    expect(await stub.advanceAppAttestSignCount({
+      keyToken,
+      previousSignCount: 99,
+      signCount: 43,
+    })).toEqual({ ok: false, error: 'REPLAY', signCount: 99 })
+    expect(await stub.advanceAppAttestSignCount({
+      keyToken,
+      previousSignCount: 42,
+      signCount: 100,
+    })).toEqual({ ok: true, signCount: 100 })
+    expect((await snapshot(stub)).attestCounters[0].sign_count).toBe(100)
+  })
+
+  it('rejects malformed App Attest counter advances without storing identity state', async () => {
+    const stub = accountingStub('attest-invalid')
+    for (const request of [
+      { keyToken: 'raw-key-id', previousSignCount: 0, signCount: 1 },
+      { keyToken: 'd'.repeat(64), previousSignCount: -1, signCount: 1 },
+      { keyToken: 'd'.repeat(64), previousSignCount: 0, signCount: 1.5 },
+    ]) {
+      expect(await stub.advanceAppAttestSignCount(request)).toEqual({
+        ok: false,
+        error: 'INVALID_REQUEST',
+      })
+    }
+    expect((await snapshot(stub)).attestCounters).toEqual([])
+  })
+
   it('reserves exact units atomically and never overshoots a daily cap', async () => {
     const stub = accountingStub('atomic-cap')
     const caps = {
@@ -336,7 +396,13 @@ describe('OcrAccounting SQLite Durable Object', () => {
         azure: { allowed: false, reason: 'invalid_request' },
         anthropic: { allowed: false, reason: 'invalid_request' },
       })
-      expect(await snapshot(stub)).toEqual({ global: [], subjects: [], reservations: [], finalizations: [] })
+      expect(await snapshot(stub)).toEqual({
+        attestCounters: [],
+        global: [],
+        subjects: [],
+        reservations: [],
+        finalizations: [],
+      })
     }
   })
 })
