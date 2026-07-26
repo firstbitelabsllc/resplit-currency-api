@@ -1,5 +1,35 @@
 # Resplit Nurse Log
 
+## 2026-07-26 — provider-flexible OCR analyze v2 contract
+
+- `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
+  `codex/analyze-v2-flexible-contract-20260726` from
+  `origin/main@e0495656`; no runtime provider selection, deploy, secret,
+  workflow, or production state changed.
+- `/ocr/analyze` remains `postOcrAnalyze` with response `v: 2` and the same
+  required top-level envelope. `AnalyzeEngine` is now one provider-neutral
+  object instead of a closed Azure/Anthropic union: `id`, `kind`, `provider`,
+  and `model` are opaque strings, additive engine properties are allowed, and
+  `engines` accepts one-or-more entries. This lets generated Android clients
+  decode a future provider/model swap, added engine, or omitted disabled LLM
+  without an endpoint or envelope-version change.
+- Current wire behavior is unchanged: the Worker still emits its existing
+  Azure and LLM engine records, including the existing disabled-LLM diagnostic.
+  A real handler request to `/ocr/analyze?v=2` retained the documented v2
+  envelope.
+- Mutation coverage rejects a return to a closed union, a fixed provider,
+  closed additive properties, or a two-engine minimum. A synthetic one-engine
+  future-provider payload with extra fields is accepted by the contract.
+- Fresh proof: focused OpenAPI/runtime tests `22/22`; canonical `npm run check`
+  passed strict validation, Node `623/623`, and Worker `16/16`;
+  `npm run smoke:deploy` passed for `2026-07-26` with 30 history points; and
+  `git diff --check` is clean. Wrangler inputs did not change.
+- Exact next: pathspec commit, rebase over current `origin/main`, push
+  non-forced to main, and verify remote ancestry. Android can generate against
+  the landed contract; provider rollout remains a separate runtime decision.
+
+<promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
+
 ## 2026-07-26 — patched Go gRPC runtime security floor
 
 - `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch

@@ -15,6 +15,60 @@ const multiEngineRoutes = [...routerSource.matchAll(
   /method === 'POST' && url\.pathname === '(\/ocr\/(?:dual-scan|analyze))'/g,
 )].map((match) => match[1]).sort()
 
+function assertGeneratedClientSafeAnalyzeContract(candidate) {
+  const operation = candidate.paths?.['/ocr/analyze']?.post
+  assert.ok(operation, 'the stable POST /ocr/analyze operation must remain')
+  assert.equal(operation.operationId, 'postOcrAnalyze')
+  assert.equal(
+    operation.responses['200'].content['application/json'].schema.$ref,
+    '#/components/schemas/AnalyzeEnvelope',
+  )
+
+  const envelope = candidate.components.schemas.AnalyzeEnvelope
+  assert.equal(envelope.properties.v.const, 2)
+  assert.equal(envelope.properties.engines.type, 'array')
+  assert.equal(envelope.properties.engines.minItems, 1)
+  assert.equal(envelope.properties.engines.items.$ref, '#/components/schemas/AnalyzeEngine')
+
+  const engine = candidate.components.schemas.AnalyzeEngine
+  assert.equal(engine.type, 'object')
+  assert.equal(engine.additionalProperties, true)
+  assert.equal('oneOf' in engine, false)
+  assert.deepEqual(engine.required, ['id', 'kind', 'provider', 'model', 'status', 'latencyMs'])
+  for (const field of ['id', 'kind', 'provider', 'model']) {
+    assert.equal(engine.properties[field].type, 'string')
+    assert.equal('const' in engine.properties[field], false)
+    assert.equal('enum' in engine.properties[field], false)
+  }
+}
+
+function assertPayloadAcceptedByAnalyzeContract(payload, candidate = openapi) {
+  const envelope = candidate.components.schemas.AnalyzeEnvelope
+  assert.equal(payload.v, envelope.properties.v.const)
+  assert.ok(Array.isArray(payload.engines))
+  assert.ok(payload.engines.length >= envelope.properties.engines.minItems)
+
+  const engineSchema = candidate.components.schemas.AnalyzeEngine
+  for (const engine of payload.engines) {
+    for (const field of engineSchema.required) {
+      assert.ok(field in engine, `engine must include ${field}`)
+    }
+    for (const field of ['id', 'kind', 'provider', 'model']) {
+      assert.equal(typeof engine[field], 'string')
+      const property = engineSchema.properties[field]
+      if (property.const !== undefined) assert.equal(engine[field], property.const)
+      if (property.enum) assert.ok(property.enum.includes(engine[field]))
+    }
+    if (engineSchema.additionalProperties === false) {
+      assert.deepEqual(
+        Object.keys(engine).filter((field) => !(field in engineSchema.properties)),
+        [],
+        'additive engine properties must remain decodable',
+      )
+    }
+  }
+}
+
 test('OpenAPI documents every live multi-engine OCR route with its real method identity', () => {
   assert.deepEqual(multiEngineRoutes, ['/ocr/analyze', '/ocr/dual-scan'])
   assert.deepEqual(
@@ -46,22 +100,35 @@ test('the dual-scan contract pins the shipped v1 provider legs and partial-resul
   assert.equal(schema.properties.llm.$ref, '#/components/schemas/LlmScanLeg')
 })
 
-test('the analyze contract pins the shipped v2 N-engine envelope instead of the legacy dual shape', () => {
-  const operation = openapi.paths['/ocr/analyze'].post
-  assert.equal(operation.responses['200'].content['application/json'].schema.$ref, '#/components/schemas/AnalyzeEnvelope')
-
+test('the analyze contract keeps the stable v2 envelope and a generated-client-safe engine shape', () => {
+  assertGeneratedClientSafeAnalyzeContract(openapi)
   const schema = openapi.components.schemas.AnalyzeEnvelope
   assert.deepEqual(schema.required, [
     'v', 'scanId', 'status', 'llmReasoning', 'aiModels', 'engines', 'consensus',
   ])
-  assert.equal(schema.properties.v.const, 2)
-  assert.equal(schema.properties.engines.type, 'array')
-  assert.equal(schema.properties.engines.items.$ref, '#/components/schemas/AnalyzeEngine')
   assert.equal('mode' in schema.properties, false)
-  assert.deepEqual(
-    openapi.components.schemas.AnalyzeLlmEngine.properties.diagnostic.enum,
-    ['operator_disabled'],
-  )
+  assert.equal(openapi.components.schemas.AnalyzeEngine.properties.diagnostic.type, 'string')
+})
+
+test('the analyze contract accepts one opaque future engine with additive fields', () => {
+  assertPayloadAcceptedByAnalyzeContract({
+    v: 2,
+    scanId: '00000000-0000-4000-8000-000000000001',
+    status: 'succeeded',
+    llmReasoning: false,
+    aiModels: ['expense-v3'],
+    engines: [{
+      id: 'expense-reader',
+      kind: 'document-ai',
+      provider: 'future-provider',
+      model: 'expense-v3',
+      status: 'succeeded',
+      latencyMs: 42,
+      confidence: 0.99,
+      providerPayload: { version: 3 },
+    }],
+    consensus: null,
+  })
 })
 
 test('nested receipt, ingress, error, and legacy raw-envelope schemas match emitted Worker truth', () => {
@@ -129,6 +196,39 @@ test('wrong route, method, version, or provider-leg identity mutations fail the 
   for (const mutate of mutations) assert.equal(valid(mutate()), false)
 })
 
+test('closed unions, fixed provider identity, or a two-engine minimum fail the flexible v2 contract', () => {
+  const mutations = [
+    () => {
+      const copy = structuredClone(openapi)
+      copy.components.schemas.AnalyzeEnvelope.properties.engines.minItems = 2
+      return copy
+    },
+    () => {
+      const copy = structuredClone(openapi)
+      copy.components.schemas.AnalyzeEngine.additionalProperties = false
+      return copy
+    },
+    () => {
+      const copy = structuredClone(openapi)
+      copy.components.schemas.AnalyzeEngine.properties.provider.const = 'azure-di'
+      return copy
+    },
+    () => {
+      const copy = structuredClone(openapi)
+      copy.components.schemas.AnalyzeEngine.oneOf = [
+        { $ref: '#/components/schemas/AnalyzeAzureEngine' },
+        { $ref: '#/components/schemas/AnalyzeLlmEngine' },
+      ]
+      return copy
+    },
+  ]
+
+  assert.doesNotThrow(() => assertGeneratedClientSafeAnalyzeContract(openapi))
+  for (const mutate of mutations) {
+    assert.throws(() => assertGeneratedClientSafeAnalyzeContract(mutate()))
+  }
+})
+
 test('the real Worker handler emits both documented top-level envelope shapes', async () => {
   const store = new Map()
   const env = {
@@ -185,7 +285,7 @@ test('the real Worker handler emits both documented top-level envelope shapes', 
   try {
     for (const [route, schemaName] of [
       ['/ocr/dual-scan', 'DualScanEnvelope'],
-      ['/ocr/analyze', 'AnalyzeEnvelope'],
+      ['/ocr/analyze?v=2', 'AnalyzeEnvelope'],
     ]) {
       const response = await handleOcr(new Request(`https://fx.resplit.app${route}`, {
         method: 'POST',
@@ -194,12 +294,16 @@ test('the real Worker handler emits both documented top-level envelope shapes', 
       }), env)
       assert.equal(response.status, 200, route)
       const body = await response.json()
+      const path = new URL(`https://fx.resplit.app${route}`).pathname
       assert.deepEqual(
         Object.keys(body).sort(),
         [...openapi.components.schemas[schemaName].required].sort(),
-        `${route} top-level keys must match its documented required envelope`,
+        `${path} top-level keys must match its documented required envelope`,
       )
       assert.equal(body.status, 'succeeded')
+      if (schemaName === 'AnalyzeEnvelope') {
+        assertPayloadAcceptedByAnalyzeContract(body)
+      }
     }
   } finally {
     globalThis.fetch = realFetch

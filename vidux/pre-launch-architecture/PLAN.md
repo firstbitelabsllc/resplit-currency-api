@@ -10,6 +10,16 @@
 
 ## Progress
 
+- 2026-07-26: Made the stable `/ocr/analyze` v2 OpenAPI envelope safe for
+  generated Android clients across backend provider changes. `AnalyzeEngine`
+  is now a provider-neutral open object with opaque identity strings, and
+  `engines` accepts one-or-more entries so a disabled LLM can be omitted
+  without changing the endpoint or `v: 2`. Current Worker output remains the
+  same two-engine Azure/Anthropic response. Mutation tests reject closed unions,
+  fixed providers, closed additive properties, and a two-engine minimum; a
+  one-engine future-provider fixture is accepted. Proof: focused `22/22`,
+  canonical Node `623/623`, Worker `16/16`, and deployment smoke green for
+  `2026-07-26`. Runtime provider selection and production were untouched.
 - 2026-07-26: Raised the Go runtime security floor to
   `google.golang.org/grpc v1.82.1`, closing Dependabot alert `#28` /
   `GHSA-hrxh-6v49-42gf`. `go mod tidy` changed only the two matching GCP

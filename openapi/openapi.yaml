@@ -398,10 +398,14 @@ paths:
       operationId: postOcrAnalyze
       summary: Scan one receipt into the versioned N-engine analysis envelope.
       description: |
-        Uses the same authentication, cache, accounting, Azure, and Anthropic
-        execution core as `/ocr/dual-scan`, but returns the v2 extensible
-        `engines[]` shape. `aiModels` contains only engines that succeeded and
-        `llmReasoning` is true only when the Anthropic leg succeeded.
+        Uses the same authentication, cache, and accounting pipeline as
+        `/ocr/dual-scan`, but returns the stable v2 extensible `engines[]`
+        shape. The current deployment returns Azure and Anthropic engine
+        records. Clients must treat engine ids, kinds, providers, models, and
+        additive engine properties as opaque: deployments may swap providers,
+        add an engine, or omit a disabled engine without changing this
+        endpoint or envelope version. `aiModels` contains only engines that
+        succeeded.
       parameters:
         - $ref: "#/components/parameters/OcrAttestKeyId"
         - $ref: "#/components/parameters/OcrAttestAssertion"
@@ -411,7 +415,7 @@ paths:
         $ref: "#/components/requestBodies/OcrImage"
       responses:
         "200":
-          description: Both engines succeeded, or one engine succeeded truthfully as a partial result.
+          description: One or more engines produced a usable result.
           headers:
             X-Request-Id:
               $ref: "#/components/headers/XRequestId"
@@ -432,7 +436,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AnalyzeEnvelope"
         "502":
-          description: Neither engine produced a usable result.
+          description: No engine produced a usable result.
           content:
             application/json:
               schema:
@@ -967,47 +971,32 @@ components:
           type: array
           items: { type: string }
 
-    AnalyzeAzureEngine:
+    AnalyzeEngine:
       type: object
-      additionalProperties: false
-      required: [id, kind, provider, model, status, latencyMs, raw]
+      additionalProperties: true
+      description: |
+        Provider-neutral engine record. Identity strings are intentionally
+        opaque and additional properties are allowed so generated clients keep
+        decoding when an engine or provider is added or replaced.
+      required: [id, kind, provider, model, status, latencyMs]
       properties:
-        id: { type: string, const: azure }
-        kind: { type: string, const: ocr }
-        provider: { type: string, const: azure-di }
-        model: { type: string, const: prebuilt-receipt }
-        status:
-          $ref: "#/components/schemas/ProviderLegStatus"
-        latencyMs: { type: [number, "null"], minimum: 0 }
-        raw:
-          type: [object, "null"]
-          additionalProperties: true
-
-    AnalyzeLlmEngine:
-      type: object
-      additionalProperties: false
-      required: [id, kind, provider, model, status, latencyMs, scanned]
-      properties:
-        id: { type: string, const: llm }
-        kind: { type: string, const: vision-llm }
-        provider: { type: string, const: anthropic }
+        id: { type: string }
+        kind: { type: string }
+        provider: { type: string }
         model: { type: string }
         status:
           $ref: "#/components/schemas/ProviderLegStatus"
+        latencyMs: { type: [number, "null"], minimum: 0 }
         diagnostic:
           type: string
-          enum: [operator_disabled]
-          description: Present only when an operator intentionally disabled the paid LLM leg before it started.
-        latencyMs: { type: [number, "null"], minimum: 0 }
+          description: Optional provider-neutral reason for a non-success state.
+        raw:
+          type: [object, "null"]
+          additionalProperties: true
         scanned:
           oneOf:
             - $ref: "#/components/schemas/ScannedReceipt"
             - type: "null"
-
-    AnalyzeEngine:
-      oneOf:
-        - $ref: "#/components/schemas/AnalyzeAzureEngine"
-        - $ref: "#/components/schemas/AnalyzeLlmEngine"
 
     AnalyzeEnvelope:
       type: object
@@ -1024,7 +1013,7 @@ components:
           items: { type: string }
         engines:
           type: array
-          minItems: 2
+          minItems: 1
           items:
             $ref: "#/components/schemas/AnalyzeEngine"
         consensus:
