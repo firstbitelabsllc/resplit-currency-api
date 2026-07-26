@@ -19,6 +19,18 @@
   `16/16`, and deployment smoke green for `2026-07-26`. Wrangler inputs,
   production, secrets, and workflows were untouched. The separate Sharp
   development-tooling alert remains a follow-up.
+- 2026-07-26: Source-ready Cloudflare Worker test-tooling security refresh on
+  `codex/dev-tooling-security-20260726`. Exact pins move
+  `@cloudflare/vitest-pool-workers` to `0.18.8` and Wrangler to `4.114.0`;
+  their shared Miniflare now resolves Sharp `0.35.2`. The dependency-floor
+  contract pins the matched Cloudflare pair and fails on either the Miniflare
+  Sharp request or resolved Sharp package dropping below `0.35.2`. Full audit
+  exposure falls from six advisories (five high, one moderate) on the prior
+  lockfile to two unrelated dev advisories (one PostCSS high, one YAML
+  moderate); production audit remains zero. Proof: canonical `npm run check`
+  passed Node `621/621` and Worker Durable Object `16/16`, deploy smoke passed,
+  and Wrangler root plus named-production dry-runs bundled successfully. No
+  deploy, secret access/change, workflow dispatch, or production mutation.
 - 2026-07-26: Source-ready atomic App Attest assertion replay protection on
   `codex/ocr-atomic-security-20260726`. The already-deployed
   `OCR_ACCOUNTING` Durable Object now serializes `signCount` advancement before

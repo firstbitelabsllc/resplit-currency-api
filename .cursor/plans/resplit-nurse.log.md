@@ -24,6 +24,35 @@
 
 <promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
 
+## 2026-07-26 — Cloudflare Worker test-tooling security floor
+
+- `GO/source-ready` on branch `codex/dev-tooling-security-20260726`; no deploy,
+  secret access/change, workflow dispatch, or production mutation occurred.
+- Exact tooling pair: `@cloudflare/vitest-pool-workers 0.18.8` and
+  `wrangler 4.114.0`. Both resolve shared `miniflare 4.20260722.0`, which
+  resolves `sharp 0.35.2`.
+- Regression fence: the dependency security-floor contract exact-pins both
+  Cloudflare tools and rejects either the Miniflare Sharp request or resolved
+  Sharp package dropping below `0.35.2`.
+- Fresh proof:
+  - focused dependency-floor contract `2/2`;
+  - canonical `npm run check`: strict release validation, Node `621/621`,
+    Worker Durable Object `16/16`;
+  - `npm run smoke:deploy`: `OK (date=2026-07-26, historyPoints=30)`;
+  - Wrangler root and named-production dry-runs bundled with the expected
+    staging/production bindings;
+  - production audit: zero; full audit improved from six advisories (five high,
+    one moderate) to two unrelated dev advisories (PostCSS high, YAML moderate);
+  - `git diff --check`: clean.
+- Standalone `npm test` in the fresh worktree was not a valid setup sequence:
+  validation fixtures require the generated `package/` tree. The canonical
+  `npm run check` generated it first and then passed the complete Node and
+  Worker suites.
+- Exact next: pathspec commit, rebase over current `origin/main`, rerun the
+  collision-sensitive proof, then direct-push without force.
+
+<promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
+
 ## 2026-07-26 — atomic App Attest assertion replay admission
 
 - `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
