@@ -242,18 +242,46 @@ func TestScanSpendGateDuplicateDoesNotRebill(t *testing.T) {
 	}
 	srv := newServerWithGate(attest.NewMemStore(), provider, slog.Default(), nil, gate)
 
-	for i, wantCode := range []int{http.StatusOK, http.StatusTooManyRequests} {
+	// CONTRACT CHANGED 2026-07-27 (P1 SCAN RECOVERY). The second request used to
+	// be answered 429 rate_limited. That is what made a client retry after a
+	// transport blip unrecoverable: the hash reservation is taken BEFORE the
+	// provider runs and is never released, so every retry of the same image was
+	// rejected as a duplicate (prod event 82d20dc195dd466a80ba6c552434d486).
+	//
+	// The invariant this test exists to protect -- "does not rebill" -- is
+	// UNCHANGED and still asserted below: exactly one provider execution. What
+	// changed is the response to the duplicate: replay the completed answer
+	// instead of rejecting it, so the retry yields a usable receipt.
+	var bodies []string
+	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("same-image-bytes"))
 		req.RemoteAddr = "203.0.113.10:1234"
 		req.Header.Set(headerSoftFail, "true")
 		srv.routes().ServeHTTP(rec, req)
-		if rec.Code != wantCode {
-			t.Fatalf("request %d status = %d, want %d (body: %s)", i+1, rec.Code, wantCode, rec.Body.String())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d status = %d, want %d (body: %s)", i+1, rec.Code, http.StatusOK, rec.Body.String())
 		}
+		bodies = append(bodies, rec.Body.String())
 	}
 	if provider.calls != 1 {
-		t.Fatalf("provider calls = %d, want 1", provider.calls)
+		t.Fatalf("provider calls = %d, want 1 -- the duplicate must never reach the provider", provider.calls)
+	}
+
+	// Same OCR payload both times. scanId is deliberately per-request, so compare
+	// the provider result rather than the whole envelope.
+	var first, second scanEnvelope
+	if err := json.Unmarshal([]byte(bodies[0]), &first); err != nil {
+		t.Fatalf("decode first envelope: %v", err)
+	}
+	if err := json.Unmarshal([]byte(bodies[1]), &second); err != nil {
+		t.Fatalf("decode replayed envelope: %v", err)
+	}
+	if second.Status != "ok" {
+		t.Fatalf("replayed status = %q, want ok", second.Status)
+	}
+	if string(first.Raw) != string(second.Raw) {
+		t.Fatalf("replayed raw = %s, want the original %s", second.Raw, first.Raw)
 	}
 }
 

@@ -46,11 +46,15 @@ import (
 )
 
 const (
-	defaultPort              = "8080"
-	maxScanBytes             = 12 << 20 // 12 MiB cap on uploaded image bytes
-	maxCBORBodyBytes         = 64 << 10 // 64 KiB cap on attest/assertion CBOR payloads
-	defaultScanWindow        = 24 * time.Hour
-	defaultIdempotencyTTL    = 24 * time.Hour
+	defaultPort           = "8080"
+	maxScanBytes          = 12 << 20 // 12 MiB cap on uploaded image bytes
+	maxCBORBodyBytes      = 64 << 10 // 64 KiB cap on attest/assertion CBOR payloads
+	defaultScanWindow     = 24 * time.Hour
+	defaultIdempotencyTTL = 24 * time.Hour
+	// Recovery window for a transport blip, not a durable cache. Long enough to
+	// cover a client's bounded retry of the same image, short enough that a
+	// genuine re-scan minutes later still reaches the provider.
+	defaultScanCoalesceTTL   = 90 * time.Second
 	defaultAttestedScanLimit = int64(100)
 	defaultSoftFailScanLimit = int64(10)
 
@@ -207,6 +211,7 @@ type server struct {
 	logger      *slog.Logger
 	scanCounter metric.Int64Counter
 	spendGate   *ocrSpendGate
+	coalescer   *scanCoalescer
 }
 
 func newServer(store attest.Store, provider OCRProvider, logger *slog.Logger, scanCounter metric.Int64Counter) *server {
@@ -222,7 +227,11 @@ func newServerWithGate(store attest.Store, provider OCRProvider, logger *slog.Lo
 	if spendGate == nil {
 		spendGate = newOCRSpendGate(store)
 	}
-	return &server{store: store, provider: provider, logger: logger, scanCounter: scanCounter, spendGate: spendGate}
+	return &server{
+		store: store, provider: provider, logger: logger, scanCounter: scanCounter,
+		spendGate: spendGate,
+		coalescer: newScanCoalescer(envDuration("OCR_SCAN_COALESCE_TTL", defaultScanCoalesceTTL), time.Now),
+	}
 }
 
 func (s *server) routes() http.Handler {
@@ -336,6 +345,11 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// sha256 of the exact bytes: the provider result is a pure function of the
+	// image, so identical bytes may share one execution regardless of which
+	// device asked. Spend accounting stays per-identity in the gate above.
+	imageKey := scanImageKey(image)
+
 	identity := scanGateIdentity(r, softFail, keyID)
 	allowed, reason, count, err := s.spendGate.Allow(r.Context(), identity, image, softFail)
 	if err != nil {
@@ -347,18 +361,47 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
-		s.recordScan(r.Context(), "rate_limited", attestResult)
-		log.Warn("[OCR_MONITORING] scan blocked",
-			slog.String("signal", "scan"), slog.String("status", "rate_limited"),
-			slog.String("attest", attestResult), slog.String("reason", reason),
-			slog.Int64("count", count), slog.String("scan_id", scanID))
-		writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
-			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
-		})
-		return
+		// A same-image repeat is a RECOVERY attempt, not abuse. The reservation
+		// that produces `duplicate_scan` is taken before the provider runs and is
+		// never released, so a client whose transport died mid-upload used to get
+		// 429 on every retry (prod event 82d20dc195dd466a80ba6c552434d486). Serve
+		// the coalesced/cached answer instead — still exactly one provider
+		// execution, but the retry now completes. Genuine rate caps
+		// (`rate_cap`, `budget_kill_switch`, `rate_error`) still block.
+		if reason == "duplicate_scan" {
+			if cached, ok := s.coalescer.Lookup(imageKey); ok {
+				s.recordScan(r.Context(), "ok", attestResult)
+				log.Info("[OCR_MONITORING] scan",
+					slog.String("signal", "scan"), slog.String("status", "ok"),
+					slog.String("attest", attestResult), slog.String("provider", providerName),
+					slog.String("scan_id", scanID), slog.Bool("coalesced", true),
+					slog.String("client_version", r.Header.Get("X-Resplit-Client-Version")))
+				writeEnvelope(w, http.StatusOK, scanEnvelope{
+					V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "ok",
+					Raw: json.RawMessage(cached),
+				})
+				return
+			}
+			// No answer to replay: the first attempt never completed (body never
+			// fully arrived, or it failed). Fall through to the provider via the
+			// coalescer, which still guarantees one execution per image.
+		} else {
+			s.recordScan(r.Context(), "rate_limited", attestResult)
+			log.Warn("[OCR_MONITORING] scan blocked",
+				slog.String("signal", "scan"), slog.String("status", "rate_limited"),
+				slog.String("attest", attestResult), slog.String("reason", reason),
+				slog.Int64("count", count), slog.String("scan_id", scanID))
+			writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
+				V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
+			})
+			return
+		}
 	}
 
-	result, err := s.provider.Scan(r.Context(), image)
+	result, executed, err := s.coalescer.Do(r.Context(), imageKey, func() ([]byte, error) {
+		return s.provider.Scan(r.Context(), image)
+	})
+	_ = executed
 	if err != nil {
 		status := scanErrorStatus(err)
 		code := http.StatusBadGateway
