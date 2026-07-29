@@ -1,5 +1,15 @@
 # Resplit Nurse Log
 
+## 2026-07-29 — FX-01 nurse closeout: analyze-v2 flexible contract is LIVE
+
+- Fleet-crust FX-01: the 2026-07-26 `DEPLOY/UNCLAIMED` stamp for
+  `codex/analyze-v2-flexible-contract-20260726` is stale.
+- `79788e76` (`fix: make analyze v2 engines provider-flexible`) is an ancestor of
+  live Worker `b115e24f` and of current `origin/main`.
+- No deploy performed in this closeout — source already shipped; nurse text only.
+
+<promise>COMPLETE: analyze-v2 flexible contract on live Worker b115e24f (ancestor 79788e76)</promise>
+
 ## 2026-07-29 — fail closed before paid OCR providers
 
 - `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
