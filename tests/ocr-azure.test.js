@@ -182,6 +182,7 @@ test('Azure timeout preserves the legacy v1 and v2 provider_error/502 route cont
     ...BASE_ENV,
     ATTEST_KV: makeKV(),
     AZURE_OCR_FETCH_TIMEOUT_MS: '1',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
     SENTRY_ENVIRONMENT: 'test',
   }
 
@@ -207,6 +208,7 @@ test('Azure timeout preserves the legacy v1 and v2 provider_error/502 route cont
 test('dark accounting preserves the legacy settled fallback for an unexpected Azure exception', { concurrency: false }, async () => {
   const env = {
     ATTEST_KV: makeKV(),
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
     SENTRY_ENVIRONMENT: 'test',
   }
   Object.defineProperty(env, 'AZURE_OCR_ENDPOINT', {

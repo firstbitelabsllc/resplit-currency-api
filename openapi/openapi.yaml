@@ -247,23 +247,24 @@ paths:
         caps apply; a budget kill-switch can hard-stop scanning. Provider keys are
         installed as write-only Worker secrets and never leave the service.
 
-        Soft-fail dev path (`X-Resplit-Attest-Soft-Fail: true`) is IP-capped and
-        does not hard-block, for development clients without a registered key.
+        The production configuration requires App Attest. A source-controlled
+        development compatibility flag may explicitly enable the IP-capped
+        `X-Resplit-Attest-Soft-Fail: true` path.
       parameters:
         - name: X-Resplit-Attest-Key-Id
           in: header
           required: false
-          description: App Attest keyId (the registered device key). Required unless soft-fail.
+          description: App Attest keyId (the registered device key). Required in production.
           schema: { type: string }
         - name: X-Resplit-Attest-Assertion
           in: header
           required: false
-          description: Base64 CBOR App Attest assertion over the image body. Required unless soft-fail.
+          description: Base64 CBOR App Attest assertion over the image body. Required in production.
           schema: { type: string }
         - name: X-Resplit-Attest-Soft-Fail
           in: header
           required: false
-          description: When "true", use the IP-capped dev path instead of hard attest.
+          description: Requests the IP-capped development path; production rejects it unless the server explicitly enables compatibility.
           schema:
             type: string
             enum: ["true", "false"]

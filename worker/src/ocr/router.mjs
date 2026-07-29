@@ -480,6 +480,12 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
 // still debited only on a miss. An AttestError is returned as the installed 401.
 async function authenticateScan({ request, env, imageBytes, softFail, keyId, assertionB64 }) {
   if (softFail || !keyId || !assertionB64) {
+    // Compatibility is an explicit, source-controlled exception. Production
+    // keeps it disabled so a caller cannot turn missing or invalid App Attest
+    // material into an IP-capped principal and reach either paid provider.
+    if (env.LLM_SCAN_ALLOW_SOFT_FAIL !== 'true') {
+      throw new AttestError('REQUIRED', 'valid App Attest assertion required')
+    }
     const principal = request.headers.get('cf-connecting-ip') || 'unknown'
     const deviceKey = `ip:${principal}`
     const azureSubjectCap = resolveDailyCap(env.SOFT_FAIL_DAILY_CAP, DEFAULT_SOFT_FAIL_DAILY_CAP)
@@ -1034,8 +1040,9 @@ function readLlmGate(env, keyId, attest) {
     return { status: 'provider_unavailable', httpStatus: 503, cacheKey: 'provider_unavailable' }
   }
 
-  // DEV UNLOCK for soft-fail (unattested) devices, bounded by the SOFT_FAIL_DAILY_CAP
-  // per-IP counter and the global LLM daily cap.
+  // DEV UNLOCK for soft-fail (unattested) devices. authenticateScan() already
+  // requires the same explicit flag before Azure, cache, or accounting work, so
+  // production's false value fails closed across both paid providers.
   //
   // The comment that used to sit here claimed the iOS client ships
   // SoftFailReceiptScannerAttestationProvider "by default", making a keyId allowlist

@@ -20,6 +20,8 @@ function makeEnv(extra = {}) {
     AZURE_OCR_ENDPOINT: 'https://test.cognitiveservices.azure.com',
     AZURE_OCR_KEY: 'test-key',
     SENTRY_ENVIRONMENT: 'test',
+    // Most router fixtures exercise the explicitly enabled legacy dev path.
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
     ...extra,
   }
 }

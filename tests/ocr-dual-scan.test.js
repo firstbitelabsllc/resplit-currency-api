@@ -163,6 +163,8 @@ function makeEnv(extra = {}) {
     LLM_SCAN_MODEL: 'claude-sonnet-5',
     LLM_SCAN_ALLOWED_KEY_IDS: '',
     LLM_SCAN_DAILY_CAP: '50',
+    // Most dual-scan fixtures exercise the explicitly enabled legacy dev path.
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
     ...extra,
   }
 }
@@ -473,18 +475,22 @@ test('POST /ocr/dual-scan keeps both successful provider results when the cache 
   assert.equal(successEvents[0].scanId, body.scanId)
 })
 
-test('POST /ocr/dual-scan soft-fail with an allowlisted keyId is still not_allowed without the unlock flag', async () => {
+test('POST /ocr/dual-scan soft-fail with an allowlisted keyId is rejected without the unlock flag', async () => {
   // AUTH-BYPASS REGRESSION: kid-1 IS allowlisted, but the request is soft-fail
   // (unverified). The raw x-resplit-attest-key-id header must NOT unlock the paid leg —
   // only an attested device or the explicit LLM_SCAN_ALLOW_SOFT_FAIL flag may.
   stubProviders()
-  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOWED_KEY_IDS: 'kid-1' })
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOWED_KEY_IDS: 'kid-1',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'false',
+  })
   const res = await handleOcr(dualScanRequest(new Uint8Array([1, 1, 1]), { 'x-resplit-attest-key-id': 'kid-1' }), env)
-  assert.equal(res.status, 200)
+  assert.equal(res.status, 401)
   const body = await res.json()
-  assert.equal(body.status, 'partial')
-  assert.equal(body.azure.status, 'succeeded')
-  assert.equal(body.llm.status, 'not_allowed')
+  assert.equal(body.error, 'ATTEST_REJECTED')
+  assert.equal(body.message, 'REQUIRED')
+  assert.equal(calls.azureSubmit, 0)
   assert.equal(calls.anthropic, 0)
 })
 
@@ -521,28 +527,34 @@ test('POST /ocr/dual-scan admits an attested device when the allowlist is EMPTY 
   assert.equal(calls.anthropic, 1)
 })
 
-test('POST /ocr/dual-scan still denies an UNattested device when the allowlist is empty', async () => {
+test('POST /ocr/dual-scan rejects an UNattested device when the allowlist is empty', async () => {
   // The empty-allowlist admission must not become a blanket unlock: it is gated on
   // attest === 'pass'. A soft-fail device with the dev unlock OFF stays denied, so the
   // fix is strictly tighter than the soft-fail branch, never looser.
   stubProviders()
   const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOWED_KEY_IDS: '', LLM_SCAN_ALLOW_SOFT_FAIL: 'false' })
   const res = await handleOcr(dualScanRequest(new Uint8Array([7, 7, 7]), { 'x-resplit-attest-key-id': 'kid-spoofed' }), env)
-  assert.equal(res.status, 200)
+  assert.equal(res.status, 401)
   const body = await res.json()
-  assert.equal(body.llm.status, 'not_allowed')
+  assert.equal(body.error, 'ATTEST_REJECTED')
+  assert.equal(body.message, 'REQUIRED')
+  assert.equal(calls.azureSubmit, 0)
   assert.equal(calls.anthropic, 0)
 })
 
-test('POST /ocr/dual-scan allowlist miss returns Azure success plus LLM not_allowed', async () => {
+test('POST /ocr/dual-scan unattested allowlist miss is rejected before both providers', async () => {
   stubProviders()
-  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOWED_KEY_IDS: 'kid-allowed' })
+  const env = makeEnv({
+    ANTHROPIC_API_KEY: 'anthropic-key',
+    LLM_SCAN_ALLOWED_KEY_IDS: 'kid-allowed',
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'false',
+  })
   const res = await handleOcr(dualScanRequest(new Uint8Array([3, 3, 3]), { 'x-resplit-attest-key-id': 'kid-miss' }), env)
-  assert.equal(res.status, 200)
+  assert.equal(res.status, 401)
   const body = await res.json()
-  assert.equal(body.status, 'partial')
-  assert.equal(body.azure.status, 'succeeded')
-  assert.equal(body.llm.status, 'not_allowed')
+  assert.equal(body.error, 'ATTEST_REJECTED')
+  assert.equal(body.message, 'REQUIRED')
+  assert.equal(calls.azureSubmit, 0)
   assert.equal(calls.anthropic, 0)
 })
 
@@ -754,14 +766,15 @@ test('POST /ocr/dual-scan does NOT cache an LLM-failed partial — retry re-runs
   assert.equal(calls.anthropic, 2, 'succeeded result should be cached and not re-hit Anthropic')
 })
 
-test('POST /ocr/dual-scan soft-fail stays not_allowed when unlock var is absent', async () => {
+test('POST /ocr/dual-scan soft-fail is rejected when unlock var is false', async () => {
   stubProviders()
-  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key' })
+  const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'false' })
   const res = await handleOcr(dualScanRequest(new Uint8Array([8, 8, 8])), env)
-  assert.equal(res.status, 200)
+  assert.equal(res.status, 401)
   const body = await res.json()
-  assert.equal(body.status, 'partial')
-  assert.equal(body.llm.status, 'not_allowed')
+  assert.equal(body.error, 'ATTEST_REJECTED')
+  assert.equal(body.message, 'REQUIRED')
+  assert.equal(calls.azureSubmit, 0)
   assert.equal(calls.anthropic, 0)
 })
 

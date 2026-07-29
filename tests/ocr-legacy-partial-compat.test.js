@@ -307,14 +307,14 @@ test('the mapper rejects two-minor-unit drift and missing or ambiguous money fie
   )
 })
 
-test('the root and named-production config activate only the observational shadow', () => {
+test('the root and named-production config activate only the observational shadow and fail closed on App Attest', () => {
   const wranglerPath = path.join(__dirname, '..', 'wrangler.jsonc')
   const wrangler = JSON.parse(stripJsonComments(fs.readFileSync(wranglerPath, 'utf8')))
   for (const [name, vars] of [
     ['root', wrangler.vars],
     ['named production', wrangler.env.production.vars],
   ]) {
-    assert.equal(vars.LLM_SCAN_ALLOW_SOFT_FAIL, 'true', `${name} soft-fail must remain enabled`)
+    assert.equal(vars.LLM_SCAN_ALLOW_SOFT_FAIL, 'false', `${name} soft-fail must remain disabled`)
     assert.equal(vars.OCR_LEGACY_PARTIAL_COMPAT_SHADOW, 'true', `${name} shadow must be observationally active`)
   }
 })

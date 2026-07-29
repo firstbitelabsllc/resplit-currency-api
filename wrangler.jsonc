@@ -58,8 +58,9 @@
     // by the legacy deployment; activation must provision it before changing mode.
     "OCR_AZURE_GLOBAL_DAILY_CAP": "6000",
     "OCR_ANTHROPIC_GLOBAL_DAILY_CAP": "3000",
-    // pre-launch dev unlock — set false at public launch (see router readLlmGate)
-    "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
+    // Fail closed in production: missing/invalid App Attest cannot reach Azure,
+    // Anthropic, cache, or accounting. Tests may opt into the legacy dev path.
+    "LLM_SCAN_ALLOW_SOFT_FAIL": "false"
   },
   // Names only: experimental Wrangler metadata for local-dev warnings and Env
   // type generation. run.yml enforces remote continuity before publication.
@@ -146,9 +147,8 @@
         "OCR_LEGACY_PARTIAL_COMPAT_SHADOW": "true",
         "OCR_AZURE_GLOBAL_DAILY_CAP": "6000",
         "OCR_ANTHROPIC_GLOBAL_DAILY_CAP": "3000",
-        // pre-launch dev unlock — mirrored from root vars so the two postures don't
-        // diverge; set false at public launch (see router readLlmGate).
-        "LLM_SCAN_ALLOW_SOFT_FAIL": "true"
+        // Mirror the root fail-closed App Attest posture.
+        "LLM_SCAN_ALLOW_SOFT_FAIL": "false"
       },
       // Environments do not inherit this local-dev/type-generation metadata.
       "secrets": {
