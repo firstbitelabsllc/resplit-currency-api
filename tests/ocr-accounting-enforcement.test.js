@@ -139,6 +139,8 @@ function makeEnv({ accounting = makeAccountingBinding(), counterReads = 0, ...ex
     AZURE_OCR_ENDPOINT: 'https://test.cognitiveservices.azure.com',
     AZURE_OCR_KEY: 'azure-test-key',
     SENTRY_ENVIRONMENT: 'test',
+    // These accounting fixtures intentionally exercise the legacy dev principal.
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
     SOFT_FAIL_DAILY_CAP: '100',
     OCR_ACCOUNTING_MODE: 'enforce',
     OCR_ACCOUNTING_HMAC_KEY: VALID_HMAC_KEY,

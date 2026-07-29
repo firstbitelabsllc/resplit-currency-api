@@ -10,6 +10,22 @@
 
 ## Progress
 
+- 2026-07-29: Closed the source-side App Attest bypass shared by all paid OCR
+  routes. Fresh read-only Cloudflare metadata showed production Worker version
+  `386448b8-ed76-4e05-8407-fdb7c7ae7630` still had
+  `LLM_SCAN_ALLOW_SOFT_FAIL=true` with Azure and Anthropic secrets installed,
+  while source converted missing or explicit-soft-fail requests, including
+  invalid assertion material paired with soft-fail, into an IP-capped principal
+  before provider work. The authentication
+  gate now returns `401 ATTEST_REJECTED/REQUIRED` before cache, accounting,
+  Azure, or Anthropic unless a development fixture explicitly enables legacy
+  compatibility; both root and named-production Wrangler config set it
+  `false`. Mutation coverage proves all three paid routes fail if the guard is
+  inverted. Proof: canonical Node `625/625`, Worker `16/16`, `go test ./...`,
+  deployment smoke, both Wrangler dry-runs, and a clean diff. No deploy, secret
+  mutation, paid provider request, or production mutation occurred. Remaining
+  gate: normal Worker release plus deployed-version metadata readback confirming
+  `LLM_SCAN_ALLOW_SOFT_FAIL=false`; no secret change is needed.
 - 2026-07-26: Made the stable `/ocr/analyze` v2 OpenAPI envelope safe for
   generated Android clients across backend provider changes. `AnalyzeEngine`
   is now a provider-neutral open object with opaque identity strings, and

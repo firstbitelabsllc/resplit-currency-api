@@ -1,5 +1,38 @@
 # Resplit Nurse Log
 
+## 2026-07-29 — fail closed before paid OCR providers
+
+- `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch
+  `codex/ocr-attest-failclosed-20260729` from `origin/main@6b7edac1`; no deploy,
+  secret mutation, workflow dispatch, paid provider request, or production
+  mutation occurred.
+- Fresh read-only production evidence showed Worker version
+  `386448b8-ed76-4e05-8407-fdb7c7ae7630` still had
+  `LLM_SCAN_ALLOW_SOFT_FAIL=true` alongside installed Azure and Anthropic
+  secrets. In source, missing headers or an explicit soft-fail request,
+  including one paired with invalid assertion material, could therefore become
+  an IP-capped principal and reach Azure; the analyze and dual-scan routes could
+  also reach Anthropic.
+- The shared authentication gate now requires valid App Attest before any OCR
+  route can reach cache, accounting, Azure, or Anthropic unless a development
+  fixture explicitly opts into the legacy compatibility exception. Root and
+  named-production Wrangler configuration both set the exception to `false`.
+- Regression coverage exercises `/ocr/scan`, `/ocr/dual-scan`, and
+  `/ocr/analyze` with missing, explicit-soft-fail, and forged assertion inputs:
+  all return `401 ATTEST_REJECTED/REQUIRED` with zero provider fetches. Mutation
+  proof inverted the guard and the new test failed on the paid-Azure seam before
+  the guard was restored.
+- Fresh proof: canonical `npm run check` passed strict validation, Node
+  `625/625`, and Worker `16/16`; `go test ./...` passed; deployment smoke passed
+  for `2026-07-29` with 30 history points; root and named-production Wrangler
+  dry-runs bundled `LLM_SCAN_ALLOW_SOFT_FAIL=false`; `git diff --check` is clean.
+- Remaining deployment gate: merge and run the normal Worker release, then
+  read back the deployed version metadata to confirm
+  `LLM_SCAN_ALLOW_SOFT_FAIL=false` before treating production as closed. No
+  secret change is required.
+
+<promise>SOURCE READY; DEPLOY UNCLAIMED</promise>
+
 ## 2026-07-26 — provider-flexible OCR analyze v2 contract
 
 - `GO/source-ready`, `DEPLOY/UNCLAIMED` on branch

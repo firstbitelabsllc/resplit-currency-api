@@ -27,6 +27,8 @@ function makeEnv(extra = {}) {
     LLM_SCAN_MODEL: 'claude-sonnet-5',
     LLM_SCAN_ALLOWED_KEY_IDS: '',
     LLM_SCAN_DAILY_CAP: '50',
+    // Most analyze fixtures exercise the explicitly enabled legacy dev path.
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
     ...extra,
   }
 }

@@ -346,8 +346,10 @@ change the mode until all of these are independently true:
 - activation starts at a clean UTC-day boundary if accounting shadow mode wrote
   reservations earlier that day; shadow reservations deliberately count observed
   work and are not safe to mix with a mid-day enforcement flip;
-- `LLM_SCAN_ALLOW_SOFT_FAIL` stays `true` while the vulnerable installed cohorts
-  remain active.
+- `LLM_SCAN_ALLOW_SOFT_FAIL` stays `false` in source and production. This flag is
+  the legacy development compatibility exception for all OCR routes: setting it
+  to `true` permits missing or explicitly soft-failed App Attest to use the
+  IP-capped Azure path and, when otherwise enabled, the Anthropic leg.
 
 After a reviewed activation, prove a cap-one concurrent burst admits exactly one
 paid Azure analyze, a cache replay spends zero additional units, an accounting
@@ -376,6 +378,9 @@ Expected behavior:
 
 - concurrent copies of one valid assertion admit exactly one request; the rest
   return the existing `401 ATTEST_REJECTED/REPLAY` contract;
+- missing App Attest headers, or a caller-requested soft-fail bypass, return
+  `401 ATTEST_REJECTED/REQUIRED` while `LLM_SCAN_ALLOW_SOFT_FAIL=false`, before
+  Azure, Anthropic, cache, or accounting work;
 - a missing, unavailable, or malformed replay authority fails closed as
   `503 OCR_MISCONFIGURED` before Azure, Anthropic, or cache access;
 - a failure to persist the rollback fence fails closed before the Durable Object
