@@ -12,8 +12,13 @@ const {
 
 const repoRoot = path.join(__dirname, '..')
 const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(repoRoot, 'package')
+// Retention policy is 400 days (currscript.js snapshotRetentionDays), but the
+// archive can only grow forward one day per publish: days pruned under the old
+// 365-day policy cannot be resurrected locally. MIN stays at the last enforced
+// floor while the window ramps 365 -> 400 (complete ~35 daily publishes after
+// the 400-day policy ships); raise MIN to 400 once the manifest span reaches it.
 const MIN_ARCHIVE_DAYS = 365
-const MAX_ARCHIVE_DAYS = 365
+const MAX_ARCHIVE_DAYS = 400
 const MAX_ARCHIVE_GAP_DAYS = 7
 const HISTORY_DAYS = 30
 const STRICT_HISTORY_COVERAGE = process.env.STRICT_HISTORY_COVERAGE === '1'

@@ -24,7 +24,7 @@ GitHub Actions (cron @ 00:00 UTC + 03:00 UTC refresh)
 The `snapshot-archive/` directory stores one JSON file per day (~5KB each).
 `buildSnapshotWindow` reads these local files first, only falling back to
 dated Cloudflare branch deployments for missing days. Files older than
-`snapshotRetentionDays` (365) are pruned automatically. Small archive gaps are
+`snapshotRetentionDays` (400) are pruned automatically. Small archive gaps are
 allowed and surfaced via `archive-manifest.json` and the canonical coverage route.
 
 ## Cloudflare Setup
