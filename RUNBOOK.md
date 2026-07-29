@@ -313,11 +313,22 @@ accounting, CORS, or the whole-scan `OCR_SCAN_KILL_SWITCH`.
 **Verify**: this check needs valid App Attest material. Production runs
 `LLM_SCAN_ALLOW_SOFT_FAIL=false`, so a soft-fail or header-less request is rejected
 with `401 ATTEST_REJECTED/REQUIRED` in `authenticateScan()` before the LLM gate is
-ever read, and proves nothing about this switch. Take `keyId` and `assertion` from a
-device already registered through `/attest/challenge` + `/attest` (a TestFlight or
-internal build scanning the same file works). The assertion is signed over the exact
-image bytes and is single-use, so regenerate it per attempt and send the identical
-payload:
+ever read, and proves nothing about this switch. Use a device already registered
+through `GET /ocr/challenge` + `POST /ocr/attest`.
+
+The simplest verification is the app scan itself: have the TestFlight or internal
+build scan the file and read `status`, `llmReasoning`, `aiModels`, and `engines`
+straight off that response. Do not re-send its headers from `curl`. Each attested
+request advances the assertion's `signCount` atomically before the gate is read, so
+a replayed assertion returns `401 ATTEST_REJECTED/REPLAY`.
+
+To drive the check from `curl` instead, generate a *fresh, unsent* assertion on the
+registered device (debug/internal build path that calls
+`DCAppAttestService.generateAssertion` over the exact image bytes and exports
+`keyId` plus the base64 assertion without posting it), then send that payload
+once. The assertion is signed over the image bytes, so the request body must be
+byte-identical to what was signed, and every retry needs a newly generated
+assertion:
 
 ```bash
 curl -sS -X POST "https://fx.resplit.app/ocr/analyze" \
@@ -339,7 +350,8 @@ npx wrangler secret delete LLM_SCAN_KILL_SWITCH --config wrangler.jsonc --env=""
 ```
 
 Then scan a fresh image that has not been submitted during the preceding ten-minute
-cache window, again with valid App Attest material. Prove both that the response
+cache window, again with a freshly generated (never-sent) assertion for those exact
+image bytes. Prove both that the response
 includes the LLM model in `aiModels` and that provider/accounting telemetry records
 one new Anthropic unit; a response alone can be a pre-disable cache replay and is not
 sufficient proof.
