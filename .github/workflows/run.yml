@@ -214,6 +214,29 @@ jobs:
           STEP_NAME: deploy_cloudflare
         run: node scripts/sentry-checkin.js issue cloudflare_deploy_failure "Cloudflare Pages deploy failed"
 
+      # A Worker release used to reach production with NO automated test gate anywhere in
+      # this workflow: the only pre-deploy checks were artifact validation and secret
+      # presence, so a red `tests-workers/` or `tests/` suite shipped on the 00:00/03:00 UTC
+      # cron. The 60+ existing suites only ran if a human remembered.
+      #
+      # Deliberately `test:ci` (node --test + vitest) and NOT `npm run check`: check also runs
+      # `generate`, which WRITES the snapshot package this workflow has already built and
+      # committed upstream of here. Re-generating mid-run could alter the very artifact being
+      # deployed, so the gate verifies without mutating.
+      #
+      # Shares the deploy step's condition so it costs nothing on runs that ship no Worker,
+      # and a failure here stops the job before `wrangler deploy` executes.
+      - name: Gate the FX Worker release on its test suites
+        id: worker_release_test_gate
+        if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.worker_release_needed.outputs.worker_release_required == 'true' }}
+        run: npm run test:ci
+
+      - name: Report FX Worker test-gate failure to Sentry
+        if: ${{ failure() && steps.worker_release_test_gate.outcome == 'failure' }}
+        env:
+          STEP_NAME: worker_release_test_gate
+        run: node scripts/sentry-checkin.js issue fx_worker_test_gate_failure "FX Worker release blocked by a red test suite"
+
       - name: Deploy FX Worker
         id: deploy_fx_worker
         if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.worker_release_needed.outputs.worker_release_required == 'true' }}

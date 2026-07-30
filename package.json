@@ -10,6 +10,7 @@
     "validate:release": "STRICT_HISTORY_COVERAGE=1 node scripts/validate-package.js",
     "test": "node --test tests/*.test.js",
     "test:workers": "vitest run --config vitest.config.mjs",
+    "test:ci": "npm test && npm run test:workers",
     "smoke:deploy": "node scripts/smoke-check-deploy.js",
     "smoke:sideload": "bash scripts/smoke-sideload-staging.sh",
     "observability:otel-smoke": "node scripts/verify-grafana-otel-smoke.js",
