@@ -26,7 +26,6 @@ import {
   startFxCanaryCheckIn,
 } from './monitoring.mjs'
 import { attachRequestCorrelationHeaders, resolveRequestId } from './request-id.mjs'
-import { handleSideload } from './sideload/router.mjs'
 import { handleOcr } from './ocr/router.mjs'
 
 const ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
@@ -94,9 +93,6 @@ export default Sentry.withSentry(getSentryWorkerOptions, handler)
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url)
 
-  if (url.pathname.startsWith('/sideload/')) {
-    return handleSideload(request, env)
-  }
 
   if (url.pathname.startsWith('/ocr/')) {
     return handleOcr(request, env, ctx)

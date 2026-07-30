@@ -1,5 +1,5 @@
 // /ocr/* router — our own OCR endpoint. The Azure key lives ONLY in env (a wrangler
-// secret) and never reaches the client. Modeled on worker/src/sideload/router.mjs:
+// secret) and never reaches the client. Modeled on the former sideload router, which was
 // requestId -> log -> OPTIONS -> App Attest gate -> handler -> Sentry-catch.
 //
 // Contract: /ocr/scan returns the versioned envelope
@@ -13,7 +13,7 @@
 import { errorResponse, jsonResponse } from '../http.mjs'
 import { requestCorrelationHeaders, resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
-import { CORS_HEADERS, handlePreflight } from '../sideload/cors.mjs'
+import { CORS_HEADERS, handlePreflight } from '../http/cors.mjs'
 import {
   logOcrMonitoringEvent,
   captureOcrProviderFailure,

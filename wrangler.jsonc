@@ -92,13 +92,7 @@
       "id": "1bfd321b53ab48f2ad45e9b4f18efe03"
     }
   ],
-  "r2_buckets": [
-    {
-      "binding": "SIDELOAD_R2",
-      "bucket_name": "resplit-sideload-staging"
-    }
-  ],
-  // Per-scan OCR recovery telemetry (router.mjs writeOcrScanAnalytics): what the AI
+    // Per-scan OCR recovery telemetry (router.mjs writeOcrScanAnalytics): what the AI
   // (vision-LLM) leg catches that Azure's prebuilt parse misses — the pro-tier
   // AI-scan product signal. Free tier, zero added latency; the dataset auto-creates
   // on first write (no account-level setup for WRITES — querying uses the AE SQL
@@ -169,13 +163,7 @@
           "id": "1bfd321b53ab48f2ad45e9b4f18efe03"
         }
       ],
-      "r2_buckets": [
-        {
-          "binding": "SIDELOAD_R2",
-          "bucket_name": "resplit-sideload-prod"
-        }
-      ],
-      // Mirrored from root vars so the two postures don't diverge (see root note).
+            // Mirrored from root vars so the two postures don't diverge (see root note).
       "analytics_engine_datasets": [
         {
           "binding": "OCR_SCAN_ANALYTICS",
