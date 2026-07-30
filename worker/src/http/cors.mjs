@@ -1,3 +1,8 @@
+// Shared CORS helpers. Lived at worker/src/sideload/cors.mjs until the /sideload/*
+// photo routes were deleted (they had no client and their auth trusted a
+// client-suppliable header). The OCR router imports these, so the module moved to a
+// neutral home rather than leaving a one-file `sideload/` directory behind for a
+// feature that no longer exists.
 import { CORRELATION_EXPOSE_HEADERS, requestCorrelationHeaders } from '../request-id.mjs'
 
 const ALLOWED_ORIGINS = new Set([
