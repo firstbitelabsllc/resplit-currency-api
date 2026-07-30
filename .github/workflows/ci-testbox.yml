@@ -1,4 +1,12 @@
 name: Blacksmith Testbox
+
+# Manual, opt-in remote proof only. Blacksmith supplies the Linux machine;
+# repository-native tests remain the authority.
+#
+# Broad deterministic gate:
+#   npm run check
+# Thin deployed-contract boundary:
+#   npm run smoke:deploy
 on:
   workflow_dispatch:
     inputs:
@@ -6,29 +14,32 @@ on:
         type: string
         description: "Testbox session ID"
         required: true
-  pull_request:
-    paths:
-      - '.github/workflows/**'
 
 jobs:
-  local-ci-pointer:
-    name: Local CI pointer
+  resplit-currency-api:
+    name: Resplit Currency API test-ready environment
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 2
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Begin Testbox
         uses: useblacksmith/begin-testbox@v2
         with:
           testbox_id: ${{ inputs.testbox_id }}
-      - name: Point to local proof
-        run: |
-          echo "GitHub Actions runbook is intentionally production/manual scoped in this repo."
-          echo "Use local proof commands and docs before publishing."
-          echo "Common proof commands here:"
-          echo "  npm run test"
-          echo "  npm run lint"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Run Testbox
         uses: useblacksmith/run-testbox@v2
         if: always()
