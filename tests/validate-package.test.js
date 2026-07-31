@@ -346,6 +346,11 @@ test('validate-package requires baseline metadata to contain every latest-prior 
 
   assert.ok(priorSource)
   priorSource.currencyCodes = priorSource.currencyCodes.slice(1)
+  // Keep the aggregate baseline internally consistent so this test reaches the
+  // prior-archive-specific guard rather than the earlier union invariant.
+  snapshot.trustedCurrencyBaseline.currencyCodes = [...new Set(
+    snapshot.trustedCurrencyBaseline.sources.flatMap((source) => source.currencyCodes)
+  )].sort((left, right) => left.localeCompare(right))
   fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
 
   assert.throws(
