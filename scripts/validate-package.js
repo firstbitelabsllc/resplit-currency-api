@@ -12,13 +12,16 @@ const {
 
 const repoRoot = path.join(__dirname, '..')
 const packageRoot = process.env.CURRENCY_PACKAGE_ROOT || path.join(repoRoot, 'package')
-// Retention policy is 400 days (currscript.js snapshotRetentionDays), but the
-// archive can only grow forward one day per publish: days pruned under the old
-// 365-day policy cannot be resurrected locally. MIN stays at the last enforced
-// floor while the window ramps 365 -> 400 (complete ~35 daily publishes after
-// the 400-day policy ships); raise MIN to 400 once the manifest span reaches it.
+// Retention policy is FIVE CALENDAR YEARS (currscript.js
+// snapshotRetentionCalendarYears): snapshots dated on/after Jan 1 of
+// (latestYear - 4) are retained. The archive can only grow forward one day per
+// publish: days pruned under the old 365/400-day policies cannot be
+// resurrected locally, so the window fills toward the full five calendar years
+// over time. MIN stays at the last enforced floor (365) while the window ramps
+// from ~400 days toward five calendar years; the MAX bound is derived from the
+// calendar-year rule below, anchored to meta.latestDate.
 const MIN_ARCHIVE_DAYS = 365
-const MAX_ARCHIVE_DAYS = 400
+const RETENTION_CALENDAR_YEARS = 5
 const MAX_ARCHIVE_GAP_DAYS = 7
 const HISTORY_DAYS = 30
 const STRICT_HISTORY_COVERAGE = process.env.STRICT_HISTORY_COVERAGE === '1'
@@ -216,21 +219,30 @@ function main({
     Number.isInteger(archiveManifest.gapCount) && archiveManifest.gapCount >= 0,
     `archive gapCount must be a non-negative integer, got ${archiveManifest.gapCount}`
   )
+  // Five-calendar-year boundary: everything in the manifest must be dated on or
+  // after Jan 1 of (latestYear - 4), and the archive can hold at most that many
+  // days total.
+  const earliestAllowedDate = earliestRetainedDate(meta.latestDate, RETENTION_CALENDAR_YEARS)
+  const maxArchiveDays = daysBetween(earliestAllowedDate, meta.latestDate) + 1
   warnIf(
     archiveManifest.availableDates.length < MIN_ARCHIVE_DAYS - MAX_ARCHIVE_GAP_DAYS,
     `archive availableDates below target ${MIN_ARCHIVE_DAYS - MAX_ARCHIVE_GAP_DAYS}: got ${archiveManifest.availableDates.length}`
   )
   ensure(
-    archiveManifest.availableDates.length <= MAX_ARCHIVE_DAYS,
-    `archive availableDates must not exceed ${MAX_ARCHIVE_DAYS} dates, got ${archiveManifest.availableDates.length}`
+    archiveManifest.availableDates.length <= maxArchiveDays,
+    `archive availableDates must not exceed ${maxArchiveDays} dates (${RETENTION_CALENDAR_YEARS} calendar years from ${earliestAllowedDate}), got ${archiveManifest.availableDates.length}`
+  )
+  ensure(
+    archiveManifest.earliestDate >= earliestAllowedDate,
+    `archive earliestDate must be within the ${RETENTION_CALENDAR_YEARS}-calendar-year retention window (>= ${earliestAllowedDate}), got ${archiveManifest.earliestDate}`
   )
   ensure(
     daysBetween(archiveManifest.earliestDate, archiveManifest.latestDate) + 1 >= MIN_ARCHIVE_DAYS,
     `archive date span must cover at least ${MIN_ARCHIVE_DAYS} days, got ${archiveManifest.earliestDate}..${archiveManifest.latestDate}`
   )
   ensure(
-    daysBetween(archiveManifest.earliestDate, archiveManifest.latestDate) + 1 <= MAX_ARCHIVE_DAYS,
-    `archive date span must not exceed ${MAX_ARCHIVE_DAYS} days, got ${archiveManifest.earliestDate}..${archiveManifest.latestDate}`
+    daysBetween(archiveManifest.earliestDate, archiveManifest.latestDate) + 1 <= maxArchiveDays,
+    `archive date span must not exceed ${maxArchiveDays} days (${RETENTION_CALENDAR_YEARS} calendar years from ${earliestAllowedDate}), got ${archiveManifest.earliestDate}..${archiveManifest.latestDate}`
   )
   warnIf(
     archiveManifest.gapCount > MAX_ARCHIVE_GAP_DAYS,
@@ -496,6 +508,13 @@ function daysBetween(start, end) {
   return Math.round((endDate - startDate) / (24 * 60 * 60 * 1000))
 }
 
+// Mirrors currscript.js earliestRetainedSnapshotDate: Jan 1 of
+// (latestYear - (retentionCalendarYears - 1)).
+function earliestRetainedDate(latestDate, retentionCalendarYears) {
+  const latestYear = Number(latestDate.slice(0, 4))
+  return `${String(latestYear - (retentionCalendarYears - 1)).padStart(4, '0')}-01-01`
+}
+
 function dateDaysBeforeUTC(anchorDate, daysBefore) {
   const date = new Date(`${anchorDate}T00:00:00Z`)
   date.setUTCDate(date.getUTCDate() - daysBefore)
@@ -545,6 +564,7 @@ function computeRateSanity(todayRates, priorRates, { maxRatio = 2.0, warnRatio =
 module.exports = {
   main,
   computeRateSanity,
+  earliestRetainedDate,
   loadCommittedSameDaySnapshotFromHead,
   validateTrustedCurrencyBaseline
 }

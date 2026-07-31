@@ -8,6 +8,14 @@ const repoRoot = path.join(__dirname, '..')
 const packageRoot = path.join(repoRoot, 'package')
 const validatePackagePath = path.join(repoRoot, 'scripts', 'validate-package.js')
 
+test('validate-package archive bound uses the five-calendar-year Jan 1 boundary', () => {
+  delete require.cache[validatePackagePath]
+  const { earliestRetainedDate } = require(validatePackagePath)
+  assert.equal(earliestRetainedDate('2026-07-30', 5), '2022-01-01')
+  assert.equal(earliestRetainedDate('2026-12-31', 5), '2022-01-01')
+  assert.equal(earliestRetainedDate('2027-01-01', 5), '2023-01-01')
+})
+
 function withTempPackage(t) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'validate-package-'))
   const tempPackage = path.join(tempRoot, 'package')
