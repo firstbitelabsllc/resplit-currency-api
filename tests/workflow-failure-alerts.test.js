@@ -14,8 +14,8 @@ const failureReportCoverage = [
   {
     stepId: 'retry_generate',
     stepName: 'Retry if failed',
-    reportName: 'Report generation retry failure to Sentry',
-    signal: 'generation_retry_failure'
+    scriptSignal: { file: 'currscript.js', signal: 'generation_retry_failure' },
+    requiredEnv: 'CURRENCY_PUBLISH_ATTEMPT: final'
   },
   {
     stepId: 'deploy_cloudflare',
@@ -50,8 +50,7 @@ const failureReportCoverage = [
   {
     stepId: 'smoke_check',
     stepName: 'Smoke check deployed endpoints',
-    reportName: 'Report smoke check failure to Sentry',
-    signal: 'smoke_check_failure'
+    scriptSignal: { file: 'scripts/smoke-check-deploy.js', signal: 'smoke_check_mismatch' }
   }
 ]
 
@@ -75,13 +74,23 @@ function listSteps(source) {
 }
 
 function assertFailureReportCoverage(source) {
-  for (const { stepId, stepName, reportName, signal } of failureReportCoverage) {
+  for (const { stepId, stepName, reportName, signal, scriptSignal, requiredEnv } of failureReportCoverage) {
     const guarded = stepBlock(source, stepName)
     assert.match(
       guarded,
       new RegExp(`\\n\\s*id: ${stepId}\\b`),
       `${stepName} must keep id ${stepId} so its failure report can target it`
     )
+
+    if (requiredEnv) {
+      assert.match(guarded, new RegExp(requiredEnv), `${stepName} must declare ${requiredEnv}`)
+    }
+    if (scriptSignal) {
+      const script = fs.readFileSync(path.join(__dirname, '..', scriptSignal.file), 'utf8')
+      assert.match(script, /runMonitoredScript\(/, `${scriptSignal.file} must retain monitored-script handling`)
+      assert.match(script, new RegExp(`['\"]${scriptSignal.signal}['\"]`), `${scriptSignal.file} must emit ${scriptSignal.signal}`)
+      continue
+    }
 
     const report = stepBlock(source, reportName)
     const condition = report.match(/if: \$\{\{ ([\s\S]*?) \}\}/)?.[1]
@@ -136,7 +145,7 @@ test('deploy failure reports can never be skipped while their deploy step ran', 
   // Each report's condition may only re-reference the SAME earlier-step outputs
   // its deploy step's condition used (plus failure()/outcome). Those outputs are
   // frozen once written, so if the deploy ran and failed, the report fires.
-  for (const { stepName, reportName } of failureReportCoverage) {
+  for (const { stepName, reportName } of failureReportCoverage.filter((row) => row.reportName)) {
     const guardedCondition = stepBlock(workflow, stepName).match(/if: \$\{\{ ([\s\S]*?) \}\}/)?.[1] || ''
     const reportCondition = stepBlock(workflow, reportName).match(/if: \$\{\{ ([\s\S]*?) \}\}/)?.[1]
     const reportOutputRefs = reportCondition.match(/steps\.[a-z_]+\.outputs\.[a-z_]+/g) || []
@@ -149,9 +158,11 @@ test('deploy failure reports can never be skipped while their deploy step ran', 
   }
 })
 
-test('generation retry failure report carries the attempt count', () => {
-  const report = stepBlock(workflow, 'Report generation retry failure to Sentry')
-  assert.match(report, /2\/2/, 'operator message must state both attempts failed (2/2)')
+test('generation retry reports only the final attempt as an incident', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'currscript.js'), 'utf8')
+  assert.match(script, /CURRENCY_PUBLISH_ATTEMPT === 'final'/)
+  assert.match(script, /CURRENCY_PUBLISH_ATTEMPT === 'initial'/)
+  assert.match(script, /captureFailure: process\.env\.CURRENCY_PUBLISH_ATTEMPT !== 'initial'/)
 })
 
 test('the generation retry starts from a clean package dir and its output is validated', () => {
@@ -174,18 +185,13 @@ test('failure-report coverage checker rejects a report bound to the wrong step i
   const mutations = [
     // report watches a different step's outcome
     [
-      "steps.smoke_check.outcome == 'failure'",
-      "steps.deploy_github_pages.outcome == 'failure'"
+      'CURRENCY_PUBLISH_ATTEMPT: final',
+      'CURRENCY_PUBLISH_ATTEMPT: initial'
     ],
     // report loses its failure() guard
     [
-      "if: ${{ failure() && steps.retry_generate.outcome == 'failure' }}",
-      "if: ${{ steps.retry_generate.outcome == 'success' }}"
-    ],
-    // report emits the wrong signal
-    [
-      'issue smoke_check_failure ',
-      'issue smoke_check_ok '
+      'issue github_pages_deploy_failure ',
+      'issue github_pages_deploy_ok '
     ],
     // guarded step loses the id its report targets
     [
@@ -204,8 +210,8 @@ test('failure-report coverage checker rejects a report bound to the wrong step i
   }
 })
 
-test('sentry-checkin issue verb formats the new failure signals', () => {
-  for (const signal of ['generation_retry_failure', 'smoke_check_failure']) {
+test('sentry-checkin issue verb formats workflow failure signals', () => {
+  for (const signal of ['github_pages_deploy_failure']) {
     const child = spawnSync(
       process.execPath,
       [

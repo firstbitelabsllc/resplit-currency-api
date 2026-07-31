@@ -208,7 +208,11 @@ async function runMonitoredScript(scriptName, fn, options = {}) {
   const {
     workflow = DEFAULT_WORKFLOW,
     successSignal = `${scriptName}_ok`,
-    failureSignal = `${scriptName}_failed`
+    failureSignal = `${scriptName}_failed`,
+    // A caller that has a bounded retry may keep its first failed attempt in
+    // logs and the workflow result without opening an incident. The final
+    // attempt must leave this enabled so a terminal failure is still visible.
+    captureFailure = true
   } = options
 
   logEvent('info', `${scriptName}_start`, {
@@ -226,7 +230,7 @@ async function runMonitoredScript(scriptName, fn, options = {}) {
     return result
   } catch (error) {
     const normalizedError = asError(error)
-    if (!hasReportedError(normalizedError)) {
+    if (captureFailure && !hasReportedError(normalizedError)) {
       await captureIssue({
         signal: failureSignal,
         error: normalizedError,
@@ -234,6 +238,12 @@ async function runMonitoredScript(scriptName, fn, options = {}) {
           workflow,
           script: scriptName
         }
+      })
+    } else if (!captureFailure) {
+      logEvent('warn', `${scriptName}_retry_pending`, {
+        workflow,
+        script: scriptName,
+        error: normalizedError.message
       })
     }
     await flush()

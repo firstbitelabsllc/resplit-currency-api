@@ -816,6 +816,31 @@ test('buildSnapshotWindow anchors history fetches to the provided publish date',
   )
 })
 
+test('buildSnapshotWindow never turns fallback reads into retained history when persistence is disabled', async () => {
+  const savedDates = []
+  const fetchSnapshot = async () => ({ eur: 1, usd: 1.1 })
+
+  for (let run = 0; run < 2; run += 1) {
+    const snapshots = await buildSnapshotWindow({
+      todayDate: '2026-03-25',
+      latestRates: { eur: 1, usd: 1.1 },
+      retentionDays: 3,
+      loadSnapshot: () => null,
+      fetchSnapshot,
+      saveSnapshot: (date) => savedDates.push(date),
+      persistFetchedSnapshots: false,
+      log: () => {}
+    })
+
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.date),
+      ['2026-03-23', '2026-03-24', '2026-03-25']
+    )
+  }
+
+  assert.deepEqual(savedDates, [], 'two publish runs must not silently backfill the archive')
+})
+
 test('promoteBuildOutput swaps staged files into place', (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-'))
   const destinationRoot = path.join(tempRoot, 'package')

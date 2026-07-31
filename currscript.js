@@ -34,7 +34,13 @@ const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 if (require.main === module) {
   runMonitoredScript('currency_publish', main, {
     workflow: 'daily_publish',
-    failureSignal: 'currency_publish_failed'
+    // The initial scheduled attempt is intentionally quiet: it is retried in
+    // the same workflow. Only the final retry opens an incident, so a healed
+    // transient failure remains searchable in logs without paging twice.
+    failureSignal: process.env.CURRENCY_PUBLISH_ATTEMPT === 'final'
+      ? 'generation_retry_failure'
+      : 'currency_publish_failed',
+    captureFailure: process.env.CURRENCY_PUBLISH_ATTEMPT !== 'initial'
   }).catch((error) => {
     console.error(error)
     process.exitCode = 1
@@ -43,7 +49,10 @@ if (require.main === module) {
 
 async function main() {
   const dateToday = resolvePublishDate()
-  const { rates: latestRates, reconciliation } = await fetchReconciledRates({ publishDate: dateToday })
+  const { rates: latestRates, reconciliation } = await fetchReconciledRates({
+    publishDate: dateToday,
+    capture: capturePublishIssue
+  })
   if (!latestRates || Object.keys(latestRates).length === 0) {
     throw new Error('Failed to fetch currency rates from source')
   }
@@ -62,13 +71,18 @@ async function main() {
     latestDate: publicationDate
   })
 
-  // buildSnapshotWindow keeps its day-count contract; the day count is derived
-  // from the five-calendar-year boundary so the window spans Jan 1 of
-  // (currentYear - 4) through today.
+  // Retention controls what is kept, not an implicit historical import. Only
+  // rebuild the public recent-history window here. The long archive remains
+  // made of immutable snapshots already committed by normal daily publishes;
+  // older availability needs an explicit provenance-reviewed backfill.
   const recentSnapshots = await buildSnapshotWindow({
     todayDate: publicationDate,
     latestRates,
-    retentionDays: daysBetweenUTC(earliestRetainedSnapshotDate(publicationDate), publicationDate) + 1
+    retentionDays: historyDays,
+    // Historical fetches are presentation recovery only. Daily publication
+    // persists the single trustworthy snapshot for today above; it never turns
+    // an incidental read of an older deployment into archive history.
+    persistFetchedSnapshots: false
   })
   const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: publicationDate })
   const historyStartDate = dateDaysBeforeUTC(publicationDate, historyDays - 1)
@@ -80,7 +94,7 @@ async function main() {
     const error = new Error(
       `History/30d calendar window incomplete: got ${historySnapshots.length}/${historyDays} snapshots for ${historyStartDate}..${publicationDate}`
     )
-    await captureIssue({
+    await capturePublishIssue({
       signal: 'history_window_shorter_than_30_days',
       error,
       context: {
@@ -112,6 +126,15 @@ async function main() {
   })
 
   console.log(`Generated unversioned files in ${rootDir}`)
+}
+
+async function capturePublishIssue(payload) {
+  if (process.env.CURRENCY_PUBLISH_ATTEMPT === 'initial') {
+    const message = payload.error?.message || payload.message || payload.signal
+    console.warn(`[FX_PUBLISH] initial attempt failed; retry pending (${payload.signal}): ${message}`)
+    return false
+  }
+  return captureIssue(payload)
 }
 
 function promoteBuildOutput({
@@ -389,6 +412,7 @@ async function buildSnapshotWindow({
   loadSnapshot = loadSnapshotFromArchive,
   fetchSnapshot = fetchHistoricalSnapshot,
   saveSnapshot = saveSnapshotToArchive,
+  persistFetchedSnapshots = true,
   log = console.log
 }) {
   const snapshotsByDate = new Map()
@@ -410,7 +434,9 @@ async function buildSnapshotWindow({
     const remoteSnapshot = await fetchSnapshot(date)
     if (remoteSnapshot && Object.keys(remoteSnapshot).length > 0) {
       snapshotsByDate.set(date, remoteSnapshot)
-      saveSnapshot(date, remoteSnapshot)
+      if (persistFetchedSnapshots) {
+        saveSnapshot(date, remoteSnapshot)
+      }
       networkHits += 1
     }
   }
