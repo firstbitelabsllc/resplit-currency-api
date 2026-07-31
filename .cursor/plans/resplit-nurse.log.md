@@ -641,3 +641,41 @@
 - Latency: `hygiene` `8m`, `discovery` `17m`, `implementation` `5m`, `proof/wait` `10m`.
 
 <promise>SKIP: external blocker</promise>
+
+## 2026-07-31 — Alerting coverage + five-calendar-year retention (branch `claude/fx-alerting-retention-20260731`, LOCAL ONLY — not pushed, per Leo's constraint)
+
+Three-lane ultracode build + adversarial review + integration repairs, all on the local branch
+(head `78c6ca7b`). NOT pushed; no live service, Sentry rule, or secret touched.
+
+**Alerting (run.yml + sentry-monitoring/checkin):** all five failure classes now produce an
+alertable Sentry signal — scheduled failure and missed check-in were ALREADY covered in code
+(monitor_config with schedule `0 0,3 * * *`, checkinMargin 240, maxRuntime 15,
+failureIssueThreshold 1 rides every start check-in, so Sentry detects missed runs natively);
+generation retry exhaustion now emits the single deliberate `generation_retry_failure` incident
+(per-attempt failures demoted to log context via `FX_PUBLISH_ATTEMPT` — healed retries open NO
+incident); deploy failures verified un-skippable (output-ref invariant test); smoke failures alert
+via the EXISTING script-level `smoke_check_mismatch` (a workflow duplicate was added then removed
+after adversarial review). `tests/workflow-failure-alerts.test.js` lint-tests every binding with
+mutation guards. **External Sentry ROUTING (email/Slack alert rules) is unproven and out of
+scope — signals are alertable, delivery is Sentry-side config.**
+
+**Retention (currscript + validate-package + worker contract):** cap extended 400d → five calendar
+years (Jan-1 boundary, `snapshotRetentionCalendarYears=5`). FORWARD-ONLY by construction:
+`resolveProbeStartDate` pins the daily probe floor at the archive's earliest existing date
+(two-consecutive-publish regression proves the edge is a fixed point; interior gaps still heal;
+mutation-proven). The cap is NOT available history — coverage is ~1 year today and fills forward;
+deep backfill stays behind the explicit provenance-approved contract. Yearly serving shards
+unchanged; exact-date lookup proven to read only year(D)'s shard across a five-year manifest;
+out-of-window dates pinned to today_fallback with zero shard fetches. Jan-1 cliff documented.
+
+**Proof:** focused suites 97/97; full `npm test` 603/603 (with a regenerated package fixture — the
+16 fixture-class reds are pre-existing, proven against unmodified HEAD). Adversarial findings
+resolved: HIGH walk-back backfill (fixed), MEDIUM smoke duplicate (removed), MEDIUM /history
+uncapped fan-out (pre-existing, DEFERRED — named below), LOWs (legacy-arg guard added, cliff
+documented).
+
+**Resume:** branch `claude/fx-alerting-retention-20260731` in
+`~/Development/resplit-currency-api-worktrees/integrate`. Next gate: Leo review → push → the next
+scheduled run proves the signals live. Deferred follow-up (not this change): cap `/history` range
+fan-out (worker/src/index.mjs:230-259 fetches one year-shard per requested year, up to 5-6 at
+steady state; MAX_FX_HISTORY_RANGE_DAYS exists only on /coverage).
