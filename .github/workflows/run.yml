@@ -70,10 +70,21 @@ jobs:
         run: node currscript.js
 
       - name: Retry if failed
+        id: retry_generate
         if: ${{ steps.generate.outcome == 'failure' }}
         env:
           PUBLISH_DATE: ${{ env.date_today }}
         run: rm -rf package && node currscript.js
+
+      # Without this signal, a double generation failure only surfaces as the
+      # terminal error check-in, which carries no step-level context. Emit a
+      # dedicated issue with the attempt count so the operator sees WHERE the
+      # scheduled publish died without opening the run log.
+      - name: Report generation retry failure to Sentry
+        if: ${{ failure() && steps.retry_generate.outcome == 'failure' }}
+        env:
+          STEP_NAME: retry_generate
+        run: node scripts/sentry-checkin.js issue generation_retry_failure "Rate generation failed on both attempts (2/2 - initial run and clean-package retry)"
 
       - name: Validate generated artifacts
         run: node scripts/validate-package.js
@@ -305,6 +316,12 @@ jobs:
           # (>1-day stale still hard-fails). Kills the scheduler-delay dead zones.
           POST_PUBLISH_SMOKE: '1'
         run: node scripts/smoke-check-deploy.js
+
+      - name: Report smoke check failure to Sentry
+        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' && steps.smoke_check.outcome == 'failure' }}
+        env:
+          STEP_NAME: smoke_check
+        run: node scripts/sentry-checkin.js issue smoke_check_failure "Post-deploy smoke check failed on published endpoints"
 
       - name: Finish Sentry publish check-in
         if: ${{ always() }}
