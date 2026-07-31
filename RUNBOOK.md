@@ -625,7 +625,7 @@ open.er-api.com ──► GitHub Actions (00:00 UTC publish pass + 03:00 UTC ref
                              FXRateCache (short-lived)
 ```
 
-History is built from the committed `snapshot-archive/` directory (local-first, five-calendar-year retention: snapshots dated on/after Jan 1 of currentYear − 4 are kept; the window fills forward over time since days pruned under the old 365/400-day policies cannot be resurrected).
+History is built from the committed `snapshot-archive/` directory (local-first; retention CAP is five calendar years — snapshots on/after Jan 1 of currentYear − 4 — but available history is currently ~1 year and fills FORWARD-ONLY: `resolveProbeStartDate` pins the daily probe floor at the archive's earliest existing date, so normal runs never add older dates; deeper backfill requires the explicit provenance-approved contract. Jan 1 advances the window a full year at once — receipts just past the horizon drop to today-fallback overnight).
 Dated Cloudflare branch deployments are a network fallback only, used to backfill
 missing days (e.g., first run or recovery from a reset).
 

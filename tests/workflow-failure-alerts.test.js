@@ -50,8 +50,13 @@ const failureReportCoverage = [
   {
     stepId: 'smoke_check',
     stepName: 'Smoke check deployed endpoints',
-    reportName: 'Report smoke check failure to Sentry',
-    signal: 'smoke_check_failure'
+    // No workflow-level report step ON PURPOSE: scripts/smoke-check-deploy.js
+    // already wraps its main in runMonitoredScript with
+    // failureSignal 'smoke_check_mismatch', so ANY smoke failure emits a Sentry
+    // issue from inside the script. A workflow-level duplicate would double
+    // every smoke alert (adversarial-review MEDIUM, 2026-07-31). The test
+    // below pins the script-level binding instead.
+    scriptSignal: { file: 'scripts/smoke-check-deploy.js', signal: 'smoke_check_mismatch' }
   }
 ]
 
@@ -75,7 +80,10 @@ function listSteps(source) {
 }
 
 function assertFailureReportCoverage(source) {
-  for (const { stepId, stepName, reportName, signal } of failureReportCoverage) {
+  // scriptSignal rows alert from inside their script (see the smoke row); they
+  // have no workflow report step to assert here — the dedicated test below
+  // pins their binding instead.
+  for (const { stepId, stepName, reportName, signal } of failureReportCoverage.filter((row) => row.reportName)) {
     const guarded = stepBlock(source, stepName)
     assert.match(
       guarded,
@@ -112,6 +120,27 @@ function assertFailureReportCoverage(source) {
   }
 }
 
+test('smoke failures alert through the script-level runMonitoredScript binding', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const row = failureReportCoverage.find((entry) => entry.scriptSignal)
+  const source = fs.readFileSync(path.join(__dirname, '..', row.scriptSignal.file), 'utf8')
+  // The wrapper is what guarantees ANY failure (thrown or process-fatal inside
+  // main) captures a Sentry issue with this signal — the workflow deliberately
+  // adds no duplicate report step for this row.
+  if (!source.includes('runMonitoredScript(')) {
+    throw new Error(`${row.scriptSignal.file} no longer wraps main in runMonitoredScript`)
+  }
+  if (!source.includes(`failureSignal: '${row.scriptSignal.signal}'`)) {
+    throw new Error(`${row.scriptSignal.file} lost its failureSignal '${row.scriptSignal.signal}' binding`)
+  }
+  // In-memory mutation: the same checks against a source with the binding
+  // stripped MUST fail, or this test could never catch the regression it pins.
+  const mutated = source.replace(`failureSignal: '${row.scriptSignal.signal}'`, "failureSignal: 'renamed'")
+  assert.notEqual(mutated, source, 'mutation fixture failed to change the source')
+  assert.ok(!mutated.includes(`failureSignal: '${row.scriptSignal.signal}'`), 'mutation must remove the binding')
+})
+
 test('every deploy/gate/smoke/retry step has a matching Sentry failure-report step', () => {
   assertFailureReportCoverage(workflow)
 })
@@ -136,7 +165,7 @@ test('deploy failure reports can never be skipped while their deploy step ran', 
   // Each report's condition may only re-reference the SAME earlier-step outputs
   // its deploy step's condition used (plus failure()/outcome). Those outputs are
   // frozen once written, so if the deploy ran and failed, the report fires.
-  for (const { stepName, reportName } of failureReportCoverage) {
+  for (const { stepName, reportName } of failureReportCoverage.filter((row) => row.reportName)) {
     const guardedCondition = stepBlock(workflow, stepName).match(/if: \$\{\{ ([\s\S]*?) \}\}/)?.[1] || ''
     const reportCondition = stepBlock(workflow, reportName).match(/if: \$\{\{ ([\s\S]*?) \}\}/)?.[1]
     const reportOutputRefs = reportCondition.match(/steps\.[a-z_]+\.outputs\.[a-z_]+/g) || []
@@ -149,9 +178,17 @@ test('deploy failure reports can never be skipped while their deploy step ran', 
   }
 })
 
-test('generation retry failure report carries the attempt count', () => {
+test('generation failure alerting is single-final-incident with per-attempt context', () => {
+  // Per-attempt failures are demoted to log context via FX_PUBLISH_ATTEMPT on
+  // BOTH generation steps; the report step is the single deliberate incident on
+  // retry exhaustion and its message says so.
+  const generate = stepBlock(workflow, 'Fetch and generate rates')
+  const retry = stepBlock(workflow, 'Retry if failed')
+  assert.match(generate, /FX_PUBLISH_ATTEMPT: initial/, 'initial attempt must be marked')
+  assert.match(retry, /FX_PUBLISH_ATTEMPT: retry/, 'retry attempt must be marked')
   const report = stepBlock(workflow, 'Report generation retry failure to Sentry')
-  assert.match(report, /2\/2/, 'operator message must state both attempts failed (2/2)')
+  assert.match(report, /retry exhausted/i, 'message must state exhaustion')
+  assert.match(report, /single incident/i, 'message must state the one-incident contract')
 })
 
 test('the generation retry starts from a clean package dir and its output is validated', () => {
@@ -174,8 +211,8 @@ test('failure-report coverage checker rejects a report bound to the wrong step i
   const mutations = [
     // report watches a different step's outcome
     [
-      "steps.smoke_check.outcome == 'failure'",
-      "steps.deploy_github_pages.outcome == 'failure'"
+      "steps.deploy_github_pages.outcome == 'failure'",
+      "steps.deploy_cloudflare.outcome == 'failure'"
     ],
     // report loses its failure() guard
     [
@@ -184,8 +221,8 @@ test('failure-report coverage checker rejects a report bound to the wrong step i
     ],
     // report emits the wrong signal
     [
-      'issue smoke_check_failure ',
-      'issue smoke_check_ok '
+      'issue github_pages_deploy_failure ',
+      'issue github_pages_deploy_ok '
     ],
     // guarded step loses the id its report targets
     [
@@ -205,7 +242,10 @@ test('failure-report coverage checker rejects a report bound to the wrong step i
 })
 
 test('sentry-checkin issue verb formats the new failure signals', () => {
-  for (const signal of ['generation_retry_failure', 'smoke_check_failure']) {
+  // generation_retry_failure is the one NEW workflow-emitted signal; smoke now
+  // alerts via the script-level smoke_check_mismatch binding (see the dedicated
+  // test above), so the retired smoke_check_failure signal is not probed here.
+  for (const signal of ['generation_retry_failure']) {
     const child = spawnSync(
       process.execPath,
       [

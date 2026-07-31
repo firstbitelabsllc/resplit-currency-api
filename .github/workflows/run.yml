@@ -62,11 +62,19 @@ jobs:
         id: sentry_checkin
         run: node scripts/sentry-checkin.js start >> "$GITHUB_OUTPUT"
 
+      # FX_PUBLISH_ATTEMPT makes each attempt's failure structured LOG context
+      # instead of a Sentry incident (sentry-monitoring.js
+      # isRetriedPipelineAttempt): a healed retry opens no incident at all, and
+      # an exhausted retry opens exactly ONE deliberate incident — the
+      # generation_retry_failure report below — instead of near-duplicate
+      # currency_publish_failed / upstream_fetch_failure issues per attempt
+      # (adversarial review, 2026-07-31).
       - name: Fetch and generate rates
         id: generate
         continue-on-error: true
         env:
           PUBLISH_DATE: ${{ env.date_today }}
+          FX_PUBLISH_ATTEMPT: initial
         run: node currscript.js
 
       - name: Retry if failed
@@ -74,17 +82,18 @@ jobs:
         if: ${{ steps.generate.outcome == 'failure' }}
         env:
           PUBLISH_DATE: ${{ env.date_today }}
+          FX_PUBLISH_ATTEMPT: retry
         run: rm -rf package && node currscript.js
 
-      # Without this signal, a double generation failure only surfaces as the
-      # terminal error check-in, which carries no step-level context. Emit a
-      # dedicated issue with the attempt count so the operator sees WHERE the
-      # scheduled publish died without opening the run log.
+      # THE one deliberate generation incident: per-attempt failures above are
+      # logged context (FX_PUBLISH_ATTEMPT), so this fires only on retry
+      # exhaustion and is the single alertable signal for a dead publish stage,
+      # with step-level context the terminal check-in lacks.
       - name: Report generation retry failure to Sentry
         if: ${{ failure() && steps.retry_generate.outcome == 'failure' }}
         env:
           STEP_NAME: retry_generate
-        run: node scripts/sentry-checkin.js issue generation_retry_failure "Rate generation failed on both attempts (2/2 - initial run and clean-package retry)"
+        run: node scripts/sentry-checkin.js issue generation_retry_failure "Rate generation retry exhausted: both attempts failed (initial + clean-package retry); per-attempt context is in the run log, this is the single incident for the stage"
 
       - name: Validate generated artifacts
         run: node scripts/validate-package.js
@@ -317,11 +326,6 @@ jobs:
           POST_PUBLISH_SMOKE: '1'
         run: node scripts/smoke-check-deploy.js
 
-      - name: Report smoke check failure to Sentry
-        if: ${{ failure() && (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.publish_needed.outputs.publish_required == 'true' && steps.smoke_check.outcome == 'failure' }}
-        env:
-          STEP_NAME: smoke_check
-        run: node scripts/sentry-checkin.js issue smoke_check_failure "Post-deploy smoke check failed on published endpoints"
 
       - name: Finish Sentry publish check-in
         if: ${{ always() }}

@@ -26,6 +26,7 @@ const {
   pruneSnapshotArchive,
   promoteBuildOutput,
   resolveArchiveDateForPublish,
+  resolveProbeStartDate,
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
@@ -1166,4 +1167,68 @@ test('pruneSnapshotArchive does not delete newer source snapshots during backfil
 
   assert.deepEqual(pruned, [])
   assert.deepEqual(removedPaths, [])
+})
+
+test('two consecutive publishes cannot add archive dates older than the existing edge (forward-only)', async () => {
+
+  // Simulated committed archive: earliest date is the pinned edge, with one
+  // interior gap that IS allowed to heal.
+  const archive = new Map([
+    ['2026-07-27', { date: '2026-07-27', rates: { usd: 1 } }],
+    // 2026-07-28 missing — interior gap, heal allowed
+    ['2026-07-29', { date: '2026-07-29', rates: { usd: 1 } }]
+  ])
+  const fetched = []
+  const runPublish = async (publicationDate) => {
+    const localDates = [...archive.keys()].sort()
+    const probeStart = resolveProbeStartDate({ publicationDate, localArchiveDates: localDates })
+    await buildSnapshotWindow({
+      todayDate: publicationDate,
+      latestRates: { date: publicationDate, rates: { usd: 1 } },
+      retentionDays: daysBetweenUTC(probeStart, publicationDate) + 1,
+      loadSnapshot: (date) => archive.get(date) ?? null,
+      fetchSnapshot: async (date) => {
+        fetched.push(date)
+        return { date, rates: { usd: 1 } }
+      },
+      // Real signature is (date, snapshot) — matching prod, not a guessed shape.
+      saveSnapshot: (date, snapshot) => archive.set(date, snapshot),
+      log: () => {}
+    })
+  }
+
+  await runPublish('2026-07-30')
+  const edgeAfterFirst = [...archive.keys()].sort()[0]
+  await runPublish('2026-07-31')
+  const edgeAfterSecond = [...archive.keys()].sort()[0]
+
+  // The regression this pins: a margin-based probe floor let run 2 walk back
+  // past run 1's edge. Forward-only means the earliest archive date is a fixed
+  // point across consecutive publishes.
+  assert.equal(edgeAfterFirst, '2026-07-27')
+  assert.equal(edgeAfterSecond, '2026-07-27')
+  assert.ok(
+    fetched.every((date) => date >= '2026-07-27'),
+    `probed a pre-edge date: ${fetched.filter((d) => d < '2026-07-27').join(', ')}`
+  )
+  // The interior gap healed rather than being skipped.
+  assert.ok(archive.has('2026-07-28'), 'interior gap must self-heal')
+})
+
+test('resolveProbeStartDate pins the floor at the archive edge, clamped to retention', () => {
+  // Edge inside the window -> floor is exactly the edge (no margin below it).
+  assert.equal(
+    resolveProbeStartDate({ publicationDate: '2026-07-31', localArchiveDates: ['2025-08-01', '2026-01-01'] }),
+    '2025-08-01'
+  )
+  // Edge older than the 5-calendar-year floor -> clamped to the floor.
+  assert.equal(
+    resolveProbeStartDate({ publicationDate: '2026-07-31', localArchiveDates: ['2019-01-01'] }),
+    '2022-01-01'
+  )
+  // Empty archive -> one-time 400-day bootstrap window.
+  assert.equal(
+    resolveProbeStartDate({ publicationDate: '2026-07-31', localArchiveDates: [] }),
+    '2025-06-27'
+  )
 })

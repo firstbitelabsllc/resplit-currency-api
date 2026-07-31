@@ -204,6 +204,18 @@ function hasReportedError(error) {
   return Boolean(error && typeof error === 'object' && reportedErrors.has(error))
 }
 
+// When the caller is ONE ATTEMPT of a retried pipeline stage (run.yml sets
+// FX_PUBLISH_ATTEMPT=initial|retry on the two generation steps), a failure is
+// attempt CONTEXT, not an incident: the workflow emits exactly one deliberate
+// Sentry issue (generation_retry_failure) if and only if the retry is
+// exhausted. Without this, a healed first attempt still opened an incident and
+// an exhausted run opened several near-duplicates (adversarial review,
+// 2026-07-31). Outside the workflow (env unset — local runs, other scripts)
+// behavior is unchanged: the failure captures an issue as before.
+function isRetriedPipelineAttempt() {
+  return Boolean(process.env.FX_PUBLISH_ATTEMPT)
+}
+
 async function runMonitoredScript(scriptName, fn, options = {}) {
   const {
     workflow = DEFAULT_WORKFLOW,
@@ -226,7 +238,16 @@ async function runMonitoredScript(scriptName, fn, options = {}) {
     return result
   } catch (error) {
     const normalizedError = asError(error)
-    if (!hasReportedError(normalizedError)) {
+    if (isRetriedPipelineAttempt()) {
+      // Attempt-scoped failure: structured log only; the workflow owns the one
+      // final incident on retry exhaustion.
+      logEvent('error', failureSignal, {
+        workflow,
+        script: scriptName,
+        attempt: process.env.FX_PUBLISH_ATTEMPT,
+        error: normalizedError.message
+      })
+    } else if (!hasReportedError(normalizedError)) {
       await captureIssue({
         signal: failureSignal,
         error: normalizedError,
@@ -293,6 +314,7 @@ function asError(error) {
 }
 
 module.exports = {
+  isRetriedPipelineAttempt,
   captureIssue,
   finishWorkflowCheckIn,
   runMonitoredScript,

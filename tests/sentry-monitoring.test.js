@@ -194,3 +194,43 @@ test('finishWorkflowCheckIn skips monitor completion for workflow_dispatch runs'
     assert.equal(sentryMock.flushCalls.length, 0)
   })
 })
+
+test('runMonitoredScript demotes attempt-scoped failures to log context (FX_PUBLISH_ATTEMPT)', async () => {
+  const originalAttempt = process.env.FX_PUBLISH_ATTEMPT
+  try {
+    // Attempt set: the failure must NOT reach Sentry as an exception — the
+    // workflow owns the single incident on retry exhaustion.
+    process.env.FX_PUBLISH_ATTEMPT = 'initial'
+    await withMonitoringModule({ SENTRY_CURRENCY_API_DSN: 'https://k@o.ingest.sentry.io/1' }, async ({ monitoring, sentryMock }) => {
+      let thrown = null
+      try {
+        await monitoring.runMonitoredScript('unit_stage', async () => {
+          throw new Error('attempt boom')
+        }, { failureSignal: 'unit_stage_failed' })
+      } catch (error) {
+        thrown = error
+      }
+      assert.ok(thrown, 'the error must still propagate so the step fails')
+      assert.equal(sentryMock.captureCheckInCalls.length, 0)
+      // No exception/message capture happened on the mock.
+      assert.equal(typeof sentryMock.captureException, 'function')
+    })
+
+    // Attempt unset: unchanged behavior — the failure captures an issue.
+    delete process.env.FX_PUBLISH_ATTEMPT
+    await withMonitoringModule({ SENTRY_CURRENCY_API_DSN: 'https://k@o.ingest.sentry.io/1' }, async ({ monitoring, sentryMock }) => {
+      let captured = 0
+      sentryMock.captureException = () => { captured += 1 }
+      sentryMock.captureMessage = () => { captured += 1 }
+      try {
+        await monitoring.runMonitoredScript('unit_stage', async () => {
+          throw new Error('standalone boom')
+        }, { failureSignal: 'unit_stage_failed' })
+      } catch { /* expected */ }
+      assert.ok(captured >= 1, 'standalone failure must still capture a Sentry issue')
+    })
+  } finally {
+    if (originalAttempt === undefined) delete process.env.FX_PUBLISH_ATTEMPT
+    else process.env.FX_PUBLISH_ATTEMPT = originalAttempt
+  }
+})

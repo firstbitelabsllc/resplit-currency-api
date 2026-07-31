@@ -6,6 +6,17 @@ const {
   captureIssue,
   runMonitoredScript
 } = require('./scripts/sentry-monitoring')
+
+// See scripts/sentry-monitoring.js isRetriedPipelineAttempt: per-attempt
+// failures inside the retried publish stage log context instead of opening
+// near-duplicate incidents.
+async function attemptAwareCaptureIssue(payload) {
+  if (process.env.FX_PUBLISH_ATTEMPT) {
+    console.warn(`[FX_PUBLISH] attempt=${process.env.FX_PUBLISH_ATTEMPT} suppressed-issue signal=${payload?.signal}: ${payload?.error?.message ?? ''}`)
+    return
+  }
+  return captureIssue(payload)
+}
 const {
   ER_API_URL,
   FRANKFURTER_URL,
@@ -21,12 +32,17 @@ const {
 
 const indent = '\t'
 const historyDays = 30
+// A fresh clone (empty snapshot-archive/) bootstraps with the former 400-day
+// probe window rather than five years of dated-deployment probes.
+const bootstrapWindowDays = 400
 // Retention rule: FIVE CALENDAR YEARS. A snapshot dated on/after Jan 1 of
 // (currentYear - 4) is retained; strictly older dailies are pruned. This is a
 // calendar-year boundary (Jan 1 cutoff), not a fixed day count, so the window
-// length varies between ~4 and 5 years depending on the current date. Days
-// already pruned under the earlier 365/400-day policies cannot be resurrected
-// locally; the archive grows forward one day per publish.
+// length varies between ~4 and 5 years depending on the current date. This is
+// a retention CAP, not available history: coverage today is ~1 year and fills
+// FORWARD-ONLY (see resolveProbeStartDate — normal publishes never add dates
+// older than the archive's existing edge; deeper history needs the explicit
+// provenance-approved backfill contract, never implicit network resurrection).
 const snapshotRetentionCalendarYears = 5
 const rootDir = path.join(__dirname, 'package')
 const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
@@ -62,13 +78,26 @@ async function main() {
     latestDate: publicationDate
   })
 
-  // buildSnapshotWindow keeps its day-count contract; the day count is derived
-  // from the five-calendar-year boundary so the window spans Jan 1 of
-  // (currentYear - 4) through today.
+  // buildSnapshotWindow keeps its day-count contract, but its probe window is
+  // STAGED FORWARD GROWTH, not the full five-calendar-year retention span. The
+  // yearly serving shards are built from the committed local archive
+  // (loadAllSnapshotsFromArchive below), so probing the network for every day
+  // of the 5-year window would buy nothing for serving while costing ~1,300
+  // dated-deployment probes per publish and silently resurrecting deep history
+  // the retention docs promise stays gone. Instead the window reaches back only
+  // to the earliest LOCAL snapshot minus a small healing margin (so gaps
+  // adjacent to the archive edge can still self-heal from dated deployments),
+  // clamped to the five-calendar-year boundary. The archive therefore grows
+  // forward one day per publish and the window widens with it. A fresh clone
+  // with no archive bootstraps with the former 400-day window.
+  const probeStartDate = resolveProbeStartDate({
+    publicationDate,
+    localArchiveDates: listSnapshotArchiveDates()
+  })
   const recentSnapshots = await buildSnapshotWindow({
     todayDate: publicationDate,
     latestRates,
-    retentionDays: daysBetweenUTC(earliestRetainedSnapshotDate(publicationDate), publicationDate) + 1
+    retentionDays: daysBetweenUTC(probeStartDate, publicationDate) + 1
   })
   const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: publicationDate })
   const historyStartDate = dateDaysBeforeUTC(publicationDate, historyDays - 1)
@@ -641,6 +670,13 @@ function pruneSnapshotArchive({
   listDates = listSnapshotArchiveDates,
   removeFile = fs.removeSync
 }) {
+  // Fail loudly on the retired day-based option: silently defaulting a caller
+  // that still passes { retentionDays } to the 5-calendar-year rule is the
+  // silent-fallback pattern this repo has been burned by before.
+  if (Object.prototype.hasOwnProperty.call(arguments[0] ?? {}, 'retentionDays')) {
+    throw new Error('pruneSnapshotArchive: retentionDays was retired; pass retentionCalendarYears')
+  }
+
   const dates = listDates()
   if (dates.length === 0) {
     return []
@@ -712,7 +748,12 @@ async function fetchReconciledRates({
   loadArchiveSnapshot = loadSnapshotFromArchive,
   loadPriorTrustedSnapshot = loadPriorTrustedSnapshotFromArchive,
   loadSameDayCommittedSnapshot = loadSameDayCommittedSnapshotFromArchive,
-  capture = captureIssue,
+  // Attempt-aware by default: inside a retried workflow attempt
+  // (FX_PUBLISH_ATTEMPT set), an upstream fetch failure is logged context, not
+  // a Sentry incident — the workflow's generation_retry_failure is the single
+  // deliberate incident on exhaustion. Injected tests can still pass a raw
+  // capture.
+  capture = attemptAwareCaptureIssue,
   warn = console.warn
 } = {}) {
   // Capture both trusted archive boundaries before fetching or writing. The
@@ -920,6 +961,29 @@ function earliestRetainedSnapshotDate(latestDate, retentionCalendarYears = snaps
   return `${String(earliestYear).padStart(4, '0')}-01-01`
 }
 
+// FORWARD-ONLY probe floor (adversarial-review BLOCK, 2026-07-31). The daily
+// publish may probe dated deployments only for days AT or AFTER the earliest
+// snapshot already in the local archive — never before it. Deriving the floor
+// from a margin below the edge let each run save slightly older days and the
+// next run walk back further, silently backfilling toward 2022 against the
+// no-resurrection policy. With the floor pinned AT the edge, the earliest
+// archive date is a fixed point of the publish loop: gaps INSIDE the archive
+// span still self-heal, the span grows forward one day per publish, and any
+// deeper history requires an explicit provenance-approved backfill (not this
+// path). An empty archive bootstraps with the former 400-day window once.
+function resolveProbeStartDate({ publicationDate, localArchiveDates }) {
+  const retentionFloorDate = earliestRetainedSnapshotDate(publicationDate)
+  if (!localArchiveDates || localArchiveDates.length === 0) {
+    return maxDateString(retentionFloorDate, dateDaysBeforeUTC(publicationDate, bootstrapWindowDays - 1))
+  }
+  return maxDateString(retentionFloorDate, localArchiveDates[0])
+}
+
+function maxDateString(lhs, rhs) {
+  // ISO yyyy-mm-dd strings order lexicographically.
+  return lhs >= rhs ? lhs : rhs
+}
+
 function daysBetweenUTC(startDate, endDate) {
   const start = new Date(`${startDate}T00:00:00Z`)
   const end = new Date(`${endDate}T00:00:00Z`)
@@ -1015,6 +1079,7 @@ module.exports = {
   dateDaysBeforeUTC,
   daysBetweenUTC,
   earliestRetainedSnapshotDate,
+  resolveProbeStartDate,
   fetchLatestRates,
   fetchReconciledRates,
   buildTrustedCurrencyBaseline,
