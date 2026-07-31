@@ -21,9 +21,13 @@ const {
 
 const indent = '\t'
 const historyDays = 30
-// ~13 months of daily snapshots so receipts up to a year old still resolve
-// historical rates through the canonical quote/history contract.
-const snapshotRetentionDays = 400
+// Retention rule: FIVE CALENDAR YEARS. A snapshot dated on/after Jan 1 of
+// (currentYear - 4) is retained; strictly older dailies are pruned. This is a
+// calendar-year boundary (Jan 1 cutoff), not a fixed day count, so the window
+// length varies between ~4 and 5 years depending on the current date. Days
+// already pruned under the earlier 365/400-day policies cannot be resurrected
+// locally; the archive grows forward one day per publish.
+const snapshotRetentionCalendarYears = 5
 const rootDir = path.join(__dirname, 'package')
 const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 
@@ -54,14 +58,17 @@ async function main() {
 
   saveSnapshotToArchive(publicationDate, latestRates)
   pruneSnapshotArchive({
-    retentionDays: snapshotRetentionDays,
+    retentionCalendarYears: snapshotRetentionCalendarYears,
     latestDate: publicationDate
   })
 
+  // buildSnapshotWindow keeps its day-count contract; the day count is derived
+  // from the five-calendar-year boundary so the window spans Jan 1 of
+  // (currentYear - 4) through today.
   const recentSnapshots = await buildSnapshotWindow({
     todayDate: publicationDate,
     latestRates,
-    retentionDays: snapshotRetentionDays
+    retentionDays: daysBetweenUTC(earliestRetainedSnapshotDate(publicationDate), publicationDate) + 1
   })
   const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: publicationDate })
   const historyStartDate = dateDaysBeforeUTC(publicationDate, historyDays - 1)
@@ -629,7 +636,7 @@ function loadAllSnapshotsFromArchive({ latestDate = null } = {}) {
 }
 
 function pruneSnapshotArchive({
-  retentionDays,
+  retentionCalendarYears = snapshotRetentionCalendarYears,
   latestDate = null,
   listDates = listSnapshotArchiveDates,
   removeFile = fs.removeSync
@@ -640,7 +647,9 @@ function pruneSnapshotArchive({
   }
 
   const effectiveLatestDate = latestDate ?? dates[dates.length - 1]
-  const earliestRetainedDate = dateDaysBeforeUTC(effectiveLatestDate, retentionDays - 1)
+  // Calendar-year retention rule: keep Jan 1 of (latestYear - (N-1)) onward;
+  // prune strictly older whole files. Never touches in-window file bytes.
+  const earliestRetainedDate = earliestRetainedSnapshotDate(effectiveLatestDate, retentionCalendarYears)
   const prunedDates = dates.filter((date) => date < earliestRetainedDate)
 
   for (const date of prunedDates) {
@@ -902,6 +911,21 @@ function dateDaysBeforeUTC(anchorDate, daysBefore) {
   return toDateStringUTC(date)
 }
 
+// Five-calendar-year retention boundary: for a latest snapshot in year Y, the
+// earliest retained date is Jan 1 of (Y - (retentionCalendarYears - 1)).
+// Anything strictly older is out of the retention window.
+function earliestRetainedSnapshotDate(latestDate, retentionCalendarYears = snapshotRetentionCalendarYears) {
+  const latestYear = Number(latestDate.slice(0, 4))
+  const earliestYear = latestYear - (retentionCalendarYears - 1)
+  return `${String(earliestYear).padStart(4, '0')}-01-01`
+}
+
+function daysBetweenUTC(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
+  return Math.round((end - start) / (24 * 60 * 60 * 1000))
+}
+
 function toLowerSorted(obj) {
   const entries = Object.entries(obj)
     .map(([key, value]) => [key.toLowerCase(), parseFloat(value)])
@@ -989,6 +1013,8 @@ module.exports = {
   buildSnapshotWindow,
   computeCrossRates,
   dateDaysBeforeUTC,
+  daysBetweenUTC,
+  earliestRetainedSnapshotDate,
   fetchLatestRates,
   fetchReconciledRates,
   buildTrustedCurrencyBaseline,
@@ -1004,7 +1030,7 @@ module.exports = {
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
-  snapshotRetentionDays,
+  snapshotRetentionCalendarYears,
   snapshotArchiveDir,
   toLowerSorted,
   writeJsonFile,

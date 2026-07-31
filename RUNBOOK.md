@@ -611,7 +611,8 @@ open.er-api.com ──► GitHub Actions (00:00 UTC publish pass + 03:00 UTC ref
             snapshot-archive/               ┌───────┴───────┐
             (committed to repo,             ▼               ▼
              local-first history,     Cloudflare        GitHub
-             400-day retention)        Pages            Pages
+             5-calendar-year           Pages            Pages
+             retention)
                     │                       │               │
                     └──────────────┬────────┴───────────────┘
                                    ▼
@@ -624,7 +625,7 @@ open.er-api.com ──► GitHub Actions (00:00 UTC publish pass + 03:00 UTC ref
                              FXRateCache (short-lived)
 ```
 
-History is built from the committed `snapshot-archive/` directory (local-first, 400-day retention).
+History is built from the committed `snapshot-archive/` directory (local-first, five-calendar-year retention: snapshots dated on/after Jan 1 of currentYear − 4 are kept; the window fills forward over time since days pruned under the old 365/400-day policies cannot be resurrected).
 Dated Cloudflare branch deployments are a network fallback only, used to backfill
 missing days (e.g., first run or recovery from a reset).
 
@@ -633,7 +634,7 @@ missing days (e.g., first run or recovery from a reset).
 | File | Purpose |
 |------|---------|
 | `currscript.js` | Fetch rates, generate JSON files, manage snapshot archive |
-| `snapshot-archive/` | Committed daily snapshots (~5KB each, retained for 400 days with small gaps tolerated). Local-first history source. |
+| `snapshot-archive/` | Committed daily snapshots (~5KB each, retained for five calendar years — Jan 1 of currentYear − 4 onward — with small gaps tolerated). Local-first history source. |
 | `worker/` | Cloudflare Worker runtime for canonical `quote`, `history`, `coverage`, and `cron/fx-canary` routes |
 | `wrangler.jsonc` | Worker deployment config |
 | `.github/workflows/run.yml` | Daily cron, deploy to CDNs, commit archive |
