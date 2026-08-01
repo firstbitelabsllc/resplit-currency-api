@@ -2,7 +2,7 @@ name: Deploy (GCP / Cloud Run)
 
 # Manual, keyless deployment for the two existing Go runtime targets:
 #   - Cloud Run service: ocr
-#   - dormant Cloud Run job: fx-publish (image update only; this does not run it)
+#   - dormant Cloud Run job: fx-publish (immutable image + Grafana OTLP contract; this does not run it)
 # Sideload has no live service and is deliberately excluded.
 
 on:
@@ -161,7 +161,7 @@ jobs:
           DEPLOY_TRACE_ID: deploy-${{ github.run_id }}-${{ github.run_attempt }}
         run: bootstrap/deploy-ocr.sh
 
-      - name: Update dormant fx-publish job image
+      - name: Update dormant fx-publish job image + Grafana OTLP contract
         if: inputs.target == 'fx-publish'
         env:
           IMAGE: ${{ steps.immutable_images.outputs.fx_publish }}
