@@ -31,6 +31,7 @@ import (
 
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/fx"
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/httpx"
+	"github.com/firstbitelabsllc/resplit-currency-api/internal/obs"
 )
 
 const (
@@ -38,7 +39,9 @@ const (
 	envMinAgree   = "FX_MIN_AGREE"
 	envMaxRateAge = "FX_MAX_RATE_AGE"
 
-	defaultMinAgree = 2
+	defaultMinAgree   = 2
+	fxPublishService  = "fx-publish"
+	shutdownGracePeri = 10 * time.Second
 	// jobDeadline bounds the whole publish run so a hung provider can't keep a
 	// Job alive indefinitely (it would otherwise burn until Cloud Run's task
 	// timeout).
@@ -58,6 +61,23 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	tel := setupTelemetry(ctx, logger)
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeri)
+		defer cancel()
+		if err := tel.Shutdown(flushCtx); err != nil {
+			logger.Warn("otel shutdown error", slog.Any("error", err))
+		}
+	}()
+
+	// Publish jobs are short-lived. Recording both sources as unavailable before
+	// the run gives a failed job a useful last value; a successful run overwrites
+	// each source with its actual result before the periodic reader shuts down.
+	setSourceAvailability(ctx, tel, nil)
+
 	bucket := os.Getenv(envBucket)
 	if bucket == "" {
 		return fmt.Errorf("missing required env %s", envBucket)
@@ -70,8 +90,6 @@ func run(logger *slog.Logger) error {
 
 	// Cloud Run Jobs deliver SIGTERM on shutdown; bound the run with both a
 	// deadline and signal cancellation.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, jobDeadline)
 	defer cancel()
 
@@ -98,6 +116,8 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	setSourceAvailability(ctx, tel, result.Sources)
+	setSnapshotAge(ctx, tel, result.Date, time.Now().UTC(), logger)
 
 	logger.Info("fx-publish complete",
 		slog.String("base", result.Base),
@@ -107,6 +127,57 @@ func run(logger *slog.Logger) error {
 		slog.Any("failed_quorum", result.FailedQuorum),
 	)
 	return nil
+}
+
+func setupTelemetry(ctx context.Context, logger *slog.Logger) *obs.Telemetry {
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		return nil
+	}
+
+	exp, err := obs.OTLPHTTPExporters(ctx)
+	if err != nil {
+		logger.Warn("otlp exporters unavailable, telemetry disabled", slog.Any("error", err))
+		return nil
+	}
+	tel, err := obs.Setup(ctx, obs.Config{ServiceName: fxPublishService}, exp)
+	if err != nil {
+		logger.Warn("otel setup failed, telemetry disabled", slog.Any("error", err))
+		return nil
+	}
+	logger.Info("otel telemetry enabled", slog.String("service_name", fxPublishService))
+	return tel
+}
+
+func setSourceAvailability(ctx context.Context, tel *obs.Telemetry, available []string) {
+	set := make(map[string]struct{}, len(available))
+	for _, source := range available {
+		set[source] = struct{}{}
+	}
+	for _, source := range []string{"er-api", "frankfurter"} {
+		_, ok := set[source]
+		tel.SetFXSourceAvailable(ctx, source, ok)
+	}
+}
+
+func setSnapshotAge(ctx context.Context, tel *obs.Telemetry, date string, now time.Time, logger *slog.Logger) {
+	age, err := snapshotAge(date, now)
+	if err != nil {
+		logger.Warn("fx snapshot date unavailable for telemetry", slog.String("date", date), slog.Any("error", err))
+		return
+	}
+	tel.SetFXSnapshotAge(ctx, age)
+}
+
+func snapshotAge(date string, now time.Time) (time.Duration, error) {
+	snapshot, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return 0, err
+	}
+	age := now.UTC().Sub(snapshot.UTC())
+	if age < 0 {
+		age = 0
+	}
+	return age, nil
 }
 
 func minAgreeFromEnv() int {

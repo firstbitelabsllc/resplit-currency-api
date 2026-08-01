@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Update the dormant production FX publisher job by immutable image digest.
-# The job is never executed here. Any failure after mutation restores the last
-# completed execution's image and verifies that every non-image setting matches.
+# Update the dormant production FX publisher job by immutable image digest and
+# the canonical Grafana OTLP runtime contract. The job is never executed here.
+# Any failure after mutation restores the last completed execution's image and
+# verifies that every non-telemetry setting matches.
 set -euo pipefail
 
 PROJECT="${PROJECT:-resplit-fx-prod}"
@@ -9,6 +10,9 @@ REGION="${REGION:-us-central1}"
 REPO="${REPO:-resplit-fx}"
 JOB="${JOB:-fx-publish}"
 IMAGE="${IMAGE:?set IMAGE to an immutable resplit-fx/fx-publish@sha256: digest}"
+OTLP_ENDPOINT="${OTLP_ENDPOINT:-https://otlp-gateway-prod-us-east-2.grafana.net/otlp}"
+OTEL_SERVICE_NAME="${OTEL_SERVICE_NAME:-fx-publish}"
+OTEL_HEADERS_SECRET="${OTEL_HEADERS_SECRET:-grafana-otlp-auth-header}"
 GCLOUD="${GCLOUD:-gcloud}"
 command -v "$GCLOUD" >/dev/null 2>&1 || GCLOUD=gcloud
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +34,19 @@ if ! EXPECTED_RUNTIME_IMAGE="$(resolve_artifact_linux_amd64_image "$GCLOUD" "$IM
 fi
 
 normalize_contract() {
-  jq -Sc '.spec.template.spec | del(.template.spec.containers[0].image)'
+  jq -Sc '
+    .spec.template.spec
+    | del(.template.spec.containers[0].image)
+    | .template.spec.containers[0].env = (
+        (.template.spec.containers[0].env // [])
+        | map(select(
+            .name != "OTEL_EXPORTER_OTLP_ENDPOINT" and
+            .name != "OTEL_SERVICE_NAME" and
+            .name != "OTEL_EXPORTER_OTLP_PROTOCOL" and
+            .name != "OTEL_EXPORTER_OTLP_HEADERS"
+          ))
+      )
+  '
 }
 
 before="$("$GCLOUD" run jobs describe "$JOB" \
@@ -87,6 +103,8 @@ trap rollback_fx_image EXIT
 rollback_armed=true
 "$GCLOUD" run jobs update "$JOB" \
   --image="$EXPECTED_RUNTIME_IMAGE" \
+  --update-env-vars="OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT},OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME},OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf" \
+  --update-secrets="OTEL_EXPORTER_OTLP_HEADERS=${OTEL_HEADERS_SECRET}:latest" \
   --region="$REGION" --project="$PROJECT" --quiet
 
 after="$("$GCLOUD" run jobs describe "$JOB" \
@@ -94,6 +112,20 @@ after="$("$GCLOUD" run jobs describe "$JOB" \
 actual="$(printf '%s' "$after" | jq -r \
   '.spec.template.spec.template.spec.containers[0].image')"
 test "$actual" = "$EXPECTED_RUNTIME_IMAGE"
+telemetry_env_names="$(printf '%s' "$after" | jq -r '
+  .spec.template.spec.template.spec.containers[0].env[]?.name
+  | select(
+      . == "OTEL_EXPORTER_OTLP_ENDPOINT" or
+      . == "OTEL_SERVICE_NAME" or
+      . == "OTEL_EXPORTER_OTLP_PROTOCOL" or
+      . == "OTEL_EXPORTER_OTLP_HEADERS"
+    )
+  ' | sort | paste -sd, -)"
+test "$telemetry_env_names" = "OTEL_EXPORTER_OTLP_ENDPOINT,OTEL_EXPORTER_OTLP_HEADERS,OTEL_EXPORTER_OTLP_PROTOCOL,OTEL_SERVICE_NAME"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_ENDPOINT") | .value')" = "$OTLP_ENDPOINT"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_SERVICE_NAME") | .value')" = "$OTEL_SERVICE_NAME"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_PROTOCOL") | .value')" = "http/protobuf"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_HEADERS") | .valueSource.secretKeyRef.name')" = "$OTEL_HEADERS_SECRET"
 after_contract="$(printf '%s' "$after" | normalize_contract)"
 if [[ "$after_contract" != "$before_contract" ]]; then
   echo ">> FX publisher non-image contract drifted; restoring last proven digest" >&2
@@ -103,4 +135,4 @@ test "$(printf '%s' "$after" | jq -r '.status.latestCreatedExecution.name')" = "
 
 rollback_armed=false
 trap - EXIT
-echo ">> ${JOB} image updated by digest without executing the job or changing its contract"
+echo ">> ${JOB} image + Grafana OTLP contract updated without executing the job"
