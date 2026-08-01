@@ -679,3 +679,21 @@ documented).
 scheduled run proves the signals live. Deferred follow-up (not this change): cap `/history` range
 fan-out (worker/src/index.mjs:230-259 fetches one year-shard per requested year, up to 5-6 at
 steady state; MAX_FX_HISTORY_RANGE_DAYS exists only on /coverage).
+
+## 2026-08-01 — Reviewed candidate pushed (normal non-force)
+
+- Fresh scratch proof merged the local reviewed head `3401915a`, PR #102 tip
+  `91f9a332`, and PR #103 tip `07e71efe` onto currency `origin/main`
+  `1d6e9717` in one batch. `npm ci` passed; `npm run check` passed with
+  `604/604` Node tests and worker Vitest passed `16/16`.
+- Thermo: no structural blocker. Ponytail: keep the existing currscript,
+  validation, Sentry, and workflow owners; the deferred `/history` fan-out cap
+  remains a follow-up. No deploy, secret, or live-service action occurred.
+- Normal push receipt: `git push origin HEAD:refs/heads/claude/fx-alerting-retention-20260731`
+  succeeded; remote ref now resolves to `3401915a894d3d6f4731acf529252d206cda0e4c`.
+  The pre-existing PR #101 branch remains divergent at `419559e0`; it was not
+  force-pushed or changed. The generated local
+  `snapshot-archive/2026-08-01.json` remains preserved and uncommitted.
+- Exact next gate: review the pushed branch through the normal PR route, then
+  let the next scheduled publish prove the alert signals live. Do not deploy
+  from this lane.
