@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -89,10 +90,12 @@ type CurrencyObject struct {
 
 // PublishResult summarizes a publish run for the caller's logs and telemetry.
 //
-// Sources is populated on every return after the fetch fan-out, including the
-// gate failures that abort the publish: during a partial upstream outage the
-// caller must still be able to tell a healthy provider from a failed one.
-// Every other field is only meaningful when the run succeeded.
+// Sources names the upstreams that returned a usable snapshot, and is populated
+// on the gate failures that abort the publish too: during a partial upstream
+// outage the caller must still be able to tell a healthy provider from a failed
+// one. The one exception is the freshness gate, which excludes every snapshot it
+// rejects and so reports no available sources (their names go into the error
+// instead). Every other field is only meaningful when the run succeeded.
 type PublishResult struct {
 	Base          string   // EUR — the reconciliation base
 	Date          string   // reconciled snapshot date
@@ -139,9 +142,12 @@ func PublishLatest(ctx context.Context, sources []Source, w ObjectWriter, cfg Pu
 	// A snapshot with an unparseable/blank date is treated as "fresh enough" so a
 	// provider that omits a date can still anchor a publish, but it cannot be the
 	// SOLE basis — coverage above already guarantees >= minAgree sources.
+	// The freshness gate excludes every snapshot it rejects, so no source is
+	// contributing here: report none as available and keep the fetched names in
+	// the error for diagnostics, otherwise a stale-data outage looks healthy.
 	if !anyFresh(snaps, cfg.now(), cfg.maxRateAge()) {
-		return PublishResult{Sources: fetched}, fmt.Errorf("%w: all %d snapshots older than %s",
-			ErrStaleGate, len(snaps), cfg.maxRateAge())
+		return PublishResult{}, fmt.Errorf("%w: all %d snapshots older than %s (fetched: %s)",
+			ErrStaleGate, len(snaps), cfg.maxRateAge(), strings.Join(fetched, ","))
 	}
 
 	rates, failed, err := Reconcile(snaps, cfg.MinAgree)

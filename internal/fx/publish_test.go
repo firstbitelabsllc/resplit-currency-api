@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -196,6 +197,7 @@ func TestPublishLatest_ReportsFetchedSourcesWhenGatesFail(t *testing.T) {
 		sources []Source
 		cfg     PublishConfig
 		want    []string
+		wantErr string // substring the error must carry, when set
 	}{
 		{
 			name: "coverage gate keeps the surviving provider",
@@ -207,13 +209,17 @@ func TestPublishLatest_ReportsFetchedSourcesWhenGatesFail(t *testing.T) {
 			want: []string{"frankfurter"},
 		},
 		{
-			name: "freshness gate keeps both providers",
+			// The freshness gate excludes every snapshot, so no provider is
+			// contributing: naming them here would report a stale-data outage as
+			// two healthy sources.
+			name: "freshness gate names no provider",
 			sources: []Source{
 				fakeSource{snap: eurBaseSnap("er-api", "2026-01-01", 1.0850, 0.8550, 168.20)},
 				fakeSource{snap: eurBaseSnap("frankfurter", "2026-01-01", 1.0853, 0.8548, 168.30)},
 			},
-			cfg:  PublishConfig{MinAgree: 2, MaxRateAge: 96 * time.Hour, Now: fixedNow(today)},
-			want: []string{"er-api", "frankfurter"},
+			cfg:     PublishConfig{MinAgree: 2, MaxRateAge: 96 * time.Hour, Now: fixedNow(today)},
+			want:    nil,
+			wantErr: "fetched: er-api,frankfurter",
 		},
 		{
 			name: "empty reconcile keeps both providers",
@@ -240,6 +246,9 @@ func TestPublishLatest_ReportsFetchedSourcesWhenGatesFail(t *testing.T) {
 			}
 			if !equalStrings(result.Sources, tt.want) {
 				t.Fatalf("result.Sources = %v, want %v", result.Sources, tt.want)
+			}
+			if tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
 	}
