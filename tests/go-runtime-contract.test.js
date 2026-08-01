@@ -205,7 +205,7 @@ function assertCanonicalFxUpdate(source) {
   assert.match(source, /\[\[ ! "\$TARGET_DIGEST" =~ \^\[0-9a-f\]\{64\}\$ \]\]/)
   assert.match(source, /select\(\.type == "Completed"\)/, 'rollback must come from a completed execution')
   assert.equal(
-    occurrences(source, ".spec.template.spec | del(.template.spec.containers[0].image)"),
+    occurrences(source, ".spec.template.spec | del(.containers[0].image)"),
     1,
     'one normalizer must compare the complete job contract except image'
   )
@@ -461,8 +461,8 @@ test('manual GCP deploy follows the real topology and immutable path, including 
     ['image prefix', fxScript.replace('/fx-publish@sha256:', '/wrong:latest')],
     ['completed execution', fxScript.replace('select(.type == "Completed")', 'select(.type == "Started")')],
     ['whole contract', fxScript.replace(
-      '.spec.template.spec | del(.template.spec.containers[0].image)',
-      '.spec.template.spec.template.spec.containers[0].env'
+      '.spec.template.spec | del(.containers[0].image)',
+      '.spec.template.spec.containers[0].env'
     )],
     ['rollback trap', fxScript.replace('trap rollback_fx_image EXIT', '# rollback removed')],
     ['runtime child pin', fxScript.replace('--image="$EXPECTED_RUNTIME_IMAGE"', '--image="$IMAGE"')],
