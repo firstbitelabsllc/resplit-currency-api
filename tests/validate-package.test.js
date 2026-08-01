@@ -345,21 +345,14 @@ test('validate-package requires baseline metadata to contain every latest-prior 
     .find((source) => source.kind === 'latest_prior_archive')
 
   assert.ok(priorSource)
-
-  // validate-package checks the baseline/source-union equality BEFORE the
-  // prior-archive completeness rule, so dropping a code that only this source
-  // carries shrinks the union and trips the earlier rule instead. Drop a code
-  // that another source also lists to keep the union intact and leave the
-  // prior-archive rule as the one under test.
-  const otherSourceCodes = new Set(
+  // Keep the declared union consistent after removing a code. This makes the
+  // fixture independent of whether the generated package has a same-day
+  // source that happens to share a code with the prior archive, so the
+  // prior-archive completeness rule is the first invariant to fail.
+  priorSource.currencyCodes = priorSource.currencyCodes.slice(1)
+  snapshot.trustedCurrencyBaseline.currencyCodes = baselineUnion(
     snapshot.trustedCurrencyBaseline.sources
-      .filter((source) => source !== priorSource)
-      .flatMap((source) => source.currencyCodes)
   )
-  const sharedCode = priorSource.currencyCodes.find((code) => otherSourceCodes.has(code))
-
-  assert.ok(sharedCode, 'expected the prior archive to share a currency code with another source')
-  priorSource.currencyCodes = priorSource.currencyCodes.filter((code) => code !== sharedCode)
   fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
 
   assert.throws(
