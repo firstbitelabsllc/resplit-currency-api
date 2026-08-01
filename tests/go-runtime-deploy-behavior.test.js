@@ -14,6 +14,28 @@ const repo = 'resplit-fx'
 const ocrPrefix = `${region}-docker.pkg.dev/${project}/${repo}/ocr@sha256:`
 const fxPrefix = `${region}-docker.pkg.dev/${project}/${repo}/fx-publish@sha256:`
 
+// The canonical FX update rail also writes the Grafana OTLP runtime contract.
+// Tests pin the telemetry inputs so the fake job state is hermetic instead of
+// depending on the script's production defaults.
+const fxTelemetryInput = {
+  OTLP_ENDPOINT: 'https://otlp-gateway.test/otlp',
+  OTEL_SERVICE_NAME: 'fx-publish',
+  OTEL_HEADERS_SECRET: 'grafana-otlp-auth-header',
+}
+const fxJobEnv = {
+  IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
+  JOB: 'fx-publish',
+  ...fxTelemetryInput,
+}
+const expectedFxTelemetryEnv = {
+  OTEL_EXPORTER_OTLP_ENDPOINT: fxTelemetryInput.OTLP_ENDPOINT,
+  OTEL_SERVICE_NAME: fxTelemetryInput.OTEL_SERVICE_NAME,
+  OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+}
+const expectedFxTelemetrySecrets = {
+  OTEL_EXPORTER_OTLP_HEADERS: { name: fxTelemetryInput.OTEL_HEADERS_SECRET, key: 'latest' },
+}
+
 function writeExecutable(file, source) {
   fs.writeFileSync(file, source, { mode: 0o755 })
 }
@@ -31,9 +53,10 @@ function makeHarness(mode, scenario) {
       mode,
       scenario,
       image: `${fxPrefix}${'a'.repeat(64)}`,
-      env: [{ name: 'SAFE', value: '1' }],
       drift: false,
       describeCount: 0,
+      env: {},
+      secrets: {},
       events: [],
     }
   fs.writeFileSync(stateFile, JSON.stringify(initial))
@@ -168,79 +191,80 @@ for (const scenario of ['contract_fail', 'readback_mismatch']) {
   test(`FX ${scenario} restores the last completed digest and the whole non-image contract`, (t) => {
     const harness = makeHarness('fx', scenario)
     t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
-    const result = runScript(fxScript, harness, {
-      IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
-      JOB: 'fx-publish',
-    })
+    const result = runScript(fxScript, harness, fxJobEnv)
     assert.notEqual(result.status, 0, result.stdout + result.stderr)
     const state = readState(harness)
     assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
     assert.equal(state.drift, false)
     assert.deepEqual(state.events, ['update-target', 'rollback-image'])
+    // Rollback restores the digest only: telemetry is deliberately outside the
+    // compared contract, so the applied variables survive the restore.
+    assert.deepEqual(state.env, expectedFxTelemetryEnv)
+    assert.deepEqual(state.secrets, expectedFxTelemetrySecrets)
   })
 }
 
-test('FX success updates the image and Grafana OTLP contract without executing the dormant job', (t) => {
+test('FX success applies the telemetry contract and never executes the dormant job', (t) => {
   const harness = makeHarness('fx', 'success')
   t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
-  const result = runScript(fxScript, harness, {
-    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
-    JOB: 'fx-publish',
-  })
+  const result = runScript(fxScript, harness, fxJobEnv)
   assert.equal(result.status, 0, result.stdout + result.stderr)
   const state = readState(harness)
   assert.equal(state.image, `${fxPrefix}${'b'.repeat(64)}`)
   assert.equal(state.drift, false)
-  assert.deepEqual(state.env, [
-    { name: 'SAFE', value: '1' },
-    { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', value: 'https://otlp-gateway-prod-us-east-2.grafana.net/otlp' },
-    { name: 'OTEL_SERVICE_NAME', value: 'fx-publish' },
-    { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'http/protobuf' },
-    { name: 'OTEL_EXPORTER_OTLP_HEADERS', valueFrom: { secretKeyRef: { name: 'grafana-otlp-auth-header', key: 'latest' } } },
-  ])
   assert.deepEqual(state.events, ['update-target'])
+  assert.deepEqual(state.env, expectedFxTelemetryEnv)
+  assert.deepEqual(state.secrets, expectedFxTelemetrySecrets)
 })
 
 test('FX accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
   const harness = makeHarness('fx', 'manifest_index_success')
   t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
-  const result = runScript(fxScript, harness, {
-    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
-    JOB: 'fx-publish',
-  })
+  const result = runScript(fxScript, harness, fxJobEnv)
   assert.equal(result.status, 0, result.stdout + result.stderr)
   const state = readState(harness)
   assert.equal(state.image, `${fxPrefix}${'c'.repeat(64)}`)
   assert.equal(state.drift, false)
   assert.deepEqual(state.events, ['update-target'])
+  assert.deepEqual(state.env, expectedFxTelemetryEnv)
+  assert.deepEqual(state.secrets, expectedFxTelemetrySecrets)
+})
+
+test('FX rolls back when the job readback is missing a telemetry variable', (t) => {
+  const harness = makeHarness('fx', 'telemetry_drop')
+  t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
+  const result = runScript(fxScript, harness, fxJobEnv)
+  assert.notEqual(result.status, 0, result.stdout + result.stderr)
+  const state = readState(harness)
+  assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
+  assert.deepEqual(state.events, ['update-target', 'rollback-image'])
+  assert.deepEqual(state.secrets, {}, 'the dropped OTLP header binding must not be reported as applied')
 })
 
 test('FX rejects an ambiguous OCI index before mutating the dormant job', (t) => {
   const harness = makeHarness('fx', 'manifest_index_ambiguous')
   t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
-  const result = runScript(fxScript, harness, {
-    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
-    JOB: 'fx-publish',
-  })
+  const result = runScript(fxScript, harness, fxJobEnv)
   assert.notEqual(result.status, 0, result.stdout + result.stderr)
   const state = readState(harness)
   assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
   assert.equal(state.drift, false)
   assert.deepEqual(state.events, [])
+  assert.deepEqual(state.env, {})
+  assert.deepEqual(state.secrets, {})
 })
 
 test('FX rejects a parseable manifest delivered by a failed registry transport', (t) => {
   const harness = makeHarness('fx', 'manifest_transport_fail')
   t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
-  const result = runScript(fxScript, harness, {
-    IMAGE: `${fxPrefix}${'b'.repeat(64)}`,
-    JOB: 'fx-publish',
-  })
+  const result = runScript(fxScript, harness, fxJobEnv)
   assert.notEqual(result.status, 0, result.stdout + result.stderr)
   const state = readState(harness)
   assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
   assert.equal(state.drift, false)
   assert.deepEqual(state.events, [])
+  assert.deepEqual(state.env, {})
+  assert.deepEqual(state.secrets, {})
 })
 
 function fakeGcloudSource() {
@@ -325,13 +349,22 @@ if (state.mode === 'fx') {
         !state.events.includes('rollback-image') && state.describeCount === 2) {
       reportedImage = 'us-central1-docker.pkg.dev/test-project/resplit-fx/fx-publish@sha256:' + 'c'.repeat(64)
     }
+    // Cloud Run keeps every previously applied env var and secret binding on the
+    // job; --update-env-vars/--update-secrets only add or overwrite entries.
+    const env = [{ name: 'SAFE', value: '1' }]
+    for (const [name, value] of Object.entries(state.env)) {
+      env.push({ name, value })
+    }
+    for (const [name, secret] of Object.entries(state.secrets)) {
+      env.push({ name, valueFrom: { secretKeyRef: { name: secret.name, key: secret.key } } })
+    }
     const spec = {
       taskCount: 1,
       template: { spec: {
         serviceAccountName: 'runtime@test-project.iam.gserviceaccount.com',
         maxRetries: 1,
         timeoutSeconds: '300',
-        containers: [{ image: reportedImage, env: state.env, resources: { limits: { cpu: '1' } } }],
+        containers: [{ image: reportedImage, env, resources: { limits: { cpu: '1' } } }],
       } },
     }
     if (state.drift) spec.parallelism = 2
@@ -351,28 +384,27 @@ if (state.mode === 'fx') {
   }
   if (args[0] === 'run' && args[1] === 'jobs' && args[2] === 'update') {
     const image = arg('--image=').slice('--image='.length)
+    const flagPairs = (prefix) => {
+      const raw = arg(prefix)
+      if (!raw) return []
+      return raw.slice(prefix.length).split(',').filter(Boolean).map(pair => {
+        const at = pair.indexOf('=')
+        return [pair.slice(0, at), pair.slice(at + 1)]
+      })
+    }
+    for (const [name, value] of flagPairs('--update-env-vars=')) {
+      delete state.secrets[name]
+      state.env[name] = value
+    }
+    for (const [name, reference] of flagPairs('--update-secrets=')) {
+      // telemetry_drop models a job that accepts the update but comes back
+      // without the OTLP header binding; the readback must catch it.
+      if (state.scenario === 'telemetry_drop') continue
+      const at = reference.lastIndexOf(':')
+      delete state.env[name]
+      state.secrets[name] = { name: reference.slice(0, at), key: reference.slice(at + 1) }
+    }
     const rollback = image.endsWith('a'.repeat(64))
-    const telemetryEnvNames = new Set([
-      'OTEL_EXPORTER_OTLP_ENDPOINT',
-      'OTEL_SERVICE_NAME',
-      'OTEL_EXPORTER_OTLP_PROTOCOL',
-      'OTEL_EXPORTER_OTLP_HEADERS',
-    ])
-    const updateEnvVars = arg('--update-env-vars=')
-    if (updateEnvVars) {
-      state.env = state.env.filter(({ name }) => !telemetryEnvNames.has(name))
-      for (const pair of updateEnvVars.slice('--update-env-vars='.length).split(',')) {
-        const separator = pair.indexOf('=')
-        state.env.push({ name: pair.slice(0, separator), value: pair.slice(separator + 1) })
-      }
-    }
-    const updateSecrets = arg('--update-secrets=')
-    if (updateSecrets) {
-      const [name, reference] = updateSecrets.slice('--update-secrets='.length).split('=')
-      const [secretName] = reference.split(':')
-      state.env = state.env.filter(({ name: envName }) => envName !== name)
-      state.env.push({ name, valueFrom: { secretKeyRef: { name: secretName, key: 'latest' } } })
-    }
     state.image = image
     state.drift = rollback ? false : state.scenario === 'contract_fail'
     state.events.push(rollback ? 'rollback-image' : 'update-target')

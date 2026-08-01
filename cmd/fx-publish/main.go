@@ -113,10 +113,13 @@ func run(logger *slog.Logger) error {
 	)
 
 	result, err := fx.PublishLatest(ctx, sources, writer, cfg)
+	// Report per-source availability on both paths: a quorum failure is exactly
+	// the outage where a healthy upstream must stay distinguishable from the one
+	// that went down, and PublishLatest reports its fetch outcomes either way.
+	setSourceAvailability(ctx, tel, result.Sources)
 	if err != nil {
 		return err
 	}
-	setSourceAvailability(ctx, tel, result.Sources)
 	setSnapshotAge(ctx, tel, result.Date, time.Now().UTC(), logger)
 
 	logger.Info("fx-publish complete",
