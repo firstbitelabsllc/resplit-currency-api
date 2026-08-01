@@ -196,7 +196,7 @@ test('FX success updates the image and Grafana OTLP contract without executing t
     { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', value: 'https://otlp-gateway-prod-us-east-2.grafana.net/otlp' },
     { name: 'OTEL_SERVICE_NAME', value: 'fx-publish' },
     { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'http/protobuf' },
-    { name: 'OTEL_EXPORTER_OTLP_HEADERS', valueSource: { secretKeyRef: { name: 'grafana-otlp-auth-header', key: 'latest' } } },
+    { name: 'OTEL_EXPORTER_OTLP_HEADERS', valueFrom: { secretKeyRef: { name: 'grafana-otlp-auth-header', key: 'latest' } } },
   ])
   assert.deepEqual(state.events, ['update-target'])
 })
@@ -327,10 +327,12 @@ if (state.mode === 'fx') {
     }
     const spec = {
       taskCount: 1,
-      serviceAccountName: 'runtime@test-project.iam.gserviceaccount.com',
-      maxRetries: 1,
-      timeoutSeconds: '300',
-      containers: [{ image: reportedImage, env: state.env, resources: { limits: { cpu: '1' } } }],
+      template: { spec: {
+        serviceAccountName: 'runtime@test-project.iam.gserviceaccount.com',
+        maxRetries: 1,
+        timeoutSeconds: '300',
+        containers: [{ image: reportedImage, env: state.env, resources: { limits: { cpu: '1' } } }],
+      } },
     }
     if (state.drift) spec.parallelism = 2
     save()
@@ -369,7 +371,7 @@ if (state.mode === 'fx') {
       const [name, reference] = updateSecrets.slice('--update-secrets='.length).split('=')
       const [secretName] = reference.split(':')
       state.env = state.env.filter(({ name: envName }) => envName !== name)
-      state.env.push({ name, valueSource: { secretKeyRef: { name: secretName, key: 'latest' } } })
+      state.env.push({ name, valueFrom: { secretKeyRef: { name: secretName, key: 'latest' } } })
     }
     state.image = image
     state.drift = rollback ? false : state.scenario === 'contract_fail'
