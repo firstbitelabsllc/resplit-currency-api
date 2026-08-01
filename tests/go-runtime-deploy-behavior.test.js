@@ -27,7 +27,15 @@ function makeHarness(mode, scenario) {
   fs.writeFileSync(fixture, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
   const initial = mode === 'ocr'
     ? { mode, scenario, current: 'ocr-prev', candidateCreated: false, candidateTag: null, events: [] }
-    : { mode, scenario, image: `${fxPrefix}${'a'.repeat(64)}`, drift: false, describeCount: 0, events: [] }
+    : {
+      mode,
+      scenario,
+      image: `${fxPrefix}${'a'.repeat(64)}`,
+      env: [{ name: 'SAFE', value: '1' }],
+      drift: false,
+      describeCount: 0,
+      events: [],
+    }
   fs.writeFileSync(stateFile, JSON.stringify(initial))
   writeExecutable(path.join(bin, 'gcloud'), fakeGcloudSource())
   writeExecutable(path.join(bin, 'curl'), fakeCurlSource())
@@ -172,7 +180,7 @@ for (const scenario of ['contract_fail', 'readback_mismatch']) {
   })
 }
 
-test('FX success updates only the image and never executes the dormant job', (t) => {
+test('FX success updates the image and Grafana OTLP contract without executing the dormant job', (t) => {
   const harness = makeHarness('fx', 'success')
   t.after(() => fs.rmSync(harness.root, { recursive: true, force: true }))
   const result = runScript(fxScript, harness, {
@@ -183,6 +191,13 @@ test('FX success updates only the image and never executes the dormant job', (t)
   const state = readState(harness)
   assert.equal(state.image, `${fxPrefix}${'b'.repeat(64)}`)
   assert.equal(state.drift, false)
+  assert.deepEqual(state.env, [
+    { name: 'SAFE', value: '1' },
+    { name: 'OTEL_EXPORTER_OTLP_ENDPOINT', value: 'https://otlp-gateway-prod-us-east-2.grafana.net/otlp' },
+    { name: 'OTEL_SERVICE_NAME', value: 'fx-publish' },
+    { name: 'OTEL_EXPORTER_OTLP_PROTOCOL', value: 'http/protobuf' },
+    { name: 'OTEL_EXPORTER_OTLP_HEADERS', valueSource: { secretKeyRef: { name: 'grafana-otlp-auth-header', key: 'latest' } } },
+  ])
   assert.deepEqual(state.events, ['update-target'])
 })
 
@@ -316,7 +331,7 @@ if (state.mode === 'fx') {
         serviceAccountName: 'runtime@test-project.iam.gserviceaccount.com',
         maxRetries: 1,
         timeoutSeconds: '300',
-        containers: [{ image: reportedImage, env: [{ name: 'SAFE', value: '1' }], resources: { limits: { cpu: '1' } } }],
+        containers: [{ image: reportedImage, env: state.env, resources: { limits: { cpu: '1' } } }],
       } },
     }
     if (state.drift) spec.parallelism = 2
@@ -337,6 +352,27 @@ if (state.mode === 'fx') {
   if (args[0] === 'run' && args[1] === 'jobs' && args[2] === 'update') {
     const image = arg('--image=').slice('--image='.length)
     const rollback = image.endsWith('a'.repeat(64))
+    const telemetryEnvNames = new Set([
+      'OTEL_EXPORTER_OTLP_ENDPOINT',
+      'OTEL_SERVICE_NAME',
+      'OTEL_EXPORTER_OTLP_PROTOCOL',
+      'OTEL_EXPORTER_OTLP_HEADERS',
+    ])
+    const updateEnvVars = arg('--update-env-vars=')
+    if (updateEnvVars) {
+      state.env = state.env.filter(({ name }) => !telemetryEnvNames.has(name))
+      for (const pair of updateEnvVars.slice('--update-env-vars='.length).split(',')) {
+        const separator = pair.indexOf('=')
+        state.env.push({ name: pair.slice(0, separator), value: pair.slice(separator + 1) })
+      }
+    }
+    const updateSecrets = arg('--update-secrets=')
+    if (updateSecrets) {
+      const [name, reference] = updateSecrets.slice('--update-secrets='.length).split('=')
+      const [secretName] = reference.split(':')
+      state.env = state.env.filter(({ name: envName }) => envName !== name)
+      state.env.push({ name, valueSource: { secretKeyRef: { name: secretName, key: 'latest' } } })
+    }
     state.image = image
     state.drift = rollback ? false : state.scenario === 'contract_fail'
     state.events.push(rollback ? 'rollback-image' : 'update-target')

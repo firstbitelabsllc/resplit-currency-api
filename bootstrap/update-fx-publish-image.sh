@@ -35,8 +35,7 @@ fi
 
 normalize_contract() {
   jq -Sc '
-    .spec.template.spec
-    | del(.template.spec.containers[0].image)
+    .spec.template.spec | del(.template.spec.containers[0].image)
     | .template.spec.containers[0].env = (
         (.template.spec.containers[0].env // [])
         | map(select(
