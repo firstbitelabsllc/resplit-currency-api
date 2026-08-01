@@ -327,12 +327,10 @@ if (state.mode === 'fx') {
     }
     const spec = {
       taskCount: 1,
-      template: { spec: {
-        serviceAccountName: 'runtime@test-project.iam.gserviceaccount.com',
-        maxRetries: 1,
-        timeoutSeconds: '300',
-        containers: [{ image: reportedImage, env: state.env, resources: { limits: { cpu: '1' } } }],
-      } },
+      serviceAccountName: 'runtime@test-project.iam.gserviceaccount.com',
+      maxRetries: 1,
+      timeoutSeconds: '300',
+      containers: [{ image: reportedImage, env: state.env, resources: { limits: { cpu: '1' } } }],
     }
     if (state.drift) spec.parallelism = 2
     save()
