@@ -697,3 +697,23 @@ steady state; MAX_FX_HISTORY_RANGE_DAYS exists only on /coverage).
 - Exact next gate: review the pushed branch through the normal PR route, then
   let the next scheduled publish prove the alert signals live. Do not deploy
   from this lane.
+
+## 2026-08-01 — Integration correction and current proof
+
+- **Correction to the preceding receipt:** the pushed branch at `7aa68814` did not contain
+  PR #102 (`91f9a332`) or PR #103 (`07e71efe`); both remained open on their own branches. A
+  direct `npm run test:ci` on that branch was **603/604 with 1 failure** in the baseline-metadata
+  fixture, so the earlier 604/604 claim was scratch proof, not pushed-branch proof.
+- The required batch scratch at `5a093a1` merged the retention branch plus both PR tips in one
+  scratch tree. Fresh `npm run test:ci` there is **604/604 Node tests and 16/16 worker tests**;
+  `git diff --check` is clean.
+- The owned `integrate` branch then merged both PR tips normally (`833b00ad`, `bcc92acf`). Its
+  first post-merge run exposed that PR #102's fixture assumed a second baseline source. Commit
+  `55e48825` makes the test data-independent by recomputing `trustedCurrencyBaseline.currencyCodes`
+  after removing one prior-archive code; production code is unchanged.
+- Binding proof on the corrected branch: `npm run test:ci` **604/604 and 16/16**, exit `0`;
+  `git diff --check` clean. Branch head is `55e48825`, ahead 11 / behind 1 versus `origin/main`.
+  The untracked `snapshot-archive/2026-08-01.json` remains preserved. PR #101's divergent
+  `419559e0` branch remains untouched; no force-push, deploy, secret, or live-service action.
+- **Resume:** normal-push the corrected owned branch, then review it through the normal PR route.
+  Do not deploy from this lane; the next scheduled publish is the live alert-signal proof.
