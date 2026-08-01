@@ -35,9 +35,9 @@ fi
 
 normalize_contract() {
   jq -Sc '
-    .spec.template.spec | del(.containers[0].image)
-    | .containers[0].env = (
-        (.containers[0].env // [])
+    .spec.template.spec | del(.template.spec.containers[0].image)
+    | .template.spec.containers[0].env = (
+        (.template.spec.containers[0].env // [])
         | map(select(
             .name != "OTEL_EXPORTER_OTLP_ENDPOINT" and
             .name != "OTEL_SERVICE_NAME" and
@@ -86,7 +86,7 @@ rollback_fx_image() {
       restored="$("$GCLOUD" run jobs describe "$JOB" \
         --region="$REGION" --project="$PROJECT" --format=json 2>/dev/null || true)"
       restored_image="$(printf '%s' "$restored" | jq -r \
-        '.spec.template.spec.containers[0].image // empty' 2>/dev/null || true)"
+        '.spec.template.spec.template.spec.containers[0].image // empty' 2>/dev/null || true)"
       restored_contract="$(printf '%s' "$restored" | normalize_contract 2>/dev/null || true)"
       if [[ "$restored_image" != "$rollback_image" ||
             "$restored_contract" != "$before_contract" ]]; then
@@ -109,10 +109,10 @@ rollback_armed=true
 after="$("$GCLOUD" run jobs describe "$JOB" \
   --region="$REGION" --project="$PROJECT" --format=json)"
 actual="$(printf '%s' "$after" | jq -r \
-  '.spec.template.spec.containers[0].image')"
+  '.spec.template.spec.template.spec.containers[0].image')"
 test "$actual" = "$EXPECTED_RUNTIME_IMAGE"
 telemetry_env_names="$(printf '%s' "$after" | jq -r '
-  .spec.template.spec.containers[0].env[]?.name
+  .spec.template.spec.template.spec.containers[0].env[]?.name
   | select(
       . == "OTEL_EXPORTER_OTLP_ENDPOINT" or
       . == "OTEL_SERVICE_NAME" or
@@ -121,10 +121,10 @@ telemetry_env_names="$(printf '%s' "$after" | jq -r '
     )
   ' | sort | paste -sd, -)"
 test "$telemetry_env_names" = "OTEL_EXPORTER_OTLP_ENDPOINT,OTEL_EXPORTER_OTLP_HEADERS,OTEL_EXPORTER_OTLP_PROTOCOL,OTEL_SERVICE_NAME"
-test "$(printf '%s' "$after" | jq -r '.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_ENDPOINT") | .value')" = "$OTLP_ENDPOINT"
-test "$(printf '%s' "$after" | jq -r '.spec.template.spec.containers[0].env[] | select(.name == "OTEL_SERVICE_NAME") | .value')" = "$OTEL_SERVICE_NAME"
-test "$(printf '%s' "$after" | jq -r '.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_PROTOCOL") | .value')" = "http/protobuf"
-test "$(printf '%s' "$after" | jq -r '.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_HEADERS") | .valueSource.secretKeyRef.name')" = "$OTEL_HEADERS_SECRET"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_ENDPOINT") | .value')" = "$OTLP_ENDPOINT"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_SERVICE_NAME") | .value')" = "$OTEL_SERVICE_NAME"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_PROTOCOL") | .value')" = "http/protobuf"
+test "$(printf '%s' "$after" | jq -r '.spec.template.spec.template.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_HEADERS") | .valueFrom.secretKeyRef.name')" = "$OTEL_HEADERS_SECRET"
 after_contract="$(printf '%s' "$after" | normalize_contract)"
 if [[ "$after_contract" != "$before_contract" ]]; then
   echo ">> FX publisher non-image contract drifted; restoring last proven digest" >&2
