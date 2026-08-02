@@ -156,7 +156,9 @@ GET https://resplit-currency-api.pages.dev/latest/aed.json
 
 ## Observability
 
-This repo includes Sentry-based publisher and Worker observability.
+The [Resplit FX — Observability dashboard](https://firstbitelabs.grafana.net/d/resplit-fx-observability/resplit-fx-e28094-observability) is the canonical Grafana Cloud view for this repo's metrics, logs, traces, uptime, and alerting. The cross-repo migration is tracked in the [Grafana consolidation plan](https://github.com/leojkwan/ai-leo/blob/main/plans/grafana-consolidation/PLAN.md).
+
+This repo also includes Sentry-based publisher and Worker observability while the Grafana alerting and delivery gates are being closed.
 
 - `scripts/sentry-monitoring.js` initializes `@sentry/node` with surface, environment, and release metadata for the publisher workflow.
 - `scripts/sentry-checkin.js` emits cron monitor check-ins for the scheduled daily publish workflow only, so manual `workflow_dispatch` reruns do not create false missed/failure incidents on the daily monitor.
