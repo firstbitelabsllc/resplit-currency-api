@@ -62,6 +62,10 @@ jobs:
         id: sentry_checkin
         run: node scripts/sentry-checkin.js start >> "$GITHUB_OUTPUT"
 
+      # The initial attempt is retry context only. The terminal retry emits one
+      # dedicated generation_retry_failure issue; the always-run Finish Sentry
+      # publish check-in is an independent scheduled-run health signal and may
+      # create a separate monitor issue for the failed run.
       - name: Fetch and generate rates
         id: generate
         continue-on-error: true

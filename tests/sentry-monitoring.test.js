@@ -8,6 +8,8 @@ function createSentryMock() {
   return {
     initCalls: [],
     captureCheckInCalls: [],
+    captureExceptionCalls: [],
+    captureMessageCalls: [],
     flushCalls: [],
     logger: {
       info() {},
@@ -35,8 +37,12 @@ function createSentryMock() {
         setContext() {},
       })
     },
-    captureException() {},
-    captureMessage() {},
+    captureException(error) {
+      this.captureExceptionCalls.push(error)
+    },
+    captureMessage(message) {
+      this.captureMessageCalls.push(message)
+    },
   }
 }
 
@@ -192,5 +198,38 @@ test('finishWorkflowCheckIn skips monitor completion for workflow_dispatch runs'
     assert.equal(result, false)
     assert.equal(sentryMock.captureCheckInCalls.length, 0)
     assert.equal(sentryMock.flushCalls.length, 0)
+  })
+})
+
+test('runMonitoredScript emits one generation issue only for the terminal retry', async () => {
+  await withMonitoringModule({
+    SENTRY_CURRENCY_API_DSN: 'https://currency@example.ingest.sentry.io/1',
+    SENTRY_DSN: undefined,
+    GITHUB_EVENT_NAME: 'schedule',
+  }, async ({ monitoring, sentryMock }) => {
+    await assert.rejects(
+      monitoring.runMonitoredScript('currency_publish', async () => {
+        throw new Error('transient generation failure')
+      }, {
+        workflow: 'daily_publish',
+        failureSignal: 'generation_retry_failure',
+        captureFailure: false,
+      }),
+      /transient generation failure/
+    )
+    assert.equal(sentryMock.captureExceptionCalls.length, 0)
+    assert.equal(sentryMock.captureMessageCalls.length, 0)
+
+    await assert.rejects(
+      monitoring.runMonitoredScript('currency_publish', async () => {
+        throw new Error('terminal generation failure')
+      }, {
+        workflow: 'daily_publish',
+        failureSignal: 'generation_retry_failure',
+        captureFailure: true,
+      }),
+      /terminal generation failure/
+    )
+    assert.equal(sentryMock.captureExceptionCalls.length + sentryMock.captureMessageCalls.length, 1)
   })
 })

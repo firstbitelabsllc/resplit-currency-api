@@ -210,8 +210,9 @@ async function runMonitoredScript(scriptName, fn, options = {}) {
     successSignal = `${scriptName}_ok`,
     failureSignal = `${scriptName}_failed`,
     // A caller that has a bounded retry may keep its first failed attempt in
-    // logs and the workflow result without opening an incident. The final
-    // attempt must leave this enabled so a terminal failure is still visible.
+    // logs and the workflow result without opening a generation issue. The
+    // final attempt must leave this enabled so the dedicated terminal failure
+    // is visible; any independent workflow monitor check-in remains separate.
     captureFailure = true
   } = options
 

@@ -35,8 +35,9 @@ if (require.main === module) {
   runMonitoredScript('currency_publish', main, {
     workflow: 'daily_publish',
     // The initial scheduled attempt is intentionally quiet: it is retried in
-    // the same workflow. Only the final retry opens an incident, so a healed
-    // transient failure remains searchable in logs without paging twice.
+    // the same workflow. Only the terminal retry emits the dedicated
+    // generation_retry_failure issue. The independent Cron Monitor check-in
+    // still reports scheduled-run health and may create its own monitor issue.
     failureSignal: process.env.CURRENCY_PUBLISH_ATTEMPT === 'final'
       ? 'generation_retry_failure'
       : 'currency_publish_failed',

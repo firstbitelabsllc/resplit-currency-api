@@ -158,11 +158,14 @@ test('deploy failure reports can never be skipped while their deploy step ran', 
   }
 })
 
-test('generation retry reports only the final attempt as an incident', () => {
+test('generation retry reports one dedicated terminal issue and keeps monitor health separate', () => {
   const script = fs.readFileSync(path.join(__dirname, '..', 'currscript.js'), 'utf8')
   assert.match(script, /CURRENCY_PUBLISH_ATTEMPT === 'final'/)
   assert.match(script, /CURRENCY_PUBLISH_ATTEMPT === 'initial'/)
   assert.match(script, /captureFailure: process\.env\.CURRENCY_PUBLISH_ATTEMPT !== 'initial'/)
+  assert.match(script, /'generation_retry_failure'/)
+  assert.match(workflow, /name: Start Sentry publish check-in/)
+  assert.match(workflow, /name: Finish Sentry publish check-in/)
 })
 
 test('the generation retry starts from a clean package dir and its output is validated', () => {
