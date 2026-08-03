@@ -8,6 +8,8 @@ function createSentryMock() {
   return {
     initCalls: [],
     captureCheckInCalls: [],
+    captureExceptionCalls: [],
+    captureMessageCalls: [],
     flushCalls: [],
     logger: {
       info() {},
@@ -35,8 +37,12 @@ function createSentryMock() {
         setContext() {},
       })
     },
-    captureException() {},
-    captureMessage() {},
+    captureException(error) {
+      this.captureExceptionCalls.push(error)
+    },
+    captureMessage(message) {
+      this.captureMessageCalls.push(message)
+    },
   }
 }
 
@@ -199,7 +205,8 @@ test('runMonitoredScript demotes attempt-scoped failures to log context (FX_PUBL
   const originalAttempt = process.env.FX_PUBLISH_ATTEMPT
   try {
     // Attempt set: the failure must NOT reach Sentry as an exception — the
-    // workflow owns the single incident on retry exhaustion.
+    // workflow owns the single deliberate generation incident on retry
+    // exhaustion; the Cron Monitor check-in is independent health telemetry.
     process.env.FX_PUBLISH_ATTEMPT = 'initial'
     await withMonitoringModule({ SENTRY_CURRENCY_API_DSN: 'https://k@o.ingest.sentry.io/1' }, async ({ monitoring, sentryMock }) => {
       let thrown = null
@@ -212,22 +219,19 @@ test('runMonitoredScript demotes attempt-scoped failures to log context (FX_PUBL
       }
       assert.ok(thrown, 'the error must still propagate so the step fails')
       assert.equal(sentryMock.captureCheckInCalls.length, 0)
-      // No exception/message capture happened on the mock.
-      assert.equal(typeof sentryMock.captureException, 'function')
+      assert.equal(sentryMock.captureExceptionCalls.length, 0, 'attempt failures must not capture Sentry exceptions')
+      assert.equal(sentryMock.captureMessageCalls.length, 0, 'attempt failures must not capture Sentry messages')
     })
 
     // Attempt unset: unchanged behavior — the failure captures an issue.
     delete process.env.FX_PUBLISH_ATTEMPT
     await withMonitoringModule({ SENTRY_CURRENCY_API_DSN: 'https://k@o.ingest.sentry.io/1' }, async ({ monitoring, sentryMock }) => {
-      let captured = 0
-      sentryMock.captureException = () => { captured += 1 }
-      sentryMock.captureMessage = () => { captured += 1 }
       try {
         await monitoring.runMonitoredScript('unit_stage', async () => {
           throw new Error('standalone boom')
         }, { failureSignal: 'unit_stage_failed' })
       } catch { /* expected */ }
-      assert.ok(captured >= 1, 'standalone failure must still capture a Sentry issue')
+      assert.equal(sentryMock.captureExceptionCalls.length + sentryMock.captureMessageCalls.length, 1, 'standalone failure must capture exactly one Sentry issue')
     })
   } finally {
     if (originalAttempt === undefined) delete process.env.FX_PUBLISH_ATTEMPT

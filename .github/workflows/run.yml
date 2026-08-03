@@ -65,10 +65,12 @@ jobs:
       # FX_PUBLISH_ATTEMPT makes each attempt's failure structured LOG context
       # instead of a Sentry incident (sentry-monitoring.js
       # isRetriedPipelineAttempt): a healed retry opens no incident at all, and
-      # an exhausted retry opens exactly ONE deliberate incident — the
+      # an exhausted retry opens exactly ONE deliberate generation incident — the
       # generation_retry_failure report below — instead of near-duplicate
       # currency_publish_failed / upstream_fetch_failure issues per attempt
-      # (adversarial review, 2026-07-31).
+      # (adversarial review, 2026-07-31). The independent Cron Monitor check-in
+      # still records overall scheduled-run health and is not a duplicate
+      # generation issue.
       - name: Fetch and generate rates
         id: generate
         continue-on-error: true
@@ -85,15 +87,16 @@ jobs:
           FX_PUBLISH_ATTEMPT: retry
         run: rm -rf package && node currscript.js
 
-      # THE one deliberate generation incident: per-attempt failures above are
+      # THE one deliberate generation incident for this stage: per-attempt failures above are
       # logged context (FX_PUBLISH_ATTEMPT), so this fires only on retry
-      # exhaustion and is the single alertable signal for a dead publish stage,
-      # with step-level context the terminal check-in lacks.
+      # exhaustion. The always-run Cron Monitor check-in remains a separate
+      # health signal, while this issue carries the step-level context that
+      # the terminal check-in lacks.
       - name: Report generation retry failure to Sentry
         if: ${{ failure() && steps.retry_generate.outcome == 'failure' }}
         env:
           STEP_NAME: retry_generate
-        run: node scripts/sentry-checkin.js issue generation_retry_failure "Rate generation retry exhausted: both attempts failed (initial + clean-package retry); per-attempt context is in the run log, this is the single incident for the stage"
+        run: node scripts/sentry-checkin.js issue generation_retry_failure "Rate generation retry exhausted: both attempts failed (initial + clean-package retry); per-attempt context is in the run log, this is the single deliberate generation incident for the stage"
 
       - name: Validate generated artifacts
         run: node scripts/validate-package.js

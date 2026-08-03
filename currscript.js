@@ -9,7 +9,9 @@ const {
 
 // See scripts/sentry-monitoring.js isRetriedPipelineAttempt: per-attempt
 // failures inside the retried publish stage log context instead of opening
-// near-duplicate incidents.
+// near-duplicate generation incidents; the workflow owns the one final
+// generation incident for that stage, while its Cron Monitor check-in remains
+// an independent scheduled-run health signal.
 async function attemptAwareCaptureIssue(payload) {
   if (process.env.FX_PUBLISH_ATTEMPT) {
     console.warn(`[FX_PUBLISH] attempt=${process.env.FX_PUBLISH_ATTEMPT} suppressed-issue signal=${payload?.signal}: ${payload?.error?.message ?? ''}`)
@@ -751,8 +753,8 @@ async function fetchReconciledRates({
   // Attempt-aware by default: inside a retried workflow attempt
   // (FX_PUBLISH_ATTEMPT set), an upstream fetch failure is logged context, not
   // a Sentry incident — the workflow's generation_retry_failure is the single
-  // deliberate incident on exhaustion. Injected tests can still pass a raw
-  // capture.
+  // deliberate generation incident for this stage on exhaustion. Injected
+  // tests can still pass a raw capture.
   capture = attemptAwareCaptureIssue,
   warn = console.warn
 } = {}) {

@@ -178,17 +178,24 @@ test('deploy failure reports can never be skipped while their deploy step ran', 
   }
 })
 
-test('generation failure alerting is single-final-incident with per-attempt context', () => {
+test('generation failure alerting is single-final-generation-incident with per-attempt context', () => {
   // Per-attempt failures are demoted to log context via FX_PUBLISH_ATTEMPT on
-  // BOTH generation steps; the report step is the single deliberate incident on
-  // retry exhaustion and its message says so.
+  // BOTH generation steps; the report step is the single deliberate generation
+  // incident on retry exhaustion. The Cron Monitor check-in is a separate
+  // scheduled-run health signal, not a duplicate generation issue.
   const generate = stepBlock(workflow, 'Fetch and generate rates')
   const retry = stepBlock(workflow, 'Retry if failed')
   assert.match(generate, /FX_PUBLISH_ATTEMPT: initial/, 'initial attempt must be marked')
   assert.match(retry, /FX_PUBLISH_ATTEMPT: retry/, 'retry attempt must be marked')
   const report = stepBlock(workflow, 'Report generation retry failure to Sentry')
   assert.match(report, /retry exhausted/i, 'message must state exhaustion')
-  assert.match(report, /single incident/i, 'message must state the one-incident contract')
+  assert.match(report, /single deliberate generation incident/i, 'message must state the stage-scoped incident contract')
+  assert.equal(
+    (workflow.match(/node scripts\/sentry-checkin\.js issue generation_retry_failure\b/g) || []).length,
+    1,
+    'the generation stage must have exactly one dedicated failure issue command'
+  )
+  assert.match(workflow, /name: Finish Sentry publish check-in/, 'the independent Cron Monitor check-in must remain explicit')
 })
 
 test('the generation retry starts from a clean package dir and its output is validated', () => {
