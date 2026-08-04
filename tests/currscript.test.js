@@ -13,6 +13,8 @@ const {
   buildTrustedCurrencyBaseline,
   computeCrossRates,
   dateDaysBeforeUTC,
+  daysBetweenUTC,
+  earliestRetainedSnapshotDate,
   fetchLatestRates,
   fetchReconciledRates,
   listSnapshotArchiveDates,
@@ -27,7 +29,7 @@ const {
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
-  snapshotRetentionDays,
+  snapshotRetentionCalendarYears,
   snapshotArchiveDir,
   toLowerSorted,
   writeJsonFile,
@@ -45,8 +47,18 @@ function currencyTable(count) {
 const noPriorTrustedSnapshot = () => null
 const noSameDayCommittedSnapshot = () => null
 
-test('snapshot retention covers at least 13 months of daily snapshots', () => {
-  assert.equal(snapshotRetentionDays, 400)
+test('snapshot retention is five calendar years with a Jan 1 boundary', () => {
+  assert.equal(snapshotRetentionCalendarYears, 5)
+  // For a latest snapshot in year Y, retention starts Jan 1 of (Y - 4).
+  assert.equal(earliestRetainedSnapshotDate('2026-07-30'), '2022-01-01')
+  assert.equal(earliestRetainedSnapshotDate('2026-01-01'), '2022-01-01')
+  assert.equal(earliestRetainedSnapshotDate('2026-12-31'), '2022-01-01')
+  assert.equal(earliestRetainedSnapshotDate('2027-01-01'), '2023-01-01')
+})
+
+test('daysBetweenUTC counts whole UTC days across leap years', () => {
+  assert.equal(daysBetweenUTC('2026-07-29', '2026-07-30'), 1)
+  assert.equal(daysBetweenUTC('2022-01-01', '2026-07-30'), 1671)
 })
 
 test('toLowerSorted normalizes keys, filters invalid values, and sorts', () => {
@@ -804,6 +816,31 @@ test('buildSnapshotWindow anchors history fetches to the provided publish date',
   )
 })
 
+test('buildSnapshotWindow never turns fallback reads into retained history when persistence is disabled', async () => {
+  const savedDates = []
+  const fetchSnapshot = async () => ({ eur: 1, usd: 1.1 })
+
+  for (let run = 0; run < 2; run += 1) {
+    const snapshots = await buildSnapshotWindow({
+      todayDate: '2026-03-25',
+      latestRates: { eur: 1, usd: 1.1 },
+      retentionDays: 3,
+      loadSnapshot: () => null,
+      fetchSnapshot,
+      saveSnapshot: (date) => savedDates.push(date),
+      persistFetchedSnapshots: false,
+      log: () => {}
+    })
+
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.date),
+      ['2026-03-23', '2026-03-24', '2026-03-25']
+    )
+  }
+
+  assert.deepEqual(savedDates, [], 'two publish runs must not silently backfill the archive')
+})
+
 test('promoteBuildOutput swaps staged files into place', (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'currscript-promote-'))
   const destinationRoot = path.join(tempRoot, 'package')
@@ -1083,8 +1120,10 @@ test('loadAllSnapshotsFromArchive can ignore future-dated snapshots for backfill
   assert.deepEqual(listSnapshotArchiveDates().filter(date => date.startsWith('2099-01-0')), dates)
 })
 
-test('pruneSnapshotArchive keeps a rolling retention window anchored to the newest snapshot', (t) => {
-  const dates = ['2099-01-01', '2099-01-02', '2099-01-03']
+test('pruneSnapshotArchive enforces the five-calendar-year boundary anchored to the newest snapshot', (t) => {
+  // Retention cutoff for latest 2099-06-15 is 2095-01-01: Dec 31 of year-5 is
+  // pruned, Jan 1 of year-4 is kept.
+  const dates = ['2094-12-30', '2094-12-31', '2095-01-01', '2099-06-15']
 
   t.after(() => {
     for (const date of dates) {
@@ -1097,13 +1136,45 @@ test('pruneSnapshotArchive keeps a rolling retention window anchored to the newe
   }
 
   const pruned = pruneSnapshotArchive({
-    retentionDays: 2,
-    latestDate: '2099-01-03',
+    latestDate: '2099-06-15',
     listDates: () => dates.slice()
   })
 
-  assert.deepEqual(pruned, ['2099-01-01'])
-  assert.deepEqual(listSnapshotArchiveDates().filter(date => date.startsWith('2099-01-0')), ['2099-01-02', '2099-01-03'])
+  assert.deepEqual(pruned, ['2094-12-30', '2094-12-31'])
+  assert.deepEqual(
+    listSnapshotArchiveDates().filter(date => dates.includes(date)),
+    ['2095-01-01', '2099-06-15']
+  )
+})
+
+test('pruneSnapshotArchive leaves in-window daily snapshot bytes untouched across a save+prune cycle', (t) => {
+  const inWindowDate = '2095-01-01'
+  const outOfWindowDate = '2094-12-31'
+  const latestDate = '2099-06-15'
+  const dates = [outOfWindowDate, inWindowDate, latestDate]
+
+  t.after(() => {
+    for (const date of dates) {
+      fs.removeSync(path.join(snapshotArchiveDir, `${date}.json`))
+    }
+  })
+
+  saveSnapshotToArchive(outOfWindowDate, { eur: 1, usd: 1.05 })
+  saveSnapshotToArchive(inWindowDate, { eur: 1, usd: 1.1, myr: 4.7 })
+  const inWindowPath = path.join(snapshotArchiveDir, `${inWindowDate}.json`)
+  const bytesBefore = fs.readFileSync(inWindowPath)
+
+  // Generation+prune cycle: today's snapshot is saved, then the archive is pruned.
+  saveSnapshotToArchive(latestDate, { eur: 1, usd: 1.2 })
+  const pruned = pruneSnapshotArchive({
+    latestDate,
+    listDates: () => dates.slice()
+  })
+
+  assert.deepEqual(pruned, [outOfWindowDate])
+  assert.equal(fs.existsSync(path.join(snapshotArchiveDir, `${outOfWindowDate}.json`)), false)
+  const bytesAfter = fs.readFileSync(inWindowPath)
+  assert.ok(bytesBefore.equals(bytesAfter), 'in-window snapshot bytes must survive a save+prune cycle unchanged')
 })
 
 test('pruneSnapshotArchive does not delete newer source snapshots during backfill packaging', (t) => {
@@ -1111,7 +1182,6 @@ test('pruneSnapshotArchive does not delete newer source snapshots during backfil
   const removedPaths = []
 
   const pruned = pruneSnapshotArchive({
-    retentionDays: 10,
     latestDate: '2099-01-02',
     listDates: () => dates.slice(),
     removeFile: (filePath) => {

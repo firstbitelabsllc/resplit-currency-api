@@ -359,3 +359,90 @@ test('worker history rejects a manifest-unsupported currency before archive-year
   assert.equal(manifestFetches, 1)
   assert.equal(archiveFetches, 0)
 })
+
+test("worker quote for date D in a five-year archive reads only year(D)'s shard", async () => {
+  const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
+  const requested = []
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    requested.push(url)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return makeJsonResponse({
+        earliestDate: '2022-01-01',
+        latestDate: '2026-03-16',
+        availableDates: ['2022-01-01', '2023-06-01', '2024-05-14', '2025-08-02', '2026-03-16'],
+        gapCount: 0,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    if (url.endsWith('/archive-years/2024.min.json')) {
+      return makeJsonResponse({
+        year: '2024',
+        base: 'eur',
+        snapshots: [
+          { date: '2024-05-14', rates: { aed: 4, usd: 1.2, eur: 1 } },
+        ],
+      })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  const quote = await buildFxQuoteResponse({
+    from: 'AED',
+    to: 'USD',
+    date: '2024-05-14',
+    fetchImpl,
+  })
+
+  assert.equal(quote.resolutionKind, 'exact')
+  assert.equal(quote.resolvedDate, '2024-05-14')
+  const archiveYearFetches = requested.filter(url => url.includes('/archive-years/'))
+  assert.deepEqual(archiveYearFetches.map(url => url.split('/').pop()), ['2024.min.json'])
+})
+
+test('worker quote for a date older than the retention window pins today_fallback to the latest rate', async () => {
+  // CURRENT out-of-range behavior (pinned, not changed): a requested date
+  // strictly older than the archive's earliestDate has no candidate archive
+  // dates, so no yearly shard is fetched and the quote falls back to the
+  // latest published rate with resolutionKind 'today_fallback' and a warning.
+  const { buildFxQuoteResponse } = await import('../worker/src/fx-contract.mjs')
+  const requested = []
+
+  const fetchImpl = async input => {
+    const url = String(input)
+    requested.push(url)
+    if (url.endsWith('/archive-manifest.min.json')) {
+      return makeJsonResponse({
+        earliestDate: '2022-01-01',
+        latestDate: '2026-03-16',
+        availableDates: ['2022-01-01', '2024-05-14', '2026-03-16'],
+        gapCount: 0,
+        supportedCurrencies: ['aed', 'eur', 'usd'],
+      })
+    }
+    if (url.endsWith('/latest/aed.json')) {
+      return makeJsonResponse({
+        date: '2026-03-16',
+        from: 'aed',
+        rates: { usd: 0.272295 },
+      })
+    }
+    throw new Error(`Unexpected URL: ${url}`)
+  }
+
+  const quote = await buildFxQuoteResponse({
+    from: 'AED',
+    to: 'USD',
+    date: '2021-12-31',
+    fetchImpl,
+  })
+
+  assert.equal(quote.resolutionKind, 'today_fallback')
+  assert.equal(quote.requestedDate, '2021-12-31')
+  assert.equal(quote.resolvedDate, '2026-03-16')
+  assert.equal(quote.rate, 0.272295)
+  assert.match(quote.warning, /today/i)
+  assert.equal(requested.filter(url => url.includes('/archive-years/')).length, 0)
+  assert.ok(requested.some(url => url.endsWith('/latest/aed.json')))
+})

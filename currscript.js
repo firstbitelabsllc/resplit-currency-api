@@ -21,16 +21,26 @@ const {
 
 const indent = '\t'
 const historyDays = 30
-// ~13 months of daily snapshots so receipts up to a year old still resolve
-// historical rates through the canonical quote/history contract.
-const snapshotRetentionDays = 400
+// Retention rule: FIVE CALENDAR YEARS. A snapshot dated on/after Jan 1 of
+// (currentYear - 4) is retained; strictly older dailies are pruned. This is a
+// calendar-year boundary (Jan 1 cutoff), not a fixed day count, so the window
+// length varies between ~4 and 5 years depending on the current date. Days
+// already pruned under the earlier 365/400-day policies cannot be resurrected
+// locally; the archive grows forward one day per publish.
+const snapshotRetentionCalendarYears = 5
 const rootDir = path.join(__dirname, 'package')
 const snapshotArchiveDir = path.join(__dirname, 'snapshot-archive')
 
 if (require.main === module) {
   runMonitoredScript('currency_publish', main, {
     workflow: 'daily_publish',
-    failureSignal: 'currency_publish_failed'
+    // The initial scheduled attempt is intentionally quiet: it is retried in
+    // the same workflow. Only the final retry opens an incident, so a healed
+    // transient failure remains searchable in logs without paging twice.
+    failureSignal: process.env.CURRENCY_PUBLISH_ATTEMPT === 'final'
+      ? 'generation_retry_failure'
+      : 'currency_publish_failed',
+    captureFailure: process.env.CURRENCY_PUBLISH_ATTEMPT !== 'initial'
   }).catch((error) => {
     console.error(error)
     process.exitCode = 1
@@ -39,7 +49,10 @@ if (require.main === module) {
 
 async function main() {
   const dateToday = resolvePublishDate()
-  const { rates: latestRates, reconciliation } = await fetchReconciledRates({ publishDate: dateToday })
+  const { rates: latestRates, reconciliation } = await fetchReconciledRates({
+    publishDate: dateToday,
+    capture: capturePublishIssue
+  })
   if (!latestRates || Object.keys(latestRates).length === 0) {
     throw new Error('Failed to fetch currency rates from source')
   }
@@ -54,14 +67,22 @@ async function main() {
 
   saveSnapshotToArchive(publicationDate, latestRates)
   pruneSnapshotArchive({
-    retentionDays: snapshotRetentionDays,
+    retentionCalendarYears: snapshotRetentionCalendarYears,
     latestDate: publicationDate
   })
 
+  // Retention controls what is kept, not an implicit historical import. Only
+  // rebuild the public recent-history window here. The long archive remains
+  // made of immutable snapshots already committed by normal daily publishes;
+  // older availability needs an explicit provenance-reviewed backfill.
   const recentSnapshots = await buildSnapshotWindow({
     todayDate: publicationDate,
     latestRates,
-    retentionDays: snapshotRetentionDays
+    retentionDays: historyDays,
+    // Historical fetches are presentation recovery only. Daily publication
+    // persists the single trustworthy snapshot for today above; it never turns
+    // an incidental read of an older deployment into archive history.
+    persistFetchedSnapshots: false
   })
   const archiveSnapshots = loadAllSnapshotsFromArchive({ latestDate: publicationDate })
   const historyStartDate = dateDaysBeforeUTC(publicationDate, historyDays - 1)
@@ -73,7 +94,7 @@ async function main() {
     const error = new Error(
       `History/30d calendar window incomplete: got ${historySnapshots.length}/${historyDays} snapshots for ${historyStartDate}..${publicationDate}`
     )
-    await captureIssue({
+    await capturePublishIssue({
       signal: 'history_window_shorter_than_30_days',
       error,
       context: {
@@ -105,6 +126,21 @@ async function main() {
   })
 
   console.log(`Generated unversioned files in ${rootDir}`)
+}
+
+async function capturePublishIssue(payload) {
+  // Both scheduled attempts are one bounded publish operation. Keep source and
+  // cross-check failures as structured context for either attempt; the outer
+  // monitored script emits the single terminal generation incident after the
+  // final attempt fails. Without this, a final upstream failure opens both an
+  // upstream_fetch_failure issue and generation_retry_failure.
+  const attempt = process.env.CURRENCY_PUBLISH_ATTEMPT
+  if (attempt === 'initial' || attempt === 'final') {
+    const message = payload.error?.message || payload.message || payload.signal
+    console.warn(`[FX_PUBLISH] ${attempt} attempt failure recorded as context (${payload.signal}): ${message}`)
+    return false
+  }
+  return captureIssue(payload)
 }
 
 function promoteBuildOutput({
@@ -382,6 +418,7 @@ async function buildSnapshotWindow({
   loadSnapshot = loadSnapshotFromArchive,
   fetchSnapshot = fetchHistoricalSnapshot,
   saveSnapshot = saveSnapshotToArchive,
+  persistFetchedSnapshots = true,
   log = console.log
 }) {
   const snapshotsByDate = new Map()
@@ -403,7 +440,9 @@ async function buildSnapshotWindow({
     const remoteSnapshot = await fetchSnapshot(date)
     if (remoteSnapshot && Object.keys(remoteSnapshot).length > 0) {
       snapshotsByDate.set(date, remoteSnapshot)
-      saveSnapshot(date, remoteSnapshot)
+      if (persistFetchedSnapshots) {
+        saveSnapshot(date, remoteSnapshot)
+      }
       networkHits += 1
     }
   }
@@ -629,7 +668,7 @@ function loadAllSnapshotsFromArchive({ latestDate = null } = {}) {
 }
 
 function pruneSnapshotArchive({
-  retentionDays,
+  retentionCalendarYears = snapshotRetentionCalendarYears,
   latestDate = null,
   listDates = listSnapshotArchiveDates,
   removeFile = fs.removeSync
@@ -640,7 +679,9 @@ function pruneSnapshotArchive({
   }
 
   const effectiveLatestDate = latestDate ?? dates[dates.length - 1]
-  const earliestRetainedDate = dateDaysBeforeUTC(effectiveLatestDate, retentionDays - 1)
+  // Calendar-year retention rule: keep Jan 1 of (latestYear - (N-1)) onward;
+  // prune strictly older whole files. Never touches in-window file bytes.
+  const earliestRetainedDate = earliestRetainedSnapshotDate(effectiveLatestDate, retentionCalendarYears)
   const prunedDates = dates.filter((date) => date < earliestRetainedDate)
 
   for (const date of prunedDates) {
@@ -703,7 +744,7 @@ async function fetchReconciledRates({
   loadArchiveSnapshot = loadSnapshotFromArchive,
   loadPriorTrustedSnapshot = loadPriorTrustedSnapshotFromArchive,
   loadSameDayCommittedSnapshot = loadSameDayCommittedSnapshotFromArchive,
-  capture = captureIssue,
+  capture = capturePublishIssue,
   warn = console.warn
 } = {}) {
   // Capture both trusted archive boundaries before fetching or writing. The
@@ -902,6 +943,21 @@ function dateDaysBeforeUTC(anchorDate, daysBefore) {
   return toDateStringUTC(date)
 }
 
+// Five-calendar-year retention boundary: for a latest snapshot in year Y, the
+// earliest retained date is Jan 1 of (Y - (retentionCalendarYears - 1)).
+// Anything strictly older is out of the retention window.
+function earliestRetainedSnapshotDate(latestDate, retentionCalendarYears = snapshotRetentionCalendarYears) {
+  const latestYear = Number(latestDate.slice(0, 4))
+  const earliestYear = latestYear - (retentionCalendarYears - 1)
+  return `${String(earliestYear).padStart(4, '0')}-01-01`
+}
+
+function daysBetweenUTC(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
+  return Math.round((end - start) / (24 * 60 * 60 * 1000))
+}
+
 function toLowerSorted(obj) {
   const entries = Object.entries(obj)
     .map(([key, value]) => [key.toLowerCase(), parseFloat(value)])
@@ -989,6 +1045,8 @@ module.exports = {
   buildSnapshotWindow,
   computeCrossRates,
   dateDaysBeforeUTC,
+  daysBetweenUTC,
+  earliestRetainedSnapshotDate,
   fetchLatestRates,
   fetchReconciledRates,
   buildTrustedCurrencyBaseline,
@@ -1004,7 +1062,7 @@ module.exports = {
   resolvePublishDate,
   saveSnapshotToArchive,
   significantNum,
-  snapshotRetentionDays,
+  snapshotRetentionCalendarYears,
   snapshotArchiveDir,
   toLowerSorted,
   writeJsonFile,

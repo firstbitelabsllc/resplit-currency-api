@@ -216,8 +216,6 @@ function createNetworkSources(sourceDefinitions, fetchImpl, { dates = [], requir
 function createFxApiPairHistorySource({ dates, fetchImpl, requiredCodes, timeoutMs }) {
   const derivableCodes = new Set(deterministicCurrencyDerivations.map((derivation) => derivation.code))
   const targetCodes = requiredCodes.filter((code) => code !== 'eur' && !derivableCodes.has(code))
-  const from = dates[0]
-  const to = dates[dates.length - 1]
   let cachePromise = null
 
   return {
@@ -226,15 +224,13 @@ function createFxApiPairHistorySource({ dates, fetchImpl, requiredCodes, timeout
       cachePromise ||= fetchFxApiPairHistoryRange({
         dates,
         fetchImpl,
-        from,
         targetCodes,
         timeoutMs,
-        to,
       })
       const { errors, ratesByDate } = await cachePromise
       return {
         name: 'fxapi-pair-history',
-        url: `https://fxapi.app/api/history/EUR/{target}.json?from=${from}&to=${to}`,
+        url: `https://fxapi.app/api/history/EUR/{target}.json?from=${dates[0]}&to=${dates.at(-1)}`,
         ok: errors.length === 0,
         error: errors.length > 0 ? `${errors.length} target fetch(es) failed: ${errors.slice(0, 3).join('; ')}` : undefined,
         rates: ratesByDate.get(date) || {},
@@ -246,13 +242,15 @@ function createFxApiPairHistorySource({ dates, fetchImpl, requiredCodes, timeout
 async function fetchFxApiPairHistoryRange({
   dates,
   fetchImpl,
-  from,
   targetCodes,
   timeoutMs,
-  to,
 }) {
   const dateSet = new Set(dates)
   const ratesByDate = new Map(dates.map((date) => [date, { eur: 1 }]))
+  // fxapi.app accepts at most 366 inclusive days per history request. Split
+  // a multi-year audit into deterministic calendar chunks so the approved
+  // single-source contract remains usable for the actual retention window.
+  const dateWindows = chunkDates(dates, 366)
   const errors = []
   let nextTargetIndex = 0
 
@@ -261,10 +259,9 @@ async function fetchFxApiPairHistoryRange({
       const targetCode = targetCodes[nextTargetIndex++]
       const result = await fetchFxApiPairHistoryTarget({
         fetchImpl,
-        from,
+        dateWindows,
         targetCode,
         timeoutMs,
-        to,
       })
 
       if (result.error) {
@@ -287,49 +284,52 @@ async function fetchFxApiPairHistoryRange({
   return { errors, ratesByDate }
 }
 
+function chunkDates(dates, maxDays) {
+  const windows = []
+  for (let start = 0; start < dates.length; start += maxDays) {
+    const slice = dates.slice(start, start + maxDays)
+    windows.push({ from: slice[0], to: slice.at(-1) })
+  }
+  return windows
+}
+
 async function fetchFxApiPairHistoryTarget({
+  dateWindows,
   fetchImpl,
-  from,
   targetCode,
   timeoutMs,
-  to,
 }) {
   const target = targetCode.toUpperCase()
-  const url = `https://fxapi.app/api/history/EUR/${target}.json?from=${from}&to=${to}`
+  const points = []
 
-  try {
-    const response = await fetchImpl(url, {
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    if (!response.ok) {
-      return {
-        error: `HTTP ${response.status}`,
-        points: [],
+  for (const { from, to } of dateWindows) {
+    const url = `https://fxapi.app/api/history/EUR/${target}.json?from=${from}&to=${to}`
+
+    try {
+      const response = await fetchImpl(url, {
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      if (!response.ok) {
+        return { error: `HTTP ${response.status} for ${from}..${to}`, points: [] }
       }
-    }
 
-    const payload = await response.json()
-    if (!Array.isArray(payload?.rates)) {
-      return {
-        error: 'missing rates array',
-        points: [],
+      const payload = await response.json()
+      if (!Array.isArray(payload?.rates)) {
+        return { error: `missing rates array for ${from}..${to}`, points: [] }
       }
-    }
 
-    return {
-      points: payload.rates
+      points.push(...payload.rates
         .map((point) => ({
           date: point.date,
           rate: Number(point.rate),
         }))
-        .filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.rate) && point.rate > 0),
-    }
-  } catch (error) {
-    return {
-      error: error.message,
-      points: [],
+        .filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(point.date) && Number.isFinite(point.rate) && point.rate > 0))
+    } catch (error) {
+      return { error: `${error.message} for ${from}..${to}`, points: [] }
     }
   }
+
+  return { points }
 }
 
 async function buildBackfillAudit({ dates, requiredCodes, sources }) {

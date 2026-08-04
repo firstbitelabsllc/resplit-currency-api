@@ -196,6 +196,39 @@ test('fxapi pair-history source composes a complete dated source with peg deriva
   ])
 })
 
+test('fxapi pair-history source splits ranges larger than the provider 366-day limit', async () => {
+  const dates = enumerateDates('2024-01-01', '2025-01-01')
+  const calls = []
+  const source = createFxApiPairHistorySource({
+    dates,
+    fetchImpl: async (url) => {
+      calls.push(url)
+      const parsed = new URL(url)
+      const from = parsed.searchParams.get('from')
+      const to = parsed.searchParams.get('to')
+      return {
+        ok: true,
+        json: async () => ({
+          rates: enumerateDates(from, to).map((date) => ({ date, rate: 1.08 })),
+        }),
+      }
+    },
+    requiredCodes: ['eur', 'usd'],
+    timeoutMs: 1000,
+  })
+
+  const audit = await buildBackfillAudit({
+    dates,
+    requiredCodes: ['eur', 'usd'],
+    sources: [source],
+  })
+
+  assert.equal(audit.incompleteDateCount, 0)
+  assert.equal(calls.length, 2)
+  assert.match(calls[0], /from=2024-01-01&to=2024-12-31/)
+  assert.match(calls[1], /from=2025-01-01&to=2025-01-01/)
+})
+
 test('missingCodes returns normalized missing codes in required order', () => {
   assert.deepEqual(
     missingCodes(['aed', 'eur', 'usd'], { AED: 3.97, usd: 1.08 }),
