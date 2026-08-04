@@ -161,7 +161,8 @@ test('deploy failure reports can never be skipped while their deploy step ran', 
 test('generation retry reports only the final attempt as an incident', () => {
   const script = fs.readFileSync(path.join(__dirname, '..', 'currscript.js'), 'utf8')
   assert.match(script, /CURRENCY_PUBLISH_ATTEMPT === 'final'/)
-  assert.match(script, /CURRENCY_PUBLISH_ATTEMPT === 'initial'/)
+  assert.match(script, /attempt === 'initial' \|\| attempt === 'final'/)
+  assert.match(script, /single terminal generation incident/)
   assert.match(script, /captureFailure: process\.env\.CURRENCY_PUBLISH_ATTEMPT !== 'initial'/)
 })
 

@@ -129,9 +129,15 @@ async function main() {
 }
 
 async function capturePublishIssue(payload) {
-  if (process.env.CURRENCY_PUBLISH_ATTEMPT === 'initial') {
+  // Both scheduled attempts are one bounded publish operation. Keep source and
+  // cross-check failures as structured context for either attempt; the outer
+  // monitored script emits the single terminal generation incident after the
+  // final attempt fails. Without this, a final upstream failure opens both an
+  // upstream_fetch_failure issue and generation_retry_failure.
+  const attempt = process.env.CURRENCY_PUBLISH_ATTEMPT
+  if (attempt === 'initial' || attempt === 'final') {
     const message = payload.error?.message || payload.message || payload.signal
-    console.warn(`[FX_PUBLISH] initial attempt failed; retry pending (${payload.signal}): ${message}`)
+    console.warn(`[FX_PUBLISH] ${attempt} attempt failure recorded as context (${payload.signal}): ${message}`)
     return false
   }
   return captureIssue(payload)
@@ -738,7 +744,7 @@ async function fetchReconciledRates({
   loadArchiveSnapshot = loadSnapshotFromArchive,
   loadPriorTrustedSnapshot = loadPriorTrustedSnapshotFromArchive,
   loadSameDayCommittedSnapshot = loadSameDayCommittedSnapshotFromArchive,
-  capture = captureIssue,
+  capture = capturePublishIssue,
   warn = console.warn
 } = {}) {
   // Capture both trusted archive boundaries before fetching or writing. The
