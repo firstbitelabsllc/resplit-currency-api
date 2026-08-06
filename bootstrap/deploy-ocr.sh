@@ -6,7 +6,7 @@
 # it does NOT run `gcloud run deploy`. The service shape (CPU allocation, env,
 # secret bindings) is applied here. Without a single source of truth, an ad-hoc
 # `gcloud run deploy ocr --image …` drops flags and silently regresses prod —
-# which is exactly how telemetry broke during the GCP migration (see THREE
+# which is exactly how telemetry broke during the GCP migration (see FOUR
 # load-bearing settings flagged inline below).
 #
 # Idempotent: safe to re-run. `gcloud run deploy` reconciles to this shape.
@@ -134,25 +134,31 @@ CANDIDATE_CLEANUP_ARMED=true
   --timeout=300 \
   --cpu=1 \
   --memory=512Mi \
-  --min-instances=0 \
+  `# ── LOAD-BEARING #1: one instance stays warm; scale-to-zero is retired. ──` \
+  `# The OTel periodic metric reader + batch span exporter only run while an` \
+  `# instance exists. At min-instances=0 the service idled away entirely, so` \
+  `# periodic Grafana metrics/spans stopped shipping between requests. This` \
+  `# service intentionally no longer scales to zero: keep one instance warm` \
+  `# so the telemetry loops keep running. Do not restore min-instances=0.` \
+  --min-instances=1 \
   --max-instances=10 \
   --cpu-boost \
   --no-traffic \
   --tag="$CANDIDATE_TAG" \
-  `# ── LOAD-BEARING #1: CPU always allocated while an instance is alive. ──` \
+  `# ── LOAD-BEARING #2: CPU always allocated while an instance is alive. ──` \
   `# Cloud Run's default throttles CPU to ~0 between requests, which FREEZES` \
   `# the OTel periodic metric reader + batch span exporter goroutines. Result:` \
   `# scans return 200 but ocr_scans_total never increments and no trace ships.` \
-  `# Removing this flag silently kills all Grafana telemetry. Scales to zero` \
-  `# fine; idle instances bill nothing once torn down.` \
+  `# Removing this flag silently kills all Grafana telemetry. Pairs with the` \
+  `# min-instances=1 rail above: the warm instance must also keep its CPU.` \
   --no-cpu-throttling \
-  `# ── LOAD-BEARING #2: the OTLP endpoint is the master telemetry switch. ──` \
+  `# ── LOAD-BEARING #3: the OTLP endpoint is the master telemetry switch. ──` \
   `# cmd/ocr/main.go only builds the OTLP exporters when this is set; unset =` \
   `# NoopExporters = silent no telemetry. Preserve operational kill switches` \
   `# and future config while updating this canonical set. Use ^@@^ multi-var` \
   `# delimiter so the comma-free values pass through cleanly.` \
   --update-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}" \
-  `# ── LOAD-BEARING #3: secrets, never plaintext. ──` \
+  `# ── LOAD-BEARING #4: secrets, never plaintext. ──` \
   `# Azure DI key + Grafana OTLP auth header both come from Secret Manager.` \
   `# The runtime SA needs roles/secretmanager.secretAccessor on each (granted` \
   `# in setup-gcp.sh / via add-iam-policy-binding).` \

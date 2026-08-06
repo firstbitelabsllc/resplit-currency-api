@@ -253,6 +253,7 @@ function assertCanonicalOcrDeploy(source) {
     'canonical OCR deploy must not default to a mutable latest tag'
   )
   assert.match(source, /SERVICE="\$\{SERVICE:-ocr\}"/, 'canonical OCR service must be ocr')
+  assert.match(source, /--min-instances=1/, 'OCR telemetry deploy must keep one instance warm')
   assert.match(source, /--no-traffic/, 'OCR candidate must start with zero traffic')
   assert.match(source, /--tag="\$CANDIDATE_TAG"/, 'OCR candidate must have a probe URL')
   assert.match(source, /CANDIDATE_IMAGE=/, 'candidate image digest must be read back')

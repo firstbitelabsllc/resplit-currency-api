@@ -72,7 +72,7 @@ test('validate-package warns instead of blocking recovery publishes with annual 
   const manifestPath = path.join(temp.packageRoot, 'archive-manifest.json')
   const minManifestPath = path.join(temp.packageRoot, 'archive-manifest.min.json')
   const manifest = fs.readJsonSync(manifestPath)
-  const removableDates = new Set(manifest.availableDates.slice(20, 32))
+  const removableDates = new Set(manifest.availableDates.slice(20, 33))
   manifest.availableDates = manifest.availableDates.filter((date) => !removableDates.has(date))
   manifest.gapCount = 14
   fs.writeJsonSync(manifestPath, manifest, { spaces: '\t' })
@@ -338,6 +338,9 @@ test('validate-package requires baseline metadata to contain every latest-prior 
 
   assert.ok(priorSource)
   priorSource.currencyCodes = priorSource.currencyCodes.slice(1)
+  snapshot.trustedCurrencyBaseline.currencyCodes = baselineUnion(
+    snapshot.trustedCurrencyBaseline.sources
+  )
   fs.writeJsonSync(snapshotPath, snapshot, { spaces: '\t' })
 
   assert.throws(
