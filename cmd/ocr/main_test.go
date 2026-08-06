@@ -155,6 +155,7 @@ func findScanCount(t *testing.T, reader *metric.ManualReader, status, attest str
 // attest=soft_fail} and a provider error increments {status=provider_error,...}.
 // It proves the counter is wired through handleScan with the documented labels.
 func TestScanCounterRecordsTerminalOutcomes(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
 	reader := metric.NewManualReader()
 	mp := metric.NewMeterProvider(metric.WithReader(reader))
 	counter, err := mp.Meter("test").Int64Counter("ocr_scans_total")
@@ -200,6 +201,7 @@ func TestScanCounterRecordsTerminalOutcomes(t *testing.T) {
 }
 
 func TestScanSpendGateKillSwitchBlocksBeforeProvider(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
 	provider := &countingProvider{}
 	gate := &ocrSpendGate{
 		killSwitch:     true,
@@ -232,6 +234,7 @@ func TestScanSpendGateKillSwitchBlocksBeforeProvider(t *testing.T) {
 }
 
 func TestScanSpendGateDuplicateDoesNotRebill(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
 	provider := &countingProvider{}
 	gate := &ocrSpendGate{
 		mem:            newMemorySpendStore(time.Now),
@@ -286,6 +289,7 @@ func TestScanSpendGateDuplicateDoesNotRebill(t *testing.T) {
 }
 
 func TestScanSpendGateSoftFailCapBlocksDistinctImages(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
 	provider := &countingProvider{}
 	gate := &ocrSpendGate{
 		mem:            newMemorySpendStore(time.Now),
@@ -312,6 +316,33 @@ func TestScanSpendGateSoftFailCapBlocksDistinctImages(t *testing.T) {
 	}
 	if provider.calls != 1 {
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+}
+
+func TestSoftFailRejectedWhenAllowFlagDisabled(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "false")
+	provider := &countingProvider{}
+	srv := newServer(attest.NewMemStore(), provider, slog.Default(), nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+	req.Header.Set(headerSoftFail, "true")
+	srv.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("scan status = %d, want 401 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", provider.calls)
+	}
+}
+
+func TestClientIPUsesRightmostForwardedHop(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/ocr/scan", nil)
+	req.Header.Set("X-Forwarded-For", "10.0.0.1, 203.0.113.50")
+	req.RemoteAddr = "198.51.100.9:443"
+	if got := clientIP(req); got != "203.0.113.50" {
+		t.Fatalf("clientIP = %q, want rightmost forwarded hop 203.0.113.50", got)
 	}
 }
 
