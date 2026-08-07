@@ -368,10 +368,15 @@ if (state.mode === 'fx') {
     }
     const updateSecrets = arg('--update-secrets=')
     if (updateSecrets) {
-      const [name, reference] = updateSecrets.slice('--update-secrets='.length).split('=')
-      const [secretName] = reference.split(':')
+      const assignment = updateSecrets.slice('--update-secrets='.length)
+      const separator = assignment.indexOf('=')
+      const name = assignment.slice(0, separator)
+      const reference = assignment.slice(separator + 1)
+      const versionSeparator = reference.lastIndexOf(':')
+      const secretName = versionSeparator >= 0 ? reference.slice(0, versionSeparator) : reference
+      const secretVersion = versionSeparator >= 0 ? reference.slice(versionSeparator + 1) : 'latest'
       state.env = state.env.filter(({ name: envName }) => envName !== name)
-      state.env.push({ name, valueFrom: { secretKeyRef: { name: secretName, key: 'latest' } } })
+      state.env.push({ name, valueFrom: { secretKeyRef: { name: secretName, key: secretVersion } } })
     }
     state.image = image
     state.drift = rollback ? false : state.scenario === 'contract_fail'
