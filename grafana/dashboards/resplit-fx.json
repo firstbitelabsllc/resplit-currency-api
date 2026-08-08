@@ -3,7 +3,7 @@
     {
       "name": "DS_PROMETHEUS",
       "label": "Prometheus",
-      "description": "Google Managed Prometheus / Cloud Monitoring datasource",
+      "description": "Grafana Cloud Prometheus — OTLP metrics pushed from the Cloudflare FX Worker (@microlabs/otel-cf-workers) and the publish pipeline (OTLP-HTTP/JSON). NOTE: logs+traces flow natively via Cloudflare Workers observability destinations (Loki/Tempo), only metrics use this datasource.",
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
@@ -180,7 +180,7 @@
       "id": 3,
       "type": "state-timeline",
       "title": "Per-source availability",
-      "description": "fx_source_available{source}: 1 = source reachable + contributing to quorum, 0 = down/excluded. Each lane is one provider (ecb, openexchange, ...).",
+      "description": "fx_source_available{source}: 1 = source reachable + contributing that publish, 0 = down/excluded. Each lane is one provider — er-api (primary, authoritative) and frankfurter (ECB cross-check + degraded fallback).",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 7, "w": 12, "x": 0, "y": 9 },
       "fieldConfig": {
@@ -212,8 +212,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Sources contributing to quorum",
-      "description": "Count of sources currently reporting available. Quorum requires at least minAgree (2-of-3); below that the publish path refuses to move a rate.",
+      "title": "Sources available",
+      "description": "Count of sources reporting available this publish. 2 = er-api + frankfurter both up (cross-check active); 1 = single-sourced (er-api authoritative, cross-check dark — still publishes); 0 = both down (publish fails, last-good CDN artifacts keep serving).",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 7, "w": 6, "x": 12, "y": 9 },
       "fieldConfig": {
@@ -221,7 +221,7 @@
           "unit": "short",
           "decimals": 0,
           "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 2 }, { "color": "green", "value": 3 } ] }
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 2 } ] }
         },
         "overrides": []
       },
@@ -247,8 +247,8 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "Quorum health",
-      "description": "1 when at least 2 sources are up (quorum reachable), 0 otherwise.",
+      "title": "Cross-check active",
+      "description": "1 when both er-api and frankfurter are up so the intersection cross-check runs; 0 when single-sourced (er-api still publishes, but a bad upstream drift has no second-source tripwire that day).",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 7, "w": 6, "x": 18, "y": 9 },
       "fieldConfig": {
@@ -257,7 +257,7 @@
           "decimals": 0,
           "color": { "mode": "thresholds" },
           "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] },
-          "mappings": [ { "type": "value", "options": { "0": { "text": "NO QUORUM", "color": "red" }, "1": { "text": "QUORUM OK", "color": "green" } } } ]
+          "mappings": [ { "type": "value", "options": { "0": { "text": "SINGLE SOURCE", "color": "orange" }, "1": { "text": "CROSS-CHECK OK", "color": "green" } } } ]
         },
         "overrides": []
       },
@@ -274,7 +274,7 @@
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
           "expr": "clamp_max(floor(sum(max by (source) (fx_source_available)) / 2), 1)",
-          "legendFormat": "quorum",
+          "legendFormat": "cross-check",
           "range": true,
           "refId": "A"
         }
@@ -312,7 +312,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
-          "expr": "sum(rate(http_requests_total{route=~\"/fx.*\", status_class=\"5xx\"}[5m])) / clamp_min(sum(rate(http_requests_total{route=~\"/fx.*\"}[5m])), 1)",
+          "expr": "sum(rate(http_requests_total{route=\"/quote\", status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{route=\"/quote\"}[5m])), 1)",
           "legendFormat": "5m error ratio",
           "range": true,
           "refId": "A"
@@ -320,7 +320,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
-          "expr": "sum(rate(http_requests_total{route=~\"/fx.*\", status_class=\"5xx\"}[1h])) / clamp_min(sum(rate(http_requests_total{route=~\"/fx.*\"}[1h])), 1)",
+          "expr": "sum(rate(http_requests_total{route=\"/quote\", status=~\"5..\"}[1h])) / clamp_min(sum(rate(http_requests_total{route=\"/quote\"}[1h])), 1)",
           "legendFormat": "1h error ratio",
           "range": true,
           "refId": "B"
@@ -330,8 +330,8 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "CDN cache-hit ratio (FX bucket)",
-      "description": "Cloud CDN hit ratio fronting the GCS FX snapshot bucket. The whole read-path design depends on this staying high (zero-compute reads). <95% triggers the CDN alert.",
+      "title": "FX fallback share (silent-staleness risk)",
+      "description": "Share of /quote responses served from a non-exact rate (fx_fallback_served_total{kind} where kind != exact — i.e. prior_day/today cross-rate fallbacks) over all served quotes. This is the top app trust signal: a rising line means users are shown stale/derived rates as if fresh. Feeds the FXFallbackShare alert.",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
       "fieldConfig": {
@@ -340,18 +340,18 @@
           "min": 0,
           "max": 1,
           "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.9 }, { "color": "green", "value": 0.95 } ] },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.05 }, { "color": "red", "value": 0.2 } ] },
           "color": { "mode": "thresholds" }
         },
         "overrides": []
       },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"], "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
-          "expr": "sum(rate(loadbalancing_googleapis_com:https_request_count{cache_result=~\"HIT|hit\"}[5m])) / clamp_min(sum(rate(loadbalancing_googleapis_com:https_request_count[5m])), 1)",
-          "legendFormat": "cache-hit ratio",
+          "expr": "sum(rate(fx_fallback_served_total{kind!=\"exact\"}[15m])) / clamp_min(sum(rate(fx_fallback_served_total[15m])), 1)",
+          "legendFormat": "fallback share",
           "range": true,
           "refId": "A"
         }
@@ -361,7 +361,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "FX read latency p50 / p95 / p99",
-      "description": "Percentile latency for /fx routes from http_request_duration_seconds. CDN-fronted hits should sit in the low-ms band; tail growth signals origin fallthrough.",
+      "description": "Percentile latency for the /quote read path from http_request_duration_seconds. Worker-served quotes should sit in the low-ms band; tail growth signals origin fallthrough or upstream slowness.",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
       "fieldConfig": {
@@ -381,7 +381,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{route=~\"/fx.*\"}[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{route=\"/quote\"}[5m])))",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
@@ -389,7 +389,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{route=~\"/fx.*\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{route=\"/quote\"}[5m])))",
           "legendFormat": "p95",
           "range": true,
           "refId": "B"
@@ -397,10 +397,80 @@
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{route=~\"/fx.*\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{route=\"/quote\"}[5m])))",
           "legendFormat": "p99",
           "range": true,
           "refId": "C"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Publish path",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "id": 103,
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Published currencies",
+      "description": "fx_currencies_count from the last publish. A sudden drop (e.g. ~160 -> ~30) means the pipeline degraded to Frankfurter/ECB majors only because er-api was unavailable.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 34 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 40 }, { "color": "green", "value": 150 } ] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "max(fx_currencies_count)",
+          "legendFormat": "currencies",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Publish duration",
+      "description": "fx_publish_duration_seconds — wall time of the generate+validate publish job. A climbing tail can precede a stalled or timing-out publish.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 16, "x": 8, "y": 34 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "editorMode": "code",
+          "expr": "max(fx_publish_duration_seconds)",
+          "legendFormat": "publish duration",
+          "range": true,
+          "refId": "A"
         }
       ]
     }
