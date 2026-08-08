@@ -310,14 +310,39 @@ It may cache the deterministic Azure-only partial to avoid repeating Azure spend
 while the switch remains enabled. This switch does not alter App Attest, ingress,
 accounting, CORS, or the whole-scan `OCR_SCAN_KILL_SWITCH`.
 
-**Verify**:
+**Verify**: this check needs valid App Attest material. Production runs
+`LLM_SCAN_ALLOW_SOFT_FAIL=false`, so a soft-fail or header-less request is rejected
+with `401 ATTEST_REJECTED/REQUIRED` in `authenticateScan()` before the LLM gate is
+ever read, and proves nothing about this switch. Use a device already registered
+through `GET /ocr/challenge` + `POST /ocr/attest`.
+
+The simplest verification is the app scan itself: have the TestFlight or internal
+build scan the file and read `status`, `llmReasoning`, `aiModels`, and `engines`
+straight off that response. Do not re-send its headers from `curl`. Each attested
+request advances the assertion's `signCount` atomically before the gate is read, so
+a replayed assertion returns `401 ATTEST_REJECTED/REPLAY`.
+
+To drive the check from `curl` instead, generate a *fresh, unsent* assertion on the
+registered device (debug/internal build path that calls
+`DCAppAttestService.generateAssertion` over the exact image bytes and exports
+`keyId` plus the base64 assertion without posting it), then send that payload
+once. The assertion is signed over the image bytes, so the request body must be
+byte-identical to what was signed, and every retry needs a newly generated
+assertion:
+
 ```bash
 curl -sS -X POST "https://fx.resplit.app/ocr/analyze" \
   -H "content-type: image/jpeg" \
-  -H "x-resplit-attest-soft-fail: true" \
+  -H "x-resplit-attest-key-id: $ATTEST_KEY_ID" \
+  -H "x-resplit-attest-assertion: $ATTEST_ASSERTION_B64" \
   --data-binary @/path/to/tiny-receipt.jpg | jq \
   '{status, llmReasoning, aiModels, engines, consensus}'
 ```
+
+If no registered device is available, run the same check against a non-production
+environment with `LLM_SCAN_ALLOW_SOFT_FAIL=true` and the soft-fail header. That
+override is development-only: never set it on production to make this verification
+pass, because it also reopens the unattested Azure path.
 
 **Re-enable**:
 ```bash
@@ -325,9 +350,11 @@ npx wrangler secret delete LLM_SCAN_KILL_SWITCH --config wrangler.jsonc --env=""
 ```
 
 Then scan a fresh image that has not been submitted during the preceding ten-minute
-cache window. Prove both that the response includes the LLM model in `aiModels` and
-that provider/accounting telemetry records one new Anthropic unit; a response alone
-can be a pre-disable cache replay and is not sufficient proof.
+cache window, again with a freshly generated (never-sent) assertion for those exact
+image bytes. Prove both that the response
+includes the LLM model in `aiModels` and that provider/accounting telemetry records
+one new Anthropic unit; a response alone can be a pre-disable cache replay and is not
+sufficient proof.
 
 #### Atomic OCR accounting rollout guard
 
