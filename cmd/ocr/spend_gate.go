@@ -150,10 +150,18 @@ func scanGateIdentity(r *http.Request, softFail bool, keyID string) string {
 }
 
 func clientIP(r *http.Request) string {
+	// Prefer the rightmost X-Forwarded-For hop. Proxies (including Cloud Run's
+	// Google Front End) append the previous hop, so the left side is
+	// client-suppliable while the rightmost value is platform-appended. Using
+	// the leftmost hop let soft-fail callers mint a fresh rate-limit identity
+	// per request by spoofing X-Forwarded-For.
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first := strings.TrimSpace(strings.Split(xff, ",")[0])
-		if first != "" {
-			return first
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			candidate := strings.TrimSpace(parts[i])
+			if candidate != "" {
+				return candidate
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

@@ -157,7 +157,10 @@ CANDIDATE_CLEANUP_ARMED=true
   `# NoopExporters = silent no telemetry. Preserve operational kill switches` \
   `# and future config while updating this canonical set. Use ^@@^ multi-var` \
   `# delimiter so the comma-free values pass through cleanly.` \
-  --update-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}" \
+  `# OCR_ALLOW_SOFT_FAIL=false is load-bearing: without it, a client-suppliable` \
+  `# X-Resplit-Attest-Soft-Fail header reaches Azure without App Attest (see` \
+  `# cmd/ocr/main.go handleScan). Keep false in production; tests opt in.` \
+  --update-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}@@OCR_ALLOW_SOFT_FAIL=false" \
   `# ── LOAD-BEARING #4: secrets, never plaintext. ──` \
   `# Azure DI key + Grafana OTLP auth header both come from Secret Manager.` \
   `# The runtime SA needs roles/secretmanager.secretAccessor on each (granted` \

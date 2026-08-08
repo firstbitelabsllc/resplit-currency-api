@@ -327,6 +327,14 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	attestResult := "pass"
 	keyID := ""
 	if softFail {
+		// Compatibility is an explicit, source-controlled exception. Production
+		// keeps OCR_ALLOW_SOFT_FAIL unset/false so a caller cannot turn a
+		// client-suppliable header into an IP-capped principal and reach Azure.
+		// Mirrors the Worker LLM_SCAN_ALLOW_SOFT_FAIL fail-closed gate.
+		if !envBool("OCR_ALLOW_SOFT_FAIL") {
+			httpx.WriteError(w, http.StatusUnauthorized, "valid App Attest assertion required")
+			return
+		}
 		// Sim / edge device that can't attest. Proceed without a device assertion;
 		// the per-IP cap below is intentionally tighter than attested devices.
 		attestResult = "soft_fail"
