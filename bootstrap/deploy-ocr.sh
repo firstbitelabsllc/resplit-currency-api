@@ -44,6 +44,12 @@ if ! EXPECTED_RUNTIME_IMAGE="$(resolve_artifact_linux_amd64_image "$GCLOUD" "$IM
 fi
 CANDIDATE_TAG="candidate-${DIGEST:0:12}"
 DEPLOY_TRACE_ID="${DEPLOY_TRACE_ID:-deploy-${DIGEST:0:12}}"
+# Per-deploy canary credential. Random per run, never persisted, and only ever
+# set on the candidate revision — so the provider proof can run a real scan
+# against a revision that has soft-fail closed. Without this the deploy cannot
+# promote its own security fix (caught in review on #120).
+DEPLOY_PROBE_SECRET="$(openssl rand -hex 32)"
+readonly DEPLOY_PROBE_SECRET
 SCAN_FIXTURE="${SCAN_FIXTURE:-${REPO_ROOT}/ocr-lab/processed/test_receipt.jpg}"
 if [[ ! "$DEPLOY_TRACE_ID" =~ ^[A-Za-z0-9._:-]{1,128}$ ]]; then
   echo ">> refusing unsafe deploy trace id" >&2
@@ -160,7 +166,7 @@ CANDIDATE_CLEANUP_ARMED=true
   `# OCR_ALLOW_SOFT_FAIL=false is load-bearing: without it, a client-suppliable` \
   `# X-Resplit-Attest-Soft-Fail header reaches Azure without App Attest (see` \
   `# cmd/ocr/main.go handleScan). Keep false in production; tests opt in.` \
-  --update-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}@@OCR_ALLOW_SOFT_FAIL=false" \
+  --update-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}@@OCR_ALLOW_SOFT_FAIL=false@@OCR_DEPLOY_PROBE_SECRET=${DEPLOY_PROBE_SECRET}" \
   `# ── LOAD-BEARING #4: secrets, never plaintext. ──` \
   `# Azure DI key + Grafana OTLP auth header both come from Secret Manager.` \
   `# The runtime SA needs roles/secretmanager.secretAccessor on each (granted` \
@@ -242,6 +248,7 @@ probe_provider_and_logs() {
     --write-out '%{http_code}' \
     --header 'Content-Type: image/jpeg' \
     --header 'X-Resplit-Attest-Soft-Fail: true' \
+    --header "X-Resplit-Deploy-Probe: ${DEPLOY_PROBE_SECRET}" \
     --header 'X-Resplit-Client-Version: deploy-canary' \
     --header "X-Request-Id: ${DEPLOY_TRACE_ID}" \
     --data-binary "@${scan_file}" \
