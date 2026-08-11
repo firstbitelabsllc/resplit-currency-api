@@ -337,6 +337,75 @@ func TestSoftFailRejectedWhenAllowFlagDisabled(t *testing.T) {
 	}
 }
 
+// The deploy canary must be able to run a REAL scan against a candidate revision
+// that has soft-fail closed — otherwise bootstrap/deploy-ocr.sh can never promote
+// the fix, which is what review caught on #120. These pin that the credential
+// opens exactly one door and no others.
+func TestDeployProbeSecretAllowsTheCanaryScan(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "false")
+	t.Setenv("OCR_DEPLOY_PROBE_SECRET", "s3cret-deploy-value")
+	provider := &countingProvider{}
+	srv := newServer(attest.NewMemStore(), provider, slog.Default(), nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+	req.Header.Set(headerSoftFail, "true")
+	req.Header.Set(headerDeployProbe, "s3cret-deploy-value")
+	srv.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("canary scan status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1 — the canary must reach Azure", provider.calls)
+	}
+}
+
+func TestDeployProbeWrongSecretIsStillRefused(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "false")
+	t.Setenv("OCR_DEPLOY_PROBE_SECRET", "s3cret-deploy-value")
+	provider := &countingProvider{}
+	srv := newServer(attest.NewMemStore(), provider, slog.Default(), nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+	req.Header.Set(headerSoftFail, "true")
+	req.Header.Set(headerDeployProbe, "guessed-wrong")
+	srv.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-secret status = %d, want 401", rec.Code)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0 — a wrong secret must not bill Azure", provider.calls)
+	}
+}
+
+// The important one: with no secret configured, presenting the header must not
+// help. Otherwise the fix would have swapped one client-assertable bypass for
+// another, which is the whole defect it exists to close.
+func TestDeployProbeHeaderIsInertWhenNoSecretConfigured(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "false")
+	t.Setenv("OCR_DEPLOY_PROBE_SECRET", "")
+	provider := &countingProvider{}
+	srv := newServer(attest.NewMemStore(), provider, slog.Default(), nil)
+
+	for _, sent := range []string{"", "true", "anything"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("image-bytes"))
+		req.Header.Set(headerSoftFail, "true")
+		req.Header.Set(headerDeployProbe, sent)
+		srv.routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("probe header %q status = %d, want 401 with no secret set", sent, rec.Code)
+		}
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", provider.calls)
+	}
+}
+
 func TestClientIPUsesRightmostForwardedHop(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/ocr/scan", nil)
 	req.Header.Set("X-Forwarded-For", "10.0.0.1, 203.0.113.50")

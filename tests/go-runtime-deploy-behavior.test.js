@@ -26,7 +26,18 @@ function makeHarness(mode, scenario) {
   const fixture = path.join(root, 'receipt.jpg')
   fs.writeFileSync(fixture, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
   const initial = mode === 'ocr'
-    ? { mode, scenario, current: 'ocr-prev', candidateCreated: false, candidateTag: null, events: [] }
+    ? {
+      mode,
+      scenario,
+      current: 'ocr-prev',
+      candidateCreated: false,
+      candidateTag: null,
+      cleanCandidateCreated: false,
+      cleanCandidateTag: null,
+      probeSecretPresent: false,
+      productionSecretPresent: false,
+      events: [],
+    }
     : {
       mode,
       scenario,
@@ -76,7 +87,12 @@ test('OCR candidate failure removes its public tag without moving production tra
   const state = readState(harness)
   assert.equal(state.current, 'ocr-prev')
   assert.equal(state.candidateCreated, false)
-  assert.deepEqual(state.events, ['deploy-candidate', 'remove-candidate-tag'])
+  assert.equal(state.probeSecretPresent, false)
+  assert.deepEqual(state.events, [
+    'deploy-probe-candidate',
+    'remove-probe-tag',
+    'delete-probe-candidate',
+  ])
 })
 
 test('OCR failure after promotion restores the previous 100% revision and removes the tag', (t) => {
@@ -92,11 +108,17 @@ test('OCR failure after promotion restores the previous 100% revision and remove
   const state = readState(harness)
   assert.equal(state.current, 'ocr-prev')
   assert.equal(state.candidateCreated, false)
+  assert.equal(state.cleanCandidateCreated, false)
+  assert.equal(state.probeSecretPresent, false)
+  assert.equal(state.productionSecretPresent, false)
   assert.deepEqual(state.events, [
-    'deploy-candidate',
-    'promote-candidate',
+    'deploy-probe-candidate',
+    'stage-clean-candidate',
+    'remove-probe-tag',
+    'delete-probe-candidate',
+    'promote-clean-candidate',
     'rollback-previous',
-    'remove-candidate-tag',
+    'remove-clean-tag',
   ])
 })
 
@@ -111,9 +133,19 @@ test('OCR success leaves only the proven candidate at 100% with no public candid
   })
   assert.equal(result.status, 0, result.stdout + result.stderr)
   const state = readState(harness)
-  assert.equal(state.current, 'ocr-candidate')
+  assert.equal(state.current, 'ocr-clean')
   assert.equal(state.candidateCreated, false)
-  assert.deepEqual(state.events, ['deploy-candidate', 'promote-candidate', 'remove-candidate-tag'])
+  assert.equal(state.cleanCandidateCreated, false)
+  assert.equal(state.probeSecretPresent, false)
+  assert.equal(state.productionSecretPresent, false)
+  assert.deepEqual(state.events, [
+    'deploy-probe-candidate',
+    'stage-clean-candidate',
+    'remove-probe-tag',
+    'delete-probe-candidate',
+    'promote-clean-candidate',
+    'remove-clean-tag',
+  ])
 })
 
 test('OCR accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
@@ -127,9 +159,19 @@ test('OCR accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
   })
   assert.equal(result.status, 0, result.stdout + result.stderr)
   const state = readState(harness)
-  assert.equal(state.current, 'ocr-candidate')
+  assert.equal(state.current, 'ocr-clean')
   assert.equal(state.candidateCreated, false)
-  assert.deepEqual(state.events, ['deploy-candidate', 'promote-candidate', 'remove-candidate-tag'])
+  assert.equal(state.cleanCandidateCreated, false)
+  assert.equal(state.probeSecretPresent, false)
+  assert.equal(state.productionSecretPresent, false)
+  assert.deepEqual(state.events, [
+    'deploy-probe-candidate',
+    'stage-clean-candidate',
+    'remove-probe-tag',
+    'delete-probe-candidate',
+    'promote-clean-candidate',
+    'remove-clean-tag',
+  ])
 })
 
 test('OCR rejects an ambiguous OCI index before creating a candidate', (t) => {
@@ -262,7 +304,15 @@ if (state.mode === 'ocr') {
   if (args[0] === 'run' && args[1] === 'deploy') {
     state.candidateCreated = true
     state.candidateTag = arg('--tag=').slice('--tag='.length)
-    state.events.push('deploy-candidate')
+    state.probeSecretPresent = true
+    state.events.push('deploy-probe-candidate')
+    save()
+    process.exit(0)
+  }
+  if (args[0] === 'run' && args[1] === 'services' && args[2] === 'update') {
+    state.cleanCandidateCreated = true
+    state.cleanCandidateTag = arg('--tag=').slice('--tag='.length)
+    state.events.push('stage-clean-candidate')
     save()
     process.exit(0)
   }
@@ -283,16 +333,35 @@ if (state.mode === 'ocr') {
         })
       }
     }
+    if (state.cleanCandidateCreated) {
+      if (state.current === 'ocr-clean') {
+        traffic[0].tag = state.cleanCandidateTag
+        traffic[0].url = 'https://clean-candidate.example'
+      } else {
+        traffic.push({
+          revisionName: 'ocr-clean', percent: 0,
+          tag: state.cleanCandidateTag, url: 'https://clean-candidate.example',
+        })
+      }
+    }
     output({ status: { traffic, url: 'https://ocr.example' } })
     process.exit(0)
   }
   if (args[0] === 'run' && args[1] === 'revisions' && args[2] === 'describe') {
     const revision = args[3]
-    output(revision === 'ocr-candidate'
-      ? (state.scenario === 'manifest_index_success'
-        ? 'us-central1-docker.pkg.dev/test-project/resplit-fx/ocr@sha256:' + 'c'.repeat(64)
-        : process.env.IMAGE)
-      : 'us-central1-docker.pkg.dev/test-project/resplit-fx/ocr@sha256:' + 'a'.repeat(64))
+    const candidateImage = state.scenario === 'manifest_index_success'
+      ? 'us-central1-docker.pkg.dev/test-project/resplit-fx/ocr@sha256:' + 'c'.repeat(64)
+      : process.env.IMAGE
+    const image = revision === 'ocr-candidate' || revision === 'ocr-clean'
+      ? candidateImage
+      : 'us-central1-docker.pkg.dev/test-project/resplit-fx/ocr@sha256:' + 'a'.repeat(64)
+    if (arg('--format=') === '--format=json') {
+      output({ spec: { containers: [{ image, env: revision === 'ocr-clean' ? [] : [
+        { name: 'OCR_DEPLOY_PROBE_SECRET', value: 'test-secret' },
+      ] }] } })
+    } else {
+      output(image)
+    }
     process.exit(0)
   }
   if (args[0] === 'run' && args[1] === 'services' && args[2] === 'update-traffic') {
@@ -301,12 +370,31 @@ if (state.mode === 'ocr') {
     if (target) {
       const revision = target.slice('--to-revisions='.length).split('=')[0]
       state.current = revision
-      state.events.push(revision === 'ocr-candidate' ? 'promote-candidate' : 'rollback-previous')
+      state.productionSecretPresent = revision === 'ocr-candidate'
+      state.events.push(revision === 'ocr-clean' ? 'promote-clean-candidate' : 'rollback-previous')
     }
     if (remove) {
+      const tags = remove.slice('--remove-tags='.length).split(',')
+      if (state.candidateCreated && tags.includes(state.candidateTag)) {
+        state.candidateCreated = false
+        state.candidateTag = null
+        state.events.push('remove-probe-tag')
+      }
+      if (state.cleanCandidateCreated && tags.includes(state.cleanCandidateTag)) {
+        state.cleanCandidateCreated = false
+        state.cleanCandidateTag = null
+        state.events.push('remove-clean-tag')
+      }
+    }
+    save()
+    process.exit(0)
+  }
+  if (args[0] === 'run' && args[1] === 'revisions' && args[2] === 'delete') {
+    if (args[3] === 'ocr-candidate') {
       state.candidateCreated = false
       state.candidateTag = null
-      state.events.push('remove-candidate-tag')
+      state.probeSecretPresent = false
+      state.events.push('delete-probe-candidate')
     }
     save()
     process.exit(0)
@@ -473,7 +561,7 @@ if (url.includes('.pkg.dev/v2/test-project/resplit-fx/fx-publish/manifests/sha25
   process.exit(0)
 }
 if (url === 'https://candidate.example/health' && state.scenario === 'candidate_fail') process.exit(22)
-if (url === 'https://ocr.example/health' && state.scenario === 'post_promote_fail' && state.current === 'ocr-candidate') process.exit(22)
+if (url === 'https://ocr.example/health' && state.scenario === 'post_promote_fail' && state.current === 'ocr-clean') process.exit(22)
 if (url.endsWith('/health')) {
   process.stdout.write('{"status":"ok","service":"ocr"}')
   process.exit(0)

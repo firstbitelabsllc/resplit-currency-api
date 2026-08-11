@@ -42,8 +42,15 @@ if ! EXPECTED_RUNTIME_IMAGE="$(resolve_artifact_linux_amd64_image "$GCLOUD" "$IM
   echo ">> unable to resolve the reviewed OCR image to one linux/amd64 runtime" >&2
   exit 1
 fi
-CANDIDATE_TAG="candidate-${DIGEST:0:12}"
+PROBE_CANDIDATE_TAG="candidate-probe-${DIGEST:0:12}"
+CLEAN_CANDIDATE_TAG="candidate-clean-${DIGEST:0:12}"
 DEPLOY_TRACE_ID="${DEPLOY_TRACE_ID:-deploy-${DIGEST:0:12}}"
+# Per-deploy canary credential. Random per run and set only on a zero-traffic
+# probe revision so the provider proof can run a real scan against a revision
+# that has soft-fail closed. The probe revision is deleted before traffic can
+# move; a second, secret-free revision is the only promotion target.
+DEPLOY_PROBE_SECRET="$(openssl rand -hex 32)"
+readonly DEPLOY_PROBE_SECRET
 SCAN_FIXTURE="${SCAN_FIXTURE:-${REPO_ROOT}/ocr-lab/processed/test_receipt.jpg}"
 if [[ ! "$DEPLOY_TRACE_ID" =~ ^[A-Za-z0-9._:-]{1,128}$ ]]; then
   echo ">> refusing unsafe deploy trace id" >&2
@@ -56,6 +63,7 @@ fi
 
 CANDIDATE_CLEANUP_ARMED=false
 PROMOTION_ROLLBACK_ARMED=false
+PROBE_CANDIDATE_REVISION=""
 cleanup_candidate_tag() {
   local status=$?
   local restored_service=""
@@ -80,9 +88,24 @@ cleanup_candidate_tag() {
     fi
   fi
   if [[ "$CANDIDATE_CLEANUP_ARMED" == "true" ]]; then
+    if [[ -z "$PROBE_CANDIDATE_REVISION" ]]; then
+      restored_service="$("$GCLOUD" run services describe "$SERVICE" \
+        --project="$PROJECT" --region="$REGION" \
+        --format=json 2>/dev/null || true)"
+      PROBE_CANDIDATE_REVISION="$(printf '%s' "$restored_service" | jq -r \
+        --arg tag "$PROBE_CANDIDATE_TAG" \
+        '.status.traffic[]? | select(.tag == $tag) | .revisionName' \
+        2>/dev/null || true)"
+    fi
     "$GCLOUD" run services update-traffic "$SERVICE" \
       --project="$PROJECT" --region="$REGION" \
-      --remove-tags="$CANDIDATE_TAG" --quiet >/dev/null 2>&1 || true
+      --remove-tags="$PROBE_CANDIDATE_TAG,$CLEAN_CANDIDATE_TAG" \
+      --quiet >/dev/null 2>&1 || true
+    if [[ -n "$PROBE_CANDIDATE_REVISION" ]]; then
+      "$GCLOUD" run revisions delete "$PROBE_CANDIDATE_REVISION" \
+        --project="$PROJECT" --region="$REGION" \
+        --quiet >/dev/null 2>&1 || true
+    fi
   fi
   exit "$status"
 }
@@ -144,7 +167,7 @@ CANDIDATE_CLEANUP_ARMED=true
   --max-instances=10 \
   --cpu-boost \
   --no-traffic \
-  --tag="$CANDIDATE_TAG" \
+  --tag="$PROBE_CANDIDATE_TAG" \
   `# ── LOAD-BEARING #2: CPU always allocated while an instance is alive. ──` \
   `# Cloud Run's default throttles CPU to ~0 between requests, which FREEZES` \
   `# the OTel periodic metric reader + batch span exporter goroutines. Result:` \
@@ -160,7 +183,7 @@ CANDIDATE_CLEANUP_ARMED=true
   `# OCR_ALLOW_SOFT_FAIL=false is load-bearing: without it, a client-suppliable` \
   `# X-Resplit-Attest-Soft-Fail header reaches Azure without App Attest (see` \
   `# cmd/ocr/main.go handleScan). Keep false in production; tests opt in.` \
-  --update-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}@@OCR_ALLOW_SOFT_FAIL=false" \
+  --update-env-vars="^@@^OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}@@OTEL_SERVICE_NAME=${SERVICE}@@OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf@@GCP_PROJECT_ID=${PROJECT}@@AZURE_OCR_ENDPOINT=${AZURE_OCR_ENDPOINT}@@OCR_ALLOW_SOFT_FAIL=false@@OCR_DEPLOY_PROBE_SECRET=${DEPLOY_PROBE_SECRET}" \
   `# ── LOAD-BEARING #4: secrets, never plaintext. ──` \
   `# Azure DI key + Grafana OTLP auth header both come from Secret Manager.` \
   `# The runtime SA needs roles/secretmanager.secretAccessor on each (granted` \
@@ -172,19 +195,19 @@ SERVICE_JSON="$("$GCLOUD" run services describe "$SERVICE" \
   --project="$PROJECT" \
   --region="$REGION" \
   --format=json)"
-CANDIDATE_ENTRY="$(printf '%s' "$SERVICE_JSON" | jq -c --arg tag "$CANDIDATE_TAG" \
+PROBE_CANDIDATE_ENTRY="$(printf '%s' "$SERVICE_JSON" | jq -c --arg tag "$PROBE_CANDIDATE_TAG" \
   '.status.traffic[] | select(.tag == $tag)')"
-CANDIDATE_REVISION="$(printf '%s' "$CANDIDATE_ENTRY" | jq -r '.revisionName')"
-CANDIDATE_URL="$(printf '%s' "$CANDIDATE_ENTRY" | jq -r '.url')"
-if [[ -z "$CANDIDATE_REVISION" || "$CANDIDATE_REVISION" == "null" ||
-      -z "$CANDIDATE_URL" || "$CANDIDATE_URL" == "null" ]]; then
-  echo ">> unable to resolve the zero-traffic OCR candidate" >&2
+PROBE_CANDIDATE_REVISION="$(printf '%s' "$PROBE_CANDIDATE_ENTRY" | jq -r '.revisionName')"
+PROBE_CANDIDATE_URL="$(printf '%s' "$PROBE_CANDIDATE_ENTRY" | jq -r '.url')"
+if [[ -z "$PROBE_CANDIDATE_REVISION" || "$PROBE_CANDIDATE_REVISION" == "null" ||
+      -z "$PROBE_CANDIDATE_URL" || "$PROBE_CANDIDATE_URL" == "null" ]]; then
+  echo ">> unable to resolve the zero-traffic OCR probe candidate" >&2
   exit 1
 fi
-CANDIDATE_IMAGE="$("$GCLOUD" run revisions describe "$CANDIDATE_REVISION" \
+PROBE_CANDIDATE_IMAGE="$("$GCLOUD" run revisions describe "$PROBE_CANDIDATE_REVISION" \
   --project="$PROJECT" --region="$REGION" --format='value(spec.containers[0].image)')"
-if [[ "$CANDIDATE_IMAGE" != "$EXPECTED_RUNTIME_IMAGE" ]]; then
-  echo ">> zero-traffic OCR candidate digest does not match the reviewed image" >&2
+if [[ "$PROBE_CANDIDATE_IMAGE" != "$EXPECTED_RUNTIME_IMAGE" ]]; then
+  echo ">> zero-traffic OCR probe digest does not match the reviewed image" >&2
   exit 1
 fi
 
@@ -209,8 +232,8 @@ probe_ocr() {
   [[ "$challenge_json" =~ \"challenge\":[[:space:]]*\"[^\"]+\" ]]
 }
 
-if ! probe_ocr "$CANDIDATE_URL"; then
-  echo ">> zero-traffic OCR candidate failed health/challenge proof; production is unchanged" >&2
+if ! probe_ocr "$PROBE_CANDIDATE_URL"; then
+  echo ">> zero-traffic OCR probe failed health/challenge proof; production is unchanged" >&2
   exit 1
 fi
 
@@ -242,10 +265,11 @@ probe_provider_and_logs() {
     --write-out '%{http_code}' \
     --header 'Content-Type: image/jpeg' \
     --header 'X-Resplit-Attest-Soft-Fail: true' \
+    --header "X-Resplit-Deploy-Probe: ${DEPLOY_PROBE_SECRET}" \
     --header 'X-Resplit-Client-Version: deploy-canary' \
     --header "X-Request-Id: ${DEPLOY_TRACE_ID}" \
     --data-binary "@${scan_file}" \
-    "${CANDIDATE_URL}/ocr/scan")"; then
+    "${PROBE_CANDIDATE_URL}/ocr/scan")"; then
     rm -rf "$work_dir"
     return 1
   fi
@@ -269,8 +293,8 @@ probe_provider_and_logs() {
   fi
   rm -rf "$work_dir"
 
-  log_filter="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND resource.labels.revision_name=\"${CANDIDATE_REVISION}\" AND jsonPayload.request_id=\"${DEPLOY_TRACE_ID}\" AND jsonPayload.message=\"[OCR_MONITORING] scan\""
-  telemetry_filter="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND resource.labels.revision_name=\"${CANDIDATE_REVISION}\" AND jsonPayload.message=\"otel telemetry enabled\""
+  log_filter="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND resource.labels.revision_name=\"${PROBE_CANDIDATE_REVISION}\" AND jsonPayload.request_id=\"${DEPLOY_TRACE_ID}\" AND jsonPayload.message=\"[OCR_MONITORING] scan\""
+  telemetry_filter="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND resource.labels.revision_name=\"${PROBE_CANDIDATE_REVISION}\" AND jsonPayload.message=\"otel telemetry enabled\""
   for _ in {1..18}; do
     log_match="$("$GCLOUD" logging read "$log_filter" \
       --project="$PROJECT" --freshness=15m --limit=1 \
@@ -292,6 +316,53 @@ if ! probe_provider_and_logs; then
   exit 1
 fi
 
+echo ">> staging a secret-free OCR promotion candidate"
+"$GCLOUD" run services update "$SERVICE" \
+  --project="$PROJECT" \
+  --region="$REGION" \
+  --remove-env-vars=OCR_DEPLOY_PROBE_SECRET \
+  --no-traffic \
+  --tag="$CLEAN_CANDIDATE_TAG" \
+  --quiet
+
+SERVICE_JSON="$("$GCLOUD" run services describe "$SERVICE" \
+  --project="$PROJECT" --region="$REGION" --format=json)"
+CLEAN_CANDIDATE_ENTRY="$(printf '%s' "$SERVICE_JSON" | jq -c --arg tag "$CLEAN_CANDIDATE_TAG" \
+  '.status.traffic[] | select(.tag == $tag)')"
+CLEAN_CANDIDATE_REVISION="$(printf '%s' "$CLEAN_CANDIDATE_ENTRY" | jq -r '.revisionName')"
+CLEAN_CANDIDATE_URL="$(printf '%s' "$CLEAN_CANDIDATE_ENTRY" | jq -r '.url')"
+if [[ -z "$CLEAN_CANDIDATE_REVISION" || "$CLEAN_CANDIDATE_REVISION" == "null" ||
+      -z "$CLEAN_CANDIDATE_URL" || "$CLEAN_CANDIDATE_URL" == "null" ]]; then
+  echo ">> unable to resolve the zero-traffic secret-free OCR candidate" >&2
+  exit 1
+fi
+CLEAN_CANDIDATE_JSON="$("$GCLOUD" run revisions describe "$CLEAN_CANDIDATE_REVISION" \
+  --project="$PROJECT" --region="$REGION" --format=json)"
+CLEAN_CANDIDATE_IMAGE="$(printf '%s' "$CLEAN_CANDIDATE_JSON" | jq -r '.spec.containers[0].image')"
+if [[ "$CLEAN_CANDIDATE_IMAGE" != "$EXPECTED_RUNTIME_IMAGE" ]]; then
+  echo ">> secret-free OCR candidate digest does not match the reviewed image" >&2
+  exit 1
+fi
+if printf '%s' "$CLEAN_CANDIDATE_JSON" | jq -e \
+  'any(.spec.containers[0].env[]?; .name == "OCR_DEPLOY_PROBE_SECRET")' >/dev/null; then
+  echo ">> secret-free OCR candidate still contains the deploy probe credential" >&2
+  exit 1
+fi
+if ! probe_ocr "$CLEAN_CANDIDATE_URL"; then
+  echo ">> secret-free OCR candidate failed health/challenge proof; production is unchanged" >&2
+  exit 1
+fi
+
+# The bearer credential must not survive the canary. Remove its public tag,
+# delete its zero-traffic revision, and only then make the clean twin eligible
+# for promotion.
+"$GCLOUD" run services update-traffic "$SERVICE" \
+  --project="$PROJECT" --region="$REGION" \
+  --remove-tags="$PROBE_CANDIDATE_TAG" --quiet
+"$GCLOUD" run revisions delete "$PROBE_CANDIDATE_REVISION" \
+  --project="$PROJECT" --region="$REGION" --quiet
+PROBE_CANDIDATE_REVISION=""
+
 PRODUCTION_BEFORE_PROMOTION="$("$GCLOUD" run services describe "$SERVICE" \
   --project="$PROJECT" --region="$REGION" --format=json)"
 CURRENT_PRODUCTION_REVISION="$(printf '%s' "$PRODUCTION_BEFORE_PROMOTION" | jq -r \
@@ -301,12 +372,12 @@ if [[ "$CURRENT_PRODUCTION_REVISION" != "$PREVIOUS_REVISION" ]]; then
   exit 1
 fi
 
-echo ">> candidate verified; promoting ${CANDIDATE_REVISION} to 100%"
+echo ">> candidates verified; promoting secret-free ${CLEAN_CANDIDATE_REVISION} to 100%"
 PROMOTION_ROLLBACK_ARMED=true
 "$GCLOUD" run services update-traffic "$SERVICE" \
   --project="$PROJECT" \
   --region="$REGION" \
-  --to-revisions="${CANDIDATE_REVISION}=100" \
+  --to-revisions="${CLEAN_CANDIDATE_REVISION}=100" \
   --quiet
 
 URL="$("$GCLOUD" run services describe "$SERVICE" \
@@ -318,7 +389,7 @@ fi
 
 "$GCLOUD" run services update-traffic "$SERVICE" \
   --project="$PROJECT" --region="$REGION" \
-  --remove-tags="$CANDIDATE_TAG" --quiet
+  --remove-tags="$CLEAN_CANDIDATE_TAG" --quiet
 PROMOTION_ROLLBACK_ARMED=false
 CANDIDATE_CLEANUP_ARMED=false
-echo ">> ${CANDIDATE_REVISION} is healthy at 100%; health, challenge, Azure OCR, request-id logging, and OTel startup verified"
+echo ">> ${CLEAN_CANDIDATE_REVISION} is healthy at 100% with no deploy-probe secret; health, challenge, Azure OCR, request-id logging, and OTel startup verified"

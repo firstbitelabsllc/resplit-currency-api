@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -63,6 +64,12 @@ const (
 	headerChallenge = "X-Resplit-Attest-Challenge"
 	headerAssertion = "X-Resplit-Attest-Assertion"
 	headerSoftFail  = "X-Resplit-Attest-Soft-Fail"
+	// Deploy-time canary credential. NOT a second soft-fail: the hole this file
+	// closes was a client-ASSERTABLE boolean, and the remedy is that a caller
+	// must present something it cannot guess. This carries a per-deploy random
+	// secret injected as OCR_DEPLOY_PROBE_SECRET, compared in constant time, and
+	// is consulted only when soft-fail is otherwise refused.
+	headerDeployProbe = "X-Resplit-Deploy-Probe"
 
 	envelopeVersion = 1
 	providerName    = "azure-di"
@@ -309,6 +316,31 @@ type scanEnvelope struct {
 	Raw      json.RawMessage `json:"raw,omitempty"`
 }
 
+// deployProbeAuthorized reports whether a request carries the per-deploy canary
+// secret. It exists because the deploy's own provider proof
+// (bootstrap/deploy-ocr.sh probe_provider_and_logs) must run a REAL scan against
+// the candidate revision to prove Azure DI is reachable with live credentials;
+// without that, a revision with broken Azure creds promotes cleanly.
+//
+// Before this, that probe leaned on the soft-fail bypass — which is precisely why
+// the bypass survived so long: the deploy path could not detect it, because the
+// deploy path depended on it.
+//
+// Fails closed. An unset or empty secret authorizes nothing, so a caller cannot
+// reach this path by omitting the header, and the comparison is constant time so
+// the check cannot leak the secret through timing.
+func deployProbeAuthorized(r *http.Request) bool {
+	want := strings.TrimSpace(os.Getenv("OCR_DEPLOY_PROBE_SECRET"))
+	if want == "" {
+		return false
+	}
+	got := strings.TrimSpace(r.Header.Get(headerDeployProbe))
+	if got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	log := httpx.LoggerFrom(r.Context())
 	softFail := r.Header.Get(headerSoftFail) == "true"
@@ -331,7 +363,7 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// keeps OCR_ALLOW_SOFT_FAIL unset/false so a caller cannot turn a
 		// client-suppliable header into an IP-capped principal and reach Azure.
 		// Mirrors the Worker LLM_SCAN_ALLOW_SOFT_FAIL fail-closed gate.
-		if !envBool("OCR_ALLOW_SOFT_FAIL") {
+		if !envBool("OCR_ALLOW_SOFT_FAIL") && !deployProbeAuthorized(r) {
 			httpx.WriteError(w, http.StatusUnauthorized, "valid App Attest assertion required")
 			return
 		}
