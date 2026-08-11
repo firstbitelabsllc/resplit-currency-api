@@ -255,13 +255,20 @@ function assertCanonicalOcrDeploy(source) {
   assert.match(source, /SERVICE="\$\{SERVICE:-ocr\}"/, 'canonical OCR service must be ocr')
   assert.match(source, /--min-instances=1/, 'OCR telemetry deploy must keep one instance warm')
   assert.match(source, /--no-traffic/, 'OCR candidate must start with zero traffic')
-  assert.match(source, /--tag="\$CANDIDATE_TAG"/, 'OCR candidate must have a probe URL')
+  assert.match(source, /--tag="\$PROBE_CANDIDATE_TAG"/, 'OCR probe candidate must have a probe URL')
+  assert.match(source, /--tag="\$CLEAN_CANDIDATE_TAG"/, 'OCR promotion candidate must have a readback URL')
   assert.match(source, /CANDIDATE_IMAGE=/, 'candidate image digest must be read back')
-  assert.match(source, /--to-revisions="\$\{CANDIDATE_REVISION\}=100"/, 'verified candidate must be promoted explicitly')
+  assert.match(source, /--to-revisions="\$\{CLEAN_CANDIDATE_REVISION\}=100"/, 'only the secret-free candidate may be promoted')
   assert.match(source, /--to-revisions="\$\{PREVIOUS_REVISION\}=100"/, 'failed promotion must roll back explicitly')
   assert.match(source, /trap cleanup_candidate_tag EXIT/, 'candidate tag cleanup must be armed for every exit')
   assert.match(source, /CANDIDATE_CLEANUP_ARMED=true/, 'candidate cleanup must arm before deploy')
   assert.match(source, /PROMOTION_ROLLBACK_ARMED=true/, 'traffic rollback must arm before promotion')
+  assert.match(source, /--remove-env-vars=OCR_DEPLOY_PROBE_SECRET/, 'promotion candidate must remove the canary credential')
+  assert.match(source, /run revisions delete "\$PROBE_CANDIDATE_REVISION"/, 'secret-bearing probe revision must be destroyed')
+  assert.ok(
+    source.indexOf('run revisions delete "$PROBE_CANDIDATE_REVISION"') < source.indexOf('secret-free ${CLEAN_CANDIDATE_REVISION} to 100%'),
+    'secret-bearing probe revision must be deleted before production promotion'
+  )
   assert.match(source, /--update-env-vars=/, 'deploy must preserve unknown operational environment config')
   assert.match(source, /--update-secrets=/, 'deploy must preserve unknown future secret bindings')
   assert.doesNotMatch(source, /--set-env-vars=/, 'deploy must not replace incident-time config')
@@ -269,7 +276,7 @@ function assertCanonicalOcrDeploy(source) {
   assert.match(source, /select\(\.tag == \$tag\)/, 'candidate URL and revision must come from the same tag entry')
   assert.doesNotMatch(source, /latestCreatedRevisionName/, 'global latest revision is race-prone')
   assert.match(source, /CURRENT_PRODUCTION_REVISION/, 'promotion must recheck the production traffic owner')
-  assert.match(source, /"\$\{CANDIDATE_URL\}\/ocr\/scan"/, 'candidate must perform a real OCR scan')
+  assert.match(source, /"\$\{PROBE_CANDIDATE_URL\}\/ocr\/scan"/, 'probe candidate must perform a real OCR scan')
   assert.match(source, /printf '\\n%s\\n' "\$DEPLOY_TRACE_ID" >> "\$scan_file"/, 'deploy retries must use a unique canary hash')
   assert.match(source, /\.provider == "azure-di"/, 'candidate scan must prove the Azure provider')
   assert.match(source, /\.raw\.status == "succeeded"/, 'candidate scan must reject the stub provider')
@@ -278,7 +285,7 @@ function assertCanonicalOcrDeploy(source) {
   assert.match(source, /--connect-timeout 10 --max-time 30/, 'health probes must have a finite deadline')
   assert.match(source, /--connect-timeout 10 --max-time 95/, 'provider canary must have a finite deadline')
   assert.ok(
-    source.indexOf('probe_provider_and_logs') < source.indexOf('candidate verified; promoting'),
+    source.indexOf('probe_provider_and_logs') < source.indexOf('candidates verified; promoting'),
     'provider and telemetry proof must run before traffic promotion'
   )
   assert.doesNotMatch(source, /\/healthz/, 'canonical Cloud Run probe must avoid reserved z suffixes')
@@ -440,11 +447,11 @@ test('manual GCP deploy follows the real topology and immutable path, including 
       'EXPECTED_IMAGE_PREFIX="${REGION}-docker.pkg.dev/${PROJECT}/resplit-fx/ocr@sha256:"',
       'EXPECTED_IMAGE_PREFIX="${REGION}-docker.pkg.dev/${PROJECT}/wrong/ocr:latest"'
     )],
-    ['zero traffic', deployScript.replace('--no-traffic', '--traffic')],
+    ['zero traffic', deployScript.split('--no-traffic').join('--traffic')],
     ['cleanup trap', deployScript.replace('trap cleanup_candidate_tag EXIT', '# cleanup removed')],
     ['promotion rollback', deployScript.replace('PROMOTION_ROLLBACK_ARMED=true', 'PROMOTION_ROLLBACK_ARMED=false')],
     ['environment preservation', deployScript.replace('--update-env-vars=', '--set-env-vars=')],
-    ['tag binding', deployScript.replace("'.status.traffic[] | select(.tag == $tag)'", "'.status.latestCreatedRevisionName'")],
+    ['tag binding', deployScript.split("'.status.traffic[] | select(.tag == $tag)'").join("'.status.latestCreatedRevisionName'")],
     ['production owner', deployScript.split('CURRENT_PRODUCTION_REVISION').join('IGNORED_PRODUCTION_REVISION')],
   ]) {
     assert.notEqual(mutation, deployScript, `${label} mutation must alter the fixture`)
