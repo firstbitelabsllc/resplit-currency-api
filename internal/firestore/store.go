@@ -57,6 +57,7 @@ type docStore interface {
 	Get(ctx context.Context, coll, id string) (map[string]any, error)
 	Set(ctx context.Context, coll, id string, fields map[string]any) error
 	Create(ctx context.Context, coll, id string, fields map[string]any) error
+	Delete(ctx context.Context, coll, id string) error
 	Increment(ctx context.Context, coll, id, field string, delta int64) (int64, error)
 }
 
@@ -151,6 +152,20 @@ func (s *FirestoreStore) ReserveOCR(ctx context.Context, deviceID, hash string, 
 	default:
 		return false, fmt.Errorf("firestore reserve ocr %q: %w", idempotencyID(deviceID, hash), err)
 	}
+}
+
+// ReleaseOCR removes a prior ReserveOCR claim so a failed provider attempt can
+// retry the same (deviceID, hash) without waiting for Firestore TTL. Missing
+// documents are treated as already released.
+func (s *FirestoreStore) ReleaseOCR(ctx context.Context, deviceID, hash string) error {
+	id := idempotencyID(deviceID, hash)
+	if err := s.docs.Delete(ctx, collOCRIdempotency, id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("firestore release ocr %q: %w", id, err)
+	}
+	return nil
 }
 
 // ---- rate caps ---------------------------------------------------------------
