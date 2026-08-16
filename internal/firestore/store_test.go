@@ -129,14 +129,38 @@ func TestFirestoreStore_KeyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFirestoreStore_CreateKeyDoesNotOverwrite(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(newFakeDocs())
+	const keyID = "create-once"
+	spki := []byte{0x30, 0x59, 0x01}
+
+	if err := store.CreateKey(ctx, keyID, spki, 0); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+	if err := store.PutKey(ctx, keyID, spki, 11); err != nil {
+		t.Fatalf("PutKey advance: %v", err)
+	}
+	if err := store.CreateKey(ctx, keyID, spki, 0); !errors.Is(err, attest.ErrAlreadyExists) {
+		t.Fatalf("second CreateKey: want attest.ErrAlreadyExists, got %v", err)
+	}
+	_, count, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if count != 11 {
+		t.Fatalf("signCount after failed CreateKey = %d, want 11", count)
+	}
+}
+
 // TestFirestoreStore_SatisfiesAttestStore drives the store through the real
 // attest.Store-consuming attestation flow shape (Put then Get), proving the
 // concrete type is usable wherever the interface is required.
 func TestFirestoreStore_SatisfiesAttestStore(t *testing.T) {
 	ctx := context.Background()
 	var s attest.Store = NewStore(newFakeDocs())
-	if err := s.PutKey(ctx, "k", []byte("spki"), 1); err != nil {
-		t.Fatalf("PutKey via interface: %v", err)
+	if err := s.CreateKey(ctx, "k", []byte("spki"), 1); err != nil {
+		t.Fatalf("CreateKey via interface: %v", err)
 	}
 	spki, count, err := s.GetKey(ctx, "k")
 	if err != nil {
