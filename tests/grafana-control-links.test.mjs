@@ -20,6 +20,10 @@ test('Resplit operator dashboard links every canonical control surface', () => {
   assert.equal(links.get('iOS activation'), 'https://us.posthog.com/project/43661/dashboard/1814792')
   assert.equal(links.get('Launch pulse'), 'https://us.posthog.com/project/43661/dashboard/1814769')
   assert.equal(
+    links.get('iOS project — Sentry'),
+    'https://firstbite-labs.sentry.io/projects/resplit-ios/',
+  )
+  assert.equal(
     links.get('iOS issues — Sentry'),
     'https://firstbite-labs.sentry.io/issues/?project=4506001574461440',
   )

@@ -63,6 +63,18 @@
       "keepTime": false,
       "tags": [],
       "targetBlank": true,
+      "title": "iOS project — Sentry",
+      "tooltip": "Canonical Sentry project home for Resplit iOS",
+      "type": "link",
+      "url": "https://firstbite-labs.sentry.io/projects/resplit-ios/"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
       "title": "iOS issues — Sentry",
       "tooltip": "Canonical iOS crash and error backlog",
       "type": "link",
