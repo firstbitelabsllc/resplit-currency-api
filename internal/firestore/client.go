@@ -68,6 +68,15 @@ func (a *clientDocStore) Create(ctx context.Context, coll, id string, fields map
 	return err
 }
 
+// Delete removes a document, mapping Firestore NotFound onto ErrNotFound.
+func (a *clientDocStore) Delete(ctx context.Context, coll, id string) error {
+	_, err := a.cli.Collection(coll).Doc(id).Delete(ctx)
+	if err != nil && status.Code(err) == codes.NotFound {
+		return ErrNotFound
+	}
+	return err
+}
+
 // Increment atomically adds delta to an integer field and returns the new value.
 // It runs a Firestore transaction (read-modify-write) rather than the fire-and-
 // forget firestore.Increment so the caller gets the post-increment count back —
