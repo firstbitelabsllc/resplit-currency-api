@@ -11,8 +11,10 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -308,4 +310,81 @@ func TestAppleRootEmbedded(t *testing.T) {
 	if cert.PublicKeyAlgorithm != x509.ECDSA {
 		t.Fatalf("expected ECDSA public key, got %v", cert.PublicKeyAlgorithm)
 	}
+}
+
+
+func mustP256Cert(t *testing.T, key *ecdsa.PrivateKey) *x509.Certificate {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	return cert
+}
+
+func keyIDForPub(t *testing.T, pub *ecdsa.PublicKey) string {
+	t.Helper()
+	ecdhPub, err := pub.ECDH()
+	if err != nil {
+		t.Fatalf("ECDH: %v", err)
+	}
+	sum := sha256.Sum256(ecdhPub.Bytes())
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// TestBindAttestKeyID pins the Apple/Worker keyId binding that the Go Cloud Run
+// path previously omitted: without it, one real attestationObject can be stored
+// under arbitrary keyIds and each becomes an independent OCR spend identity.
+func TestBindAttestKeyID(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	cert := mustP256Cert(t, key)
+	goodKeyID := keyIDForPub(t, &key.PublicKey)
+	goodKeyIDBytes, err := base64.StdEncoding.DecodeString(goodKeyID)
+	if err != nil {
+		t.Fatalf("DecodeString: %v", err)
+	}
+
+	t.Run("accepts matching keyId and credentialId", func(t *testing.T) {
+		if err := bindAttestKeyID(goodKeyID, cert, goodKeyIDBytes); err != nil {
+			t.Fatalf("bindAttestKeyID: %v", err)
+		}
+	})
+
+	t.Run("rejects keyId that is not sha256(credCert public key)", func(t *testing.T) {
+		bogus := make([]byte, 32)
+		for i := range bogus {
+			bogus[i] = 7
+		}
+		bogusID := base64.StdEncoding.EncodeToString(bogus)
+		err := bindAttestKeyID(bogusID, cert, bogus)
+		var ae *Error
+		if !errors.As(err, &ae) || ae.Code != "KEYID" {
+			t.Fatalf("expected KEYID, got %v", err)
+		}
+	})
+
+	t.Run("rejects credentialId mismatch", func(t *testing.T) {
+		other := make([]byte, 32)
+		for i := range other {
+			other[i] = 9
+		}
+		err := bindAttestKeyID(goodKeyID, cert, other)
+		var ae *Error
+		if !errors.As(err, &ae) || ae.Code != "KEYID" {
+			t.Fatalf("expected KEYID, got %v", err)
+		}
+	})
 }
