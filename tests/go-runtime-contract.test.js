@@ -254,6 +254,11 @@ function assertCanonicalOcrDeploy(source) {
   )
   assert.match(source, /SERVICE="\$\{SERVICE:-ocr\}"/, 'canonical OCR service must be ocr')
   assert.match(source, /--min-instances=1/, 'OCR telemetry deploy must keep one instance warm')
+  assert.match(
+    source,
+    /--liveness-probe="httpGet\.path=\/health,httpGet\.port=8080,initialDelaySeconds=10,timeoutSeconds=10,periodSeconds=60,failureThreshold=3"/,
+    'OCR telemetry deploy must continuously exercise the instrumented health route'
+  )
   assert.match(source, /--no-traffic/, 'OCR candidate must start with zero traffic')
   assert.match(source, /--tag="\$PROBE_CANDIDATE_TAG"/, 'OCR probe candidate must have a probe URL')
   assert.match(source, /--tag="\$CLEAN_CANDIDATE_TAG"/, 'OCR promotion candidate must have a readback URL')
@@ -451,6 +456,7 @@ test('manual GCP deploy follows the real topology and immutable path, including 
     ['cleanup trap', deployScript.replace('trap cleanup_candidate_tag EXIT', '# cleanup removed')],
     ['promotion rollback', deployScript.replace('PROMOTION_ROLLBACK_ARMED=true', 'PROMOTION_ROLLBACK_ARMED=false')],
     ['environment preservation', deployScript.replace('--update-env-vars=', '--set-env-vars=')],
+    ['health liveness', deployScript.replace('httpGet.path=/health', 'httpGet.path=/healthz')],
     ['tag binding', deployScript.split("'.status.traffic[] | select(.tag == $tag)'").join("'.status.latestCreatedRevisionName'")],
     ['production owner', deployScript.split('CURRENT_PRODUCTION_REVISION').join('IGNORED_PRODUCTION_REVISION')],
   ]) {
