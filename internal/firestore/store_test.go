@@ -89,6 +89,31 @@ func (f *fakeDocs) Increment(_ context.Context, coll, id, field string, delta in
 	return cur, nil
 }
 
+func (f *fakeDocs) AdvanceInt64IfGreater(_ context.Context, coll, id, field string, next int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, ok := f.coll(coll)[id]
+	if !ok {
+		return ErrNotFound
+	}
+	var cur int64
+	switch v := doc[field].(type) {
+	case int64:
+		cur = v
+	case int:
+		cur = int64(v)
+	case uint32:
+		cur = int64(v)
+	case float64:
+		cur = int64(v)
+	}
+	if next <= cur {
+		return ErrConflict
+	}
+	doc[field] = next
+	return nil
+}
+
 func TestFirestoreStore_KeyRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	store := NewStore(newFakeDocs())
@@ -129,6 +154,43 @@ func TestFirestoreStore_KeyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFirestoreStore_AdvanceSignCountIsAtomicAndMonotonic(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(newFakeDocs())
+	const keyID = "advance-once"
+	spki := []byte{0x30, 0x59, 0x02}
+
+	if err := store.PutKey(ctx, keyID, spki, 10); err != nil {
+		t.Fatalf("PutKey: %v", err)
+	}
+	if err := store.AdvanceSignCount(ctx, keyID, 12); err != nil {
+		t.Fatalf("AdvanceSignCount 12: %v", err)
+	}
+	err := store.AdvanceSignCount(ctx, keyID, 12)
+	var ae *attest.Error
+	if !errors.As(err, &ae) || ae.Code != "REPLAY" {
+		t.Fatalf("second AdvanceSignCount 12: want REPLAY, got %v", err)
+	}
+	if err := store.AdvanceSignCount(ctx, keyID, 11); err == nil {
+		t.Fatal("AdvanceSignCount 11 after 12: want error (no regression)")
+	}
+	_, count, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if count != 12 {
+		t.Fatalf("signCount = %d, want 12", count)
+	}
+
+	gotSPKI, _, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey spki: %v", err)
+	}
+	if string(gotSPKI) != string(spki) {
+		t.Fatalf("AdvanceSignCount must not clobber pubSPKI")
+	}
+}
+
 // TestFirestoreStore_SatisfiesAttestStore drives the store through the real
 // attest.Store-consuming attestation flow shape (Put then Get), proving the
 // concrete type is usable wherever the interface is required.
@@ -138,11 +200,14 @@ func TestFirestoreStore_SatisfiesAttestStore(t *testing.T) {
 	if err := s.PutKey(ctx, "k", []byte("spki"), 1); err != nil {
 		t.Fatalf("PutKey via interface: %v", err)
 	}
+	if err := s.AdvanceSignCount(ctx, "k", 2); err != nil {
+		t.Fatalf("AdvanceSignCount via interface: %v", err)
+	}
 	spki, count, err := s.GetKey(ctx, "k")
 	if err != nil {
 		t.Fatalf("GetKey via interface: %v", err)
 	}
-	if string(spki) != "spki" || count != 1 {
+	if string(spki) != "spki" || count != 2 {
 		t.Fatalf("round-trip via interface: got (%q,%d)", spki, count)
 	}
 }
