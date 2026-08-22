@@ -13,6 +13,19 @@ test('Resplit operator dashboard keeps provider scopes explicit', () => {
   assert.match(dashboard.description, /Sentry/)
 })
 
+test('every Grafana panel is scoped to Resplit FX telemetry', () => {
+  for (const panel of dashboard.panels) {
+    for (const target of panel.targets) {
+      const query = target.expr ?? target.query ?? ''
+      assert.match(
+        query,
+        /(?:service_name|resource\.service\.name)\s*=\s*"resplit-fx"/,
+        `${panel.title} is not scoped to Resplit FX telemetry`,
+      )
+    }
+  }
+})
+
 test('Resplit operator dashboard links every canonical control surface', () => {
   const links = new Map(dashboard.links.map(link => [link.title, link.url]))
 

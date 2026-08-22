@@ -157,71 +157,6 @@
   "panels": [
     {
       "datasource": {
-        "type": "prometheus",
-        "uid": "grafanacloud-prom"
-      },
-      "description": "Live Grafana query. Empty means no matching telemetry in the selected window; verify source deployment and datasource health.",
-      "fieldConfig": {
-        "defaults": {
-          "noValue": "NO LIVE TELEMETRY",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 6,
-        "x": 0,
-        "y": 0
-      },
-      "id": 1,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "13.2.0-30537469096",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "grafanacloud-prom"
-          },
-          "editorMode": "code",
-          "expr": "max(((time() - max_over_time(timestamp(http_server_request_duration_seconds_count{job=\"ocr\",http_route=\"/health\"})[6h:])) > bool 600) or absent_over_time(http_server_request_duration_seconds_count{job=\"ocr\",http_route=\"/health\"}[6h]) or vector(0))",
-          "instant": true,
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "G2 metric absence (0 = healthy, 1 = absent)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
@@ -246,8 +181,8 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 6,
+        "w": 8,
+        "x": 0,
         "y": 0
       },
       "id": 2,
@@ -309,8 +244,8 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 0
       },
       "id": 3,
@@ -372,8 +307,8 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 18,
+        "w": 8,
+        "x": 16,
         "y": 0
       },
       "id": 4,
