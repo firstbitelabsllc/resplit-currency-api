@@ -36,6 +36,14 @@ test('Resplit operator dashboard links every canonical control surface', () => {
     'https://firstbite-labs.sentry.io/explore/logs/?project=4506001574461440',
   )
   assert.equal(
+    links.get('iOS distribution — App Store Connect'),
+    'https://appstoreconnect.apple.com/apps/6466376742/testflight/ios',
+  )
+  assert.equal(
+    links.get('Local iOS Support cockpit'),
+    'resplit://support-diagnostics',
+  )
+  assert.equal(
     links.get('Fleet Workers'),
     'https://firstbitelabs.grafana.net/d/fleet-workers-otel-overview/fleet-workers-otel-overview',
   )
@@ -49,4 +57,18 @@ test('every control link opens separately and has an operator tooltip', () => {
     assert.equal(link.targetBlank, true)
     assert.ok(link.tooltip.length > 0, `${link.title} is missing its scope tooltip`)
   }
+})
+
+test('local cockpit route is exact and payload-free', () => {
+  const link = dashboard.links.find(candidate => candidate.title === 'Local iOS Support cockpit')
+
+  assert.ok(link, 'local cockpit link is missing')
+  const url = new URL(link.url)
+  assert.equal(url.protocol, 'resplit:')
+  assert.equal(url.hostname, 'support-diagnostics')
+  assert.equal(url.pathname, '')
+  assert.equal(url.search, '')
+  assert.equal(url.hash, '')
+  assert.equal(url.username, '')
+  assert.equal(url.password, '')
 })
