@@ -524,7 +524,7 @@ func attestStatus(err error) int {
 	switch ae.Code {
 	case "UNKNOWN_KEY":
 		return http.StatusUnauthorized
-	case "REPLAY", "SIG", "NONCE", "RPID", "CHAIN", "COUNT", "NOKEY", "FMT":
+	case "REPLAY", "SIG", "NONCE", "RPID", "CHAIN", "COUNT", "NOKEY", "FMT", "ALREADY":
 		return http.StatusForbidden
 	case "CBOR_BAD", "ASSERT_B64", "ASSERT_SHAPE", "ATT_B64", "ATT_SHAPE", "AUTHDATA":
 		return http.StatusBadRequest
