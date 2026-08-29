@@ -18,6 +18,9 @@ import (
 type ocrSpendStore interface {
 	AllowRate(ctx context.Context, deviceID string, window time.Duration, limit int64) (allowed bool, count int64, err error)
 	ReserveOCR(ctx context.Context, deviceID, hash string, ttl time.Duration) (fresh bool, err error)
+	// ReleaseOCR drops a prior ReserveOCR claim so a failed provider attempt can
+	// be retried without waiting out the idempotency TTL. Missing keys are OK.
+	ReleaseOCR(ctx context.Context, deviceID, hash string) error
 }
 
 type ocrSpendGate struct {
@@ -79,6 +82,18 @@ func (g *ocrSpendGate) Allow(ctx context.Context, identity string, image []byte,
 	return true, "allowed", 0, nil
 }
 
+// Release undoes Allow's ReserveOCR for image under identity. Call only when the
+// provider never produced a billable success, so the client can retry the same
+// bytes. Best-effort: errors are returned for logging, not for failing the
+// already-failed scan response.
+func (g *ocrSpendGate) Release(ctx context.Context, identity string, image []byte) error {
+	if identity == "" {
+		identity = "unknown"
+	}
+	hash := sha256.Sum256(image)
+	return g.spendStore().ReleaseOCR(ctx, identity, hex.EncodeToString(hash[:]))
+}
+
 func (g *ocrSpendGate) spendStore() ocrSpendStore {
 	if g.store != nil {
 		return g.store
@@ -116,6 +131,13 @@ func (m *memorySpendStore) ReserveOCR(_ context.Context, deviceID, hash string, 
 	}
 	m.seen[key] = now.Add(ttl)
 	return true, nil
+}
+
+func (m *memorySpendStore) ReleaseOCR(_ context.Context, deviceID, hash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.seen, deviceID+":"+hash)
+	return nil
 }
 
 func (m *memorySpendStore) AllowRate(_ context.Context, deviceID string, window time.Duration, limit int64) (bool, int64, error) {
