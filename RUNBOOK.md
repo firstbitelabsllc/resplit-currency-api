@@ -342,9 +342,10 @@ Rollout (all four vars move together — `LLM_SCAN_MODEL` left at
 
 ```bash
 printf "%s" "$ZAI_API_KEY" | npx wrangler secret put ZAI_API_KEY --config wrangler.jsonc --env=""
-# wrangler.jsonc root vars: uncomment the four-line Z.AI block
-#   LLM_SCAN_PROVIDER=zai  LLM_SCAN_MODEL=glm-5.3-flash
-#   LLM_SCAN_BASE_URL=https://api.z.ai/api/coding/paas/v4  LLM_SCAN_MAX_EDGE=1600
+# wrangler.jsonc root vars (mirror in the production env block):
+#   change the existing "LLM_SCAN_MODEL": "claude-sonnet-5" to "glm-5.3-flash"
+#   uncomment the three commented lines below it:
+#   LLM_SCAN_PROVIDER=zai  LLM_SCAN_BASE_URL=https://api.z.ai/api/coding/paas/v4  LLM_SCAN_MAX_EDGE=1600
 npx wrangler deploy --config wrangler.jsonc --env=""
 ```
 
@@ -359,7 +360,8 @@ regress. A missing `ZAI_API_KEY` degrades only the LLM leg to
 missing `ANTHROPIC_API_KEY` today. Caps, the kill switch, and accounting are
 provider-neutral: Z.AI units bill against the existing LLM daily caps.
 
-Rollback: re-comment the four vars in `wrangler.jsonc` and redeploy. The cache key
+Rollback: restore `LLM_SCAN_MODEL` to `claude-sonnet-5`, re-comment the three
+lines in `wrangler.jsonc`, and redeploy. The cache key
 carries the model and the `zai:1600` variant, so a rollback never replays a Z.AI
 result under the Anthropic configuration. `LLM_SCAN_MAX_EDGE` alone (with the
 Anthropic provider) is also honored, capped at Anthropic's own 1568 px.
