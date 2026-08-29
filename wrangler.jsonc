@@ -43,6 +43,16 @@
     // /ocr/dual-scan Anthropic leg. ANTHROPIC_API_KEY is a wrangler secret; empty allowlist
     // ships the endpoint dark until specific App Attest keyIds are admitted.
     "LLM_SCAN_MODEL": "claude-sonnet-5",
+    // Env-gated Z.AI GLM provider for the LLM leg (worker/src/ocr/llm-provider.mjs).
+    // DARK: all four stay commented so this deploy changes no production behavior.
+    // Rollout (RUNBOOK "Switch the paid LLM receipt leg to Z.AI GLM"): put the
+    // ZAI_API_KEY secret first, then uncomment ALL FOUR (LLM_SCAN_MODEL must move
+    // with the provider; leaving claude-sonnet-5 sends a Claude id to Z.AI) and
+    // redeploy. Rollback: re-comment and redeploy. Unset provider = anthropic.
+    // "LLM_SCAN_PROVIDER": "zai",
+    // "LLM_SCAN_MODEL": "glm-5.3-flash",
+    // "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+    // "LLM_SCAN_MAX_EDGE": "1600",
     "LLM_SCAN_ALLOWED_KEY_IDS": "",
     "LLM_SCAN_DAILY_CAP": "3000",
     "SOFT_FAIL_DAILY_CAP": "150",
@@ -67,6 +77,7 @@
   "secrets": {
     // LLM_SCAN_KILL_SWITCH is an optional operator secret (unset = off), not a
     // source var. This keeps a live emergency stop intact across routine deploys.
+    // ZAI_API_KEY is required only once LLM_SCAN_PROVIDER=zai is uncommented above.
     "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
   },
   "durable_objects": {
@@ -130,6 +141,11 @@
         // Discount/credit/fee capture (2x cost/scan) — APPROVED Leo 2026-06-22. Revert: "false".
         "AZURE_OCR_KV_EXTRAS": "true",
         "LLM_SCAN_MODEL": "claude-sonnet-5",
+        // Mirror the root Z.AI rollout block; flip all four together or none.
+        // "LLM_SCAN_PROVIDER": "zai",
+        // "LLM_SCAN_MODEL": "glm-5.3-flash",
+        // "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+        // "LLM_SCAN_MAX_EDGE": "1600",
         "LLM_SCAN_ALLOWED_KEY_IDS": "",
         "LLM_SCAN_DAILY_CAP": "3000",
         // Mirror the root soft-fail Azure allowance so named production deploys
