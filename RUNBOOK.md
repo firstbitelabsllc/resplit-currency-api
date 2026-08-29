@@ -329,44 +329,49 @@ cache window. Prove both that the response includes the LLM model in `aiModels` 
 that provider/accounting telemetry records one new Anthropic unit; a response alone
 can be a pre-disable cache replay and is not sufficient proof.
 
-#### Switch the paid LLM receipt leg to Z.AI GLM
+#### Roll the paid LLM receipt leg to Z.AI GLM
 
 Why: Loki shows the Anthropic leg (`claude-sonnet-5`) at p50 9.8 s / p95 26.8 s and
-`/ocr/analyze` waits for both legs. The 2026-08-28 gauntlet (16 ground-truth
-receipts) put GLM-5.3-flash on a 1600 px image at p50 4.4 s with equal
-total-exact parity. The provider seam is `worker/src/ocr/llm-provider.mjs`; the
-default stays `anthropic`, so deploying the code alone changes nothing.
+`/ocr/analyze` waits for both legs. The same-corpus parity replay (16
+ground-truth receipts) selected GLM-5.3-flash at **1280 px**: it matched Sonnet
+at 14/16 total-exact, was within one receipt on item-count exact, and cut
+transport p50 to 5.385 s versus production Sonnet's 9.8 s. The provider seam is
+`worker/src/ocr/llm-provider.mjs`; the committed default remains `anthropic`
+when `LLM_SCAN_PROVIDER` is absent, so code without the production vars changes
+nothing.
 
-Rollout (all four vars move together — `LLM_SCAN_MODEL` left at
-`claude-sonnet-5` would send a Claude id to Z.AI and fail every scan):
+**Current production posture (2026-08-29):** root and production vars are
+`LLM_SCAN_PROVIDER=zai`, `LLM_SCAN_MODEL=glm-5.3-flash`,
+`LLM_SCAN_BASE_URL=https://api.z.ai/api/coding/paas/v4`, and
+`LLM_SCAN_MAX_EDGE=1280`. `ZAI_API_KEY` is a Worker secret. Do not change one
+of these values alone — a Claude model id sent to Z.AI fails every scan. To
+repeat the activation from a committed Anthropic default, set all four values
+together, ensure the secret exists, then deploy:
 
 ```bash
 printf "%s" "$ZAI_API_KEY" | npx wrangler secret put ZAI_API_KEY --config wrangler.jsonc --env=""
-# wrangler.jsonc root vars (mirror in the production env block):
-#   change the existing "LLM_SCAN_MODEL": "claude-sonnet-5" to "glm-5.3-flash"
-#   uncomment the three commented lines below it:
-#   LLM_SCAN_PROVIDER=zai  LLM_SCAN_BASE_URL=https://api.z.ai/api/coding/paas/v4  LLM_SCAN_MAX_EDGE=1600
 npx wrangler deploy --config wrangler.jsonc --env=""
 ```
 
 Watch Grafana dashboard `resplit-ocr-scan-latency`: the `[OCR_MONITORING]`
 `dual_scan` line now carries `llm_provider:"zai"`, `llm_model:"glm-5.3-flash"`,
-and `llm_input_px` (long edge the LLM leg actually received, 1600 after the
-scale-down). Expect `llm_ms` p50 in the 5–8 s band (the 2026-08-29 replay of the
-16-receipt set through this exact transport measured p50 7.4 s / p95 14.1 s at
-JPEG q90, versus the Python harness's 4.4 s at q80) and `totals_agree` must not
-regress. A missing `ZAI_API_KEY` degrades only the LLM leg to
+and `llm_input_px` (long edge the LLM leg actually received, at most 1280 after
+the scale-down). Expect `llm_ms` p50 in the 5–8 s band (the 2026-08-29 replay of
+the 16-receipt set through this exact transport measured p50 7.4 s / p95 14.1 s
+at JPEG q90, versus the parity harness's 5.385 s at the 1280 setting) and
+`totals_agree` must not regress. A missing `ZAI_API_KEY` degrades only the LLM leg to
 `provider_unavailable` (Azure still returns a `partial` 200), exactly like a
 missing `ANTHROPIC_API_KEY` today. Caps, the kill switch, and accounting are
 provider-neutral: Z.AI units bill against the existing LLM daily caps.
 
-Rollback: restore `LLM_SCAN_MODEL` to `claude-sonnet-5`, re-comment the three
-lines in `wrangler.jsonc`, and redeploy. The cache key
-carries the model and the `zai:1600` variant, so a rollback never replays a Z.AI
-result under the Anthropic configuration. `LLM_SCAN_MAX_EDGE` alone (with the
+Rollback: restore `LLM_SCAN_MODEL` to `claude-sonnet-5` and
+`LLM_SCAN_PROVIDER` to `anthropic`, then redeploy; remove the Z.AI base URL and
+max-edge overrides only after the provider is reverted. The cache key carries
+the model and the `zai:1280` variant, so a rollback never replays a Z.AI result
+under the Anthropic configuration. `LLM_SCAN_MAX_EDGE` alone (with the
 Anthropic provider) is also honored, capped at Anthropic's own 1568 px.
 
-Parity re-run: `ZAI_API_KEY=… LLM_SCAN_PROVIDER=zai LLM_SCAN_MODEL=glm-5.3-flash LLM_SCAN_MAX_EDGE=1600 node scripts/ocr-scan-gauntlet.mjs`
+Parity re-run: `ZAI_API_KEY=… LLM_SCAN_PROVIDER=zai LLM_SCAN_MODEL=glm-5.3-flash LLM_SCAN_MAX_EDGE=1280 node scripts/ocr-scan-gauntlet.mjs`
 replays the 16-receipt set through the worker transport; swap the env to
 `ANTHROPIC_API_KEY`/`LLM_SCAN_PROVIDER=anthropic` for the incumbent.
 
