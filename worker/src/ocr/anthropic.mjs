@@ -8,7 +8,9 @@ import { PhotonImage, SamplingFilter, fliph, flipv, resize } from '@cf-wasm/phot
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
 const DEFAULT_MODEL = 'claude-sonnet-5'
-const FETCH_TIMEOUT_MS = 60_000
+// Shared by every LLM transport (zai.mjs reuses it) so a provider flip never
+// changes how long a scan may wait on the paid leg.
+export const LLM_FETCH_TIMEOUT_MS = 60_000
 
 // Anthropic vision input limits — the exact ceilings the API enforces, sourced
 // from the production 400 bodies (Sentry RESPLIT-CURRENCY-API-G/-E/-B):
@@ -34,7 +36,7 @@ const IMAGE_TRANSFORM_ERROR = 'llm_image_transform_failed'
 // Dense receipts (many line items + extras) can exceed a small ceiling and get
 // truncated mid tool_use. 4096 gives headroom; a truncated response is still
 // caught below via stop_reason and rejected rather than returned as a partial.
-const MAX_TOKENS = 4096
+export const LLM_MAX_TOKENS = 4096
 
 // Mirrors receiptSchema.required/enum so a returned tool input is validated
 // server-side before we trust it — strict:true guards the happy path, this guards
@@ -67,7 +69,26 @@ function readConfig(env) {
   return { key, model }
 }
 
-const receiptSchema = {
+/**
+ * Operator ceiling for the long edge of the image the LLM leg receives, in px.
+ * 0 (the default, and every malformed value) means "no operator ceiling": the
+ * transport keeps its own bound. Parsed like resolveDailyCap so junk can never
+ * become NaN and silently lift the bound. Azure never sees this.
+ */
+export function llmMaxEdge(env) {
+  const parsed = parseInt(String(env?.LLM_SCAN_MAX_EDGE ?? ''), 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
+// Anthropic honors an operator ceiling only below its own 1568px recommendation.
+function anthropicTargetMaxEdge(env) {
+  const configured = llmMaxEdge(env)
+  return configured > 0
+    ? Math.min(ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION, configured)
+    : ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION
+}
+
+export const receiptSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -121,7 +142,7 @@ const receiptSchema = {
   ],
 }
 
-function bytesToBase64(imageBytes) {
+export function bytesToBase64(imageBytes) {
   const bytes = imageBytes instanceof Uint8Array ? imageBytes : new Uint8Array(imageBytes)
   let binary = ''
   const chunkSize = 0x8000
@@ -338,10 +359,10 @@ function hasValidDimensions(dimensions) {
     Number.isFinite(dimensions?.height) && dimensions.height > 0
 }
 
-function boundedTargetDimensions(dimensions) {
+function boundedTargetDimensions(dimensions, targetMaxEdge) {
   const scale = Math.min(
     1,
-    ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION / Math.max(dimensions.width, dimensions.height),
+    targetMaxEdge / Math.max(dimensions.width, dimensions.height),
   )
   return {
     width: Math.max(1, Math.round(dimensions.width * scale)),
@@ -449,16 +470,27 @@ function resizeImageWithPhoton(imageBytes, options) {
 }
 
 /**
- * Bound only the Anthropic leg to a 1568px long edge. Dimensions come from the
- * JPEG/PNG/GIF/WebP container before any decode, so a small image passes
- * byte-identically and a compressed decompression bomb fails before Photon.
+ * Resolve, validate, and bound the image for the paid LLM leg (any provider).
+ * Combines resolveAnthropicImage (media-type sniff + hard input limits, rejected
+ * before any paid call) with the Photon scale-down to `targetMaxEdge` px on the
+ * long edge. Dimensions come from the JPEG/PNG/GIF/WebP container before any
+ * decode, so a small image passes byte-identically and a compressed decompression
+ * bomb fails before Photon.
  *
  * Photon runs as pinned Wasm inside the Worker and returns JPEG because receipt
- * photos are opaque and Anthropic needs one truthful media type after encoding.
+ * photos are opaque and the provider needs one truthful media type after encoding.
  * The output is independently sniffed and dimension-checked before it can reach
  * the paid provider; decode/resize failures stay a data-shaped LLM-leg failure.
+ *
+ * @returns {Promise<{ ok: true, imageBytes: Uint8Array, mediaType: string, longEdge: number | null }
+ *   | { ok: false, reason: string, httpStatus: number }>}
  */
-async function prepareAnthropicImage(imageBytes, mediaType, env) {
+export async function prepareLlmImage(imageBytes, contentType, env, targetMaxEdge) {
+  const image = resolveAnthropicImage(imageBytes, contentType)
+  if (!image.ok) {
+    return { ok: false, reason: image.reason, httpStatus: image.reason === 'llm_unsupported_media' ? 415 : 413 }
+  }
+  const mediaType = image.mediaType
   const bytes = imageBytes instanceof Uint8Array ? imageBytes : new Uint8Array(imageBytes)
   const dimensions = readImageDimensions(bytes, mediaType)
   const orientation = mediaType === 'image/jpeg' ? readJpegExifOrientation(bytes) : 1
@@ -466,18 +498,20 @@ async function prepareAnthropicImage(imageBytes, mediaType, env) {
   // optional LLM leg rather than trusting the logical-screen header while a
   // frame descriptor or cumulative animation payload can allocate more.
   if (mediaType === 'image/gif' || !hasValidDimensions(dimensions)) {
-    return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+    return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
   }
 
   const needsTransform = orientation !== 1 ||
-    Math.max(dimensions.width, dimensions.height) > ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION
-  if (!needsTransform) return { ok: true, imageBytes: bytes, mediaType }
+    Math.max(dimensions.width, dimensions.height) > targetMaxEdge
+  if (!needsTransform) {
+    return { ok: true, imageBytes: bytes, mediaType, longEdge: Math.max(dimensions.width, dimensions.height) }
+  }
   if (dimensions.width * dimensions.height > PHOTON_MAX_SOURCE_PIXELS) {
-    return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+    return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
   }
 
   try {
-    const target = boundedTargetDimensions(dimensions)
+    const target = boundedTargetDimensions(dimensions, targetMaxEdge)
     const imageResizer = typeof env.__TEST_LLM_IMAGE_RESIZER === 'function'
       ? env.__TEST_LLM_IMAGE_RESIZER
       : resizeImageWithPhoton
@@ -496,21 +530,26 @@ async function prepareAnthropicImage(imageBytes, mediaType, env) {
       transformed.byteLength === 0 ||
       transformed.byteLength > ANTHROPIC_MAX_IMAGE_BYTES ||
       !hasValidDimensions(transformedDimensions) ||
-      Math.max(transformedDimensions.width, transformedDimensions.height) > ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION
+      Math.max(transformedDimensions.width, transformedDimensions.height) > targetMaxEdge
     ) {
-      return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+      return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
     }
 
-    return { ok: true, imageBytes: transformed, mediaType: 'image/jpeg' }
+    return {
+      ok: true,
+      imageBytes: transformed,
+      mediaType: 'image/jpeg',
+      longEdge: Math.max(transformedDimensions.width, transformedDimensions.height),
+    }
   } catch {
-    return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+    return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
   }
 }
 
 function buildRequestBody({ imageBytes, mediaType, model }) {
   return {
     model,
-    max_tokens: MAX_TOKENS,
+    max_tokens: LLM_MAX_TOKENS,
     system: RECEIPT_SYSTEM_PROMPT,
     tools: [
       {
@@ -603,6 +642,7 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
   const start = Date.now()
   let model = (env.LLM_SCAN_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL
   let providerStarted = false
+  let inputPx = null
   try {
     const config = readConfig(env)
     model = config.model
@@ -612,27 +652,23 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
     // unsupported or oversize image is rejected here so we never fire a request
     // Anthropic is guaranteed to 400 (Sentry RESPLIT-CURRENCY-API-G/-E/-B). The
     // reason is machine-readable so the router's Sentry capture groups it cleanly.
-    const image = resolveAnthropicImage(imageBytes, contentType)
-    if (!image.ok) {
-      const httpStatus = image.reason === 'llm_unsupported_media' ? 415 : 413
-      return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: image.reason, providerStarted }
-    }
-
-    const prepared = await prepareAnthropicImage(imageBytes, image.mediaType, env)
+    const prepared = await prepareLlmImage(imageBytes, contentType, env, anthropicTargetMaxEdge(env))
     if (!prepared.ok) {
       return {
         ok: false,
-        httpStatus: 502,
+        httpStatus: prepared.httpStatus,
         scanned: null,
         latencyMs: Date.now() - start,
         model,
-        errorBody: IMAGE_TRANSFORM_ERROR,
+        errorBody: prepared.reason,
         providerStarted,
+        inputPx: null,
       }
     }
+    inputPx = prepared.longEdge
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS)
+    const timeout = setTimeout(() => controller.abort('timeout'), LLM_FETCH_TIMEOUT_MS)
     let res
     try {
       // Once fetch is invoked, conservatively account for a paid provider attempt:
@@ -658,7 +694,7 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
 
     if (res.status !== 200) {
       const errorBody = await res.text().catch(() => '')
-      return { ok: false, httpStatus: res.status, scanned: null, latencyMs: Date.now() - start, model, errorBody: errorBody.slice(0, 500), providerStarted }
+      return { ok: false, httpStatus: res.status, scanned: null, latencyMs: Date.now() - start, model, errorBody: errorBody.slice(0, 500), providerStarted, inputPx }
     }
 
     const body = await res.json().catch(() => null)
@@ -666,20 +702,20 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
     // partial (missing line items, cut-off amounts). Never return it as a success —
     // a partial that looks whole is worse than an explicit failure the caller retries.
     if (body?.stop_reason === 'max_tokens') {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'llm_truncated', providerStarted }
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'llm_truncated', providerStarted, inputPx }
     }
     const scanned = toolInputFromMessagesBody(body)
     if (!scanned) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'missing emit_receipt tool_use', providerStarted }
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'missing emit_receipt tool_use', providerStarted, inputPx }
     }
     const violation = receiptShapeViolation(scanned)
     if (violation) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: `llm_schema_violation:${violation}`, providerStarted }
+      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: `llm_schema_violation:${violation}`, providerStarted, inputPx }
     }
-    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, providerStarted }
+    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, providerStarted, inputPx }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const httpStatus = error instanceof AnthropicConfigError ? 503 : 502
-    return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: message.slice(0, 500), providerStarted }
+    return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: message.slice(0, 500), providerStarted, inputPx }
   }
 }

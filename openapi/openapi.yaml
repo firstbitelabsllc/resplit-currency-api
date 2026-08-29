@@ -926,7 +926,7 @@ components:
           $ref: "#/components/schemas/ProviderLegStatus"
         provider:
           type: string
-          const: anthropic
+          enum: [anthropic, zai]
         model: { type: string }
         scanned:
           oneOf:
