@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 import { llmProvider, llmProviderConfigured, llmModel, llmMaxEdge } from '../worker/src/ocr/llm-provider.mjs'
+import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
 
 // The env-gated LLM provider seam. Defaults must reproduce today's Anthropic path
 // byte-for-byte; LLM_SCAN_PROVIDER=zai swaps only the paid vision-LLM transport,
@@ -200,6 +201,27 @@ test('LLM_SCAN_PROVIDER=zai runs the Z.AI leg, keeps Azure, and reports the trut
   assert.equal(scan.llm_status, 'succeeded')
   const serialized = JSON.stringify(events)
   assert.equal(serialized.includes('zai-key'), false)
+})
+
+test('the Sentry logger emit for dual_scan carries llm_provider, llm_model, and llm_input_px', async () => {
+  stubProviders()
+  const loggerCalls = []
+  setOcrSentrySdkForTests({
+    logger: { info(message, attributes) { loggerCalls.push({ message, attributes }) } },
+  })
+  try {
+    const env = makeEnv({ LLM_SCAN_PROVIDER: 'zai', ZAI_API_KEY: 'zai-key', LLM_SCAN_MODEL: 'glm-5.3-flash' })
+    const { value: res } = await captureMonitoring(() => handleOcr(analyzeRequest(jpegWithDimensions(800, 600)), env))
+    assert.equal(res.status, 200)
+    const scan = loggerCalls.find((c) => c.message === 'dual_scan')
+    assert.ok(scan, 'Sentry logger received the dual_scan emit')
+    assert.equal(scan.attributes.llm_provider, 'zai')
+    assert.equal(scan.attributes.llm_model, 'glm-5.3-flash')
+    assert.equal(scan.attributes.llm_input_px, 800)
+    assert.equal(JSON.stringify(loggerCalls).includes('zai-key'), false)
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
 })
 
 test('LLM_SCAN_MAX_EDGE=1600 downscales only the LLM leg; Azure receives the original bytes', async () => {
