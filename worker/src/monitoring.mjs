@@ -134,6 +134,7 @@ export function getSentryWorkerOptions(env) {
     tracesSampleRate: resolveTracesSampleRate(env),
     tracePropagationTargets: TRACE_PROPAGATION_TARGETS,
     sendDefaultPii: false,
+    enableLogs: true,
     beforeSend: applySentryCorrelationRequestFilter,
     beforeSendSpan: applySentryCorrelationSpanFilter,
     beforeSendTransaction: applySentryCorrelationRequestFilter,
@@ -197,9 +198,40 @@ export function logFxMonitoringEvent(level, event, env) {
       console.error(line)
       break
     }
+    emitSentryLog(level, typeof event.signal === 'string' ? event.signal : 'fx_monitoring', event)
   } catch (error) {
     writeFxMonitoringFailure(error)
   }
+}
+
+function sentryLogAttributes(event) {
+  const attributes = {}
+  for (const [key, value] of Object.entries(event || {})) {
+    if (value === null || value === undefined) continue
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      attributes[key] = value
+    } else {
+      attributes[key] = JSON.stringify(value)
+    }
+  }
+  return attributes
+}
+
+/**
+ * Sentry Logs (`enableLogs`) only fire when the SDK logger is actually called.
+ * Missing logger is a no-op so a paid FX/OCR path never dies on telemetry.
+ *
+ * @param {'info' | 'warn' | 'error'} level
+ * @param {string} message
+ * @param {Record<string, unknown>} event
+ * @returns {boolean} true when a logger method ran
+ */
+export function emitSentryLog(level, message, event) {
+  const logger = sentrySdk && sentrySdk.logger
+  const method = level === 'warn' ? 'warn' : level === 'error' ? 'error' : 'info'
+  if (!logger || typeof logger[method] !== 'function') return false
+  logger[method](message, sentryLogAttributes(event))
+  return true
 }
 
 /**

@@ -82,9 +82,37 @@ export function logOcrMonitoringEvent(level, event, env) {
       console.error(line)
       break
     }
+    emitOcrSentryLog(level, typeof event.signal === 'string' ? event.signal : 'ocr_monitoring', event)
   } catch {
     // A failed observability sink must never replace a paid OCR result.
   }
+}
+
+function sentryLogAttributes(event) {
+  const attributes = {}
+  for (const [key, value] of Object.entries(event || {})) {
+    if (value === null || value === undefined) continue
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      attributes[key] = value
+    } else {
+      attributes[key] = JSON.stringify(value)
+    }
+  }
+  return attributes
+}
+
+/**
+ * @param {'info' | 'warn' | 'error'} level
+ * @param {string} message
+ * @param {Record<string, unknown>} event
+ * @returns {boolean}
+ */
+export function emitOcrSentryLog(level, message, event) {
+  const logger = sentrySdk && sentrySdk.logger
+  const method = level === 'warn' ? 'warn' : level === 'error' ? 'error' : 'info'
+  if (!logger || typeof logger[method] !== 'function') return false
+  logger[method](message, sentryLogAttributes(event))
+  return true
 }
 
 /**

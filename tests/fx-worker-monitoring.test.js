@@ -91,6 +91,7 @@ test('getSentryWorkerOptions returns dedicated worker config when DSN is present
       /\/\/([a-z0-9-]+\.)*resplit-currency-api\.pages\.dev(\/|:|$)/,
     ],
     sendDefaultPii: false,
+    enableLogs: true,
     beforeSend: monitoring.applySentryCorrelationRequestFilter,
     beforeSendSpan: monitoring.applySentryCorrelationSpanFilter,
     beforeSendTransaction: monitoring.applySentryCorrelationRequestFilter,
@@ -806,5 +807,38 @@ test('FX canary check-in boundaries return null or false when Sentry fails', asy
         )
       }, failureCase.overrides)
     })
+  }
+})
+
+test('getSentryWorkerOptions enables Sentry logs so the dashboard stops yelling about logs not firing', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const options = monitoring.getSentryWorkerOptions({
+    SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+  })
+  assert.equal(options.enableLogs, true)
+})
+
+test('logFxMonitoringEvent is red if Sentry logger.info is not actually called', async () => {
+  const monitoring = await import('../worker/src/monitoring.mjs')
+  const loggerCalls = []
+  monitoring.setSentryWorkerSdkForTests({
+    logger: {
+      info(message, attributes) { loggerCalls.push({ message, attributes }) },
+      warn() {},
+      error() {},
+    },
+  })
+  const originalLog = console.log
+  console.log = () => {}
+  try {
+    monitoring.logFxMonitoringEvent('info', { signal: 'fx_unit', latency_ms: 12 }, {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+    assert.equal(loggerCalls.length, 1)
+    assert.equal(loggerCalls[0].message, 'fx_unit')
+    assert.equal(loggerCalls[0].attributes.latency_ms, 12)
+  } finally {
+    console.log = originalLog
+    monitoring.resetSentryWorkerSdkForTests()
   }
 })
