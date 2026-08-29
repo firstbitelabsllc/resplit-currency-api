@@ -9,6 +9,7 @@ const SURFACE = 'resplit-currency-api'
 let sentrySdk = Sentry
 const SENTRY_FLUSH_TIMEOUT_MS = 2_000
 const FX_CANARY_MONITOR_SLUG = 'resplit-currency-api-fx-canary'
+const SENTRY_TAG_VALUE_MAX_LENGTH = 200
 const FX_CANARY_MONITOR_CONFIG = {
   schedule: {
     type: 'crontab',
@@ -436,6 +437,7 @@ export async function captureFxCoverageFailure(error, context, env) {
  *     pair: { from: string, to: string }
  *     anchorDate: string
  *     ok: boolean
+ *     report?: { mismatchCount: number }
  *     summary?: string
  *     error?: string
  *   }>
@@ -445,15 +447,13 @@ export async function captureFxCoverageFailure(error, context, env) {
  * @returns {Promise<boolean>}
  */
 export async function captureFxCanaryIncident(report, requestId, env) {
-  const failingChecks = report.results
-    .filter(result => !result.ok)
-    .map(result => ({
-      from: result.pair.from,
-      to: result.pair.to,
-      anchorDate: result.anchorDate,
-      summary: result.summary,
-      error: result.error,
-    }))
+  const failingResults = report.results.filter(result => !result.ok)
+  // Sentry normalizes context depth to 3, so nested objects render as "[Object]".
+  // Keep each check as one flat line so the Sentry UI shows pair, date, and cause.
+  const failingChecks = failingResults.map(describeFailingCanaryCheck)
+  const failingPairs = [...new Set(failingResults.map(result => `${result.pair.from}->${result.pair.to}`))]
+    .join(',')
+    .slice(0, SENTRY_TAG_VALUE_MAX_LENGTH)
 
   if (!isFxMonitoringEnabled(env)) {
     return false
@@ -470,6 +470,9 @@ export async function captureFxCanaryIncident(report, requestId, env) {
       if (requestId) {
         scope.setTag('request.id', requestId)
       }
+      if (failingPairs) {
+        scope.setTag('fx.failingPairs', failingPairs)
+      }
       scope.setContext('fxCanary', {
         checkedAt: report.checkedAt,
         mismatchCount: report.mismatchCount,
@@ -482,6 +485,32 @@ export async function captureFxCanaryIncident(report, requestId, env) {
       )
     })
   })
+}
+
+/**
+ * @param {{
+ *   pair: { from: string, to: string }
+ *   anchorDate: string
+ *   report?: { mismatchCount?: number }
+ *   summary?: string
+ *   error?: string
+ * }} result
+ * @returns {string}
+ */
+function describeFailingCanaryCheck(result) {
+  const details = []
+  const mismatchCount = result.report?.mismatchCount
+  if (typeof mismatchCount === 'number') {
+    details.push(`${mismatchCount} mismatches`)
+  }
+  if (result.summary) {
+    details.push(result.summary)
+  }
+  if (result.error) {
+    details.push(`error=${result.error}`)
+  }
+  return `${result.pair.from}->${result.pair.to}@${result.anchorDate}: ${details.join('; ')}`
+    .replace(/\s*\r?\n\s*/g, ' ')
 }
 
 /**

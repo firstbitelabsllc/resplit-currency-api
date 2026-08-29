@@ -414,22 +414,96 @@ test('captureFxCanaryIncident reports a DSN-enabled worker canary failure to Sen
     assert.equal(calls.scopes[0].tags['monitoring.signal'], 'canary_error')
     assert.equal(calls.scopes[0].tags['fx.source'], 'fx-canary-cron')
     assert.equal(calls.scopes[0].tags['request.id'], 'req-canary-incident')
+    assert.equal(calls.scopes[0].tags['fx.failingPairs'], 'AED->USD')
     assert.deepEqual(calls.scopes[0].contexts.fxCanary, {
       checkedAt: '2026-03-26T05:47:58.000Z',
       mismatchCount: 1,
       failureCount: 1,
       failingChecks: [
-        {
-          from: 'AED',
-          to: 'USD',
-          anchorDate: '2026-03-26',
-          summary: 'coverage mismatch',
-          error: 'coverage exploded',
-        },
+        'AED->USD@2026-03-26: coverage mismatch; error=coverage exploded',
       ],
       requestId: 'req-canary-incident',
     })
     assert.deepEqual(calls.flush, [2_000])
+  })
+})
+
+test('captureFxCanaryIncident renders failingChecks as one readable line per check', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const report = {
+      checkedAt: '2026-08-28T13:00:00.000Z',
+      mismatchCount: 3,
+      failureCount: 1,
+      results: [
+        {
+          pair: { from: 'USD', to: 'EUR' },
+          anchorDate: '2026-08-27',
+          ok: false,
+          report: { mismatchCount: 2 },
+          summary: 'from=USD to=EUR anchorDate=2026-08-27 missingDayCount=2 signals=history_range_incomplete',
+        },
+        {
+          pair: { from: 'USD', to: 'JPY' },
+          anchorDate: '2026-08-27',
+          ok: false,
+          report: { mismatchCount: 1 },
+          summary: 'from=USD to=JPY anchorDate=2026-08-27 missingDayCount=1 signals=history_range_incomplete',
+        },
+        {
+          pair: { from: 'USD', to: 'JPY' },
+          anchorDate: '2026-08-20',
+          ok: false,
+          error: 'fetch failed\nafter retry',
+        },
+        {
+          pair: { from: 'USD', to: 'GBP' },
+          anchorDate: '2026-08-27',
+          ok: true,
+          report: { mismatchCount: 0 },
+          summary: 'from=USD to=GBP anchorDate=2026-08-27 missingDayCount=0 signals=none',
+        },
+      ],
+    }
+
+    await monitoring.captureFxCanaryIncident(report, 'req-canary-readable', {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+
+    const { failingChecks } = calls.scopes[0].contexts.fxCanary
+    assert.equal(failingChecks.length, 3)
+    for (const line of failingChecks) {
+      assert.equal(typeof line, 'string', `failingChecks entry must be a string, got ${typeof line}`)
+      assert.ok(!line.includes('\n'), `failingChecks entry must be single-line: ${JSON.stringify(line)}`)
+    }
+    assert.deepEqual(failingChecks, [
+      'USD->EUR@2026-08-27: 2 mismatches; from=USD to=EUR anchorDate=2026-08-27 missingDayCount=2 signals=history_range_incomplete',
+      'USD->JPY@2026-08-27: 1 mismatches; from=USD to=JPY anchorDate=2026-08-27 missingDayCount=1 signals=history_range_incomplete',
+      'USD->JPY@2026-08-20: error=fetch failed after retry',
+    ])
+    assert.equal(calls.scopes[0].tags['fx.failingPairs'], 'USD->EUR,USD->JPY')
+  })
+})
+
+test('captureFxCanaryIncident truncates the fx.failingPairs tag to 200 characters', async () => {
+  await withMockedSentryCloudflare(async ({ calls, monitoring }) => {
+    const results = Array.from({ length: 40 }, (_, index) => ({
+      pair: { from: 'USD', to: `X${String(index).padStart(2, '0')}` },
+      anchorDate: '2026-08-27',
+      ok: false,
+      report: { mismatchCount: 1 },
+      summary: 'missingDayCount=1',
+    }))
+
+    await monitoring.captureFxCanaryIncident(
+      { checkedAt: '2026-08-28T13:00:00.000Z', mismatchCount: 40, failureCount: 0, results },
+      'req-canary-long',
+      { SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1' }
+    )
+
+    const tag = calls.scopes[0].tags['fx.failingPairs']
+    assert.equal(tag.length, 200)
+    assert.ok(tag.startsWith('USD->X00,USD->X01,'))
+    assert.equal(calls.scopes[0].contexts.fxCanary.failingChecks.length, 40)
   })
 })
 
