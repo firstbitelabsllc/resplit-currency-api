@@ -366,7 +366,7 @@ carries the model and the `zai:1600` variant, so a rollback never replays a Z.AI
 result under the Anthropic configuration. `LLM_SCAN_MAX_EDGE` alone (with the
 Anthropic provider) is also honored, capped at Anthropic's own 1568 px.
 
-Parity re-run: `ZAI_API_KEY=… LLM_SCAN_PROVIDER=zai LLM_SCAN_MODEL=glm-5.3-flash LLM_SCAN_MAX_EDGE=1600 node scripts/ocr-gauntlet.mjs`
+Parity re-run: `ZAI_API_KEY=… LLM_SCAN_PROVIDER=zai LLM_SCAN_MODEL=glm-5.3-flash LLM_SCAN_MAX_EDGE=1600 node scripts/ocr-scan-gauntlet.mjs`
 replays the 16-receipt set through the worker transport; swap the env to
 `ANTHROPIC_API_KEY`/`LLM_SCAN_PROVIDER=anthropic` for the incumbent.
 
