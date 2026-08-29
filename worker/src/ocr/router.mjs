@@ -66,8 +66,18 @@ const APP_ID = 'QSL6XFT438.com.superfit.Resplit'
 const PER_DEVICE_DAILY_CAP = 200
 const DEFAULT_SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600
+const POLL_FAST_INTERVAL_MS = 250
+// Opt-in adaptive schedule: receipts overwhelmingly complete before ~4s, so
+// twelve 250ms windows cover the first 3s and retain the old cadence after that.
+// Production stays fixed_1500 until live rollout proves no provider-pressure or
+// tail regression. With no sleep after the final attempt, 19 fixed polls or 29
+// adaptive polls preserve the existing 27s no-success ceiling.
+const POLL_FAST_SLEEP_COUNT = 12
 const POLL_INTERVAL_MS = 1500
-const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
+const POLL_MAX_FIXED_ATTEMPTS = 19
+const POLL_MAX_ADAPTIVE_ATTEMPTS = 29
+const POLL_FIXED_SCHEDULE = 'fixed_1500'
+const POLL_ADAPTIVE_SCHEDULE = 'adaptive_250_3s'
 const DEFAULT_LLM_SCAN_DAILY_CAP = 50
 const DEFAULT_LLM_SCAN_AZURE_GRACE_MS = 3_000
 const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
@@ -106,6 +116,30 @@ const sha256Hex = async (bytes) => {
   return Array.from(digest).map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// Delay to wait after poll `attempt` when Azure still reports running. Exported
+// only for the polling-schedule contract test.
+export function azurePollSchedule(env = {}) {
+  const setting = String(env.OCR_AZURE_POLL_SCHEDULE ?? '').trim().toLowerCase()
+  return setting === POLL_ADAPTIVE_SCHEDULE ? POLL_ADAPTIVE_SCHEDULE : POLL_FIXED_SCHEDULE
+}
+
+// Keep the hard no-success ceiling at 27s: adaptive polls consume 12 fast sleeps
+// (3s), so it needs ten more attempts than the fixed schedule to reach 27s.
+export function ocrPollMaxAttempts(env = {}) {
+  return azurePollSchedule(env) === POLL_ADAPTIVE_SCHEDULE
+    ? POLL_MAX_ADAPTIVE_ATTEMPTS
+    : POLL_MAX_FIXED_ATTEMPTS
+}
+
+// Delay to wait after poll `attempt` when Azure still reports running. The
+// adaptive cadence is opt-in; an unknown setting fails safe to production.
+export function ocrPollDelayMs(attempt, env = {}) {
+  const schedule = azurePollSchedule(env)
+  return schedule === POLL_ADAPTIVE_SCHEDULE && attempt < POLL_FAST_SLEEP_COUNT
+    ? POLL_FAST_INTERVAL_MS
+    : POLL_INTERVAL_MS
+}
 
 // A cancellable grace timer keeps Node tests from waiting for an unused
 // timeout and keeps Workers from carrying pointless timers into the rest of
@@ -305,13 +339,13 @@ async function handleScan(request, env, requestId, ctx) {
 
     let result = null
     let azureHttp = submit.httpStatus
-    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 0; attempt < ocrPollMaxAttempts(env); attempt++) {
       const poll = await getReceiptAnalyzeResult(submit.operationId, env)
       azureHttp = poll.httpStatus
       if (!poll.ok) break
       if (poll.status === 'succeeded') { result = poll.body; break }
       if (poll.status === 'failed') break
-      await sleep(POLL_INTERVAL_MS)
+      if (attempt + 1 < ocrPollMaxAttempts(env)) await sleep(ocrPollDelayMs(attempt, env))
     }
 
     let kvExtras = 'off'
@@ -1007,14 +1041,14 @@ async function mergeLayoutKeyValuePairs({
     startedUnits = submit.ok ? 1 : 0
     if (!submit.ok || !submit.operationId) return failed(startedUnits)
 
-    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 0; attempt < ocrPollMaxAttempts(env); attempt++) {
       const poll = await getLayoutKeyValueAnalyzeResult(submit.operationId, env)
       if (!poll.ok) break
       if (poll.status === 'succeeded') {
         return { ...mergeKeyValuePairs(baseResult, poll.body), startedUnits }
       }
       if (poll.status === 'failed') break
-      await sleep(POLL_INTERVAL_MS)
+      if (attempt + 1 < ocrPollMaxAttempts(env)) await sleep(ocrPollDelayMs(attempt, env))
     }
   } catch (error) {
     if (!accountingEnforced) throw error
@@ -1127,13 +1161,16 @@ async function runAzureRawLeg({ imageBytes, contentType, env, accountingEnforced
 
     let raw = null
     let httpStatus = submit.httpStatus
-    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+    const pollStart = Date.now()
+    let pollAttempts = 0
+    for (let attempt = 0; attempt < ocrPollMaxAttempts(env); attempt++) {
+      pollAttempts++
       const poll = await getReceiptAnalyzeResult(submit.operationId, env)
       httpStatus = poll.httpStatus
       if (!poll.ok) break
       if (poll.status === 'succeeded') { raw = poll.body; break }
       if (poll.status === 'failed') break
-      await sleep(POLL_INTERVAL_MS)
+      if (attempt + 1 < ocrPollMaxAttempts(env)) await sleep(ocrPollDelayMs(attempt, env))
     }
 
     return {
@@ -1141,6 +1178,9 @@ async function runAzureRawLeg({ imageBytes, contentType, env, accountingEnforced
       raw,
       httpStatus,
       latencyMs: Date.now() - start,
+      pollSchedule: azurePollSchedule(env),
+      pollAttempts,
+      pollElapsedMs: Date.now() - pollStart,
       accountingUnits,
     }
   } catch (error) {
@@ -1776,6 +1816,9 @@ function logDualScanMonitoring(env, { result, route, requestId, clientVersion, a
     attest,
     cache,
     azure_ms: azureLatencyMs,
+    azure_poll_schedule: result.azure?.pollSchedule ?? null,
+    azure_poll_attempts: result.azure?.pollAttempts ?? null,
+    azure_poll_elapsed_ms: result.azure?.pollElapsedMs ?? null,
     llm_ms: result.llm?.latencyMs ?? null,
     total_ms: totalMs,
     totals_agree: divergence.totalsAgree ?? null,
