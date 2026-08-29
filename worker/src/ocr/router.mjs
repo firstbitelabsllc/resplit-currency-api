@@ -69,6 +69,7 @@ const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
 const DEFAULT_LLM_SCAN_DAILY_CAP = 50
+const DEFAULT_LLM_SCAN_AZURE_GRACE_MS = 3_000
 const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 const LEGACY_PARTIAL_COMPAT_VERSIONS = new Set([
   '2.0.0+3798',
@@ -93,6 +94,7 @@ const LEGACY_PARTIAL_LLM_STATUSES = new Set([
 // authenticated product request, so loose header values would create a PII
 // and telemetry-cardinality sink.
 const NATIVE_CLIENT_VERSION = /^\d{1,3}(?:\.\d{1,3}){0,2}(?:\+\d{1,8})?$/
+const LLM_AZURE_GRACE_EXPIRED = Symbol('llm_azure_grace_expired')
 
 function attestRejectClientVersion(request) {
   const value = request.headers.get('x-resplit-client-version')?.trim()
@@ -104,6 +106,38 @@ const sha256Hex = async (bytes) => {
   return Array.from(digest).map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// A cancellable grace timer keeps Node tests from waiting for an unused
+// timeout and keeps Workers from carrying pointless timers into the rest of
+// the request lifecycle.
+function azureGraceDeadline(ms) {
+  let resolveDeadline
+  let timer = setTimeout(() => {
+    timer = null
+    resolveDeadline(LLM_AZURE_GRACE_EXPIRED)
+  }, ms)
+  const promise = new Promise((resolve) => { resolveDeadline = resolve })
+  return {
+    promise,
+    cancel() {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+    },
+  }
+}
+
+function azureGraceMs(env) {
+  const parsed = parseInt(String(env.LLM_SCAN_AZURE_GRACE_MS ?? ''), 10)
+  return Number.isInteger(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_LLM_SCAN_AZURE_GRACE_MS
+}
+
+function hasBackgroundSupport(ctx) {
+  return Boolean(ctx && typeof ctx.waitUntil === 'function')
+}
 
 /**
  * @param {Request} request
@@ -395,7 +429,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     accountingAllowed: admission.anthropicAllowed,
   })
 
-  const [azureSettled, llmSettled] = await Promise.allSettled([azurePromise, llmPromise])
+  const azureSettled = await asSettled(azurePromise)
   const azureLeg = settledValue(azureSettled, () => ({
     status: 'provider_error',
     raw: null,
@@ -403,7 +437,33 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     latencyMs: null,
     accountingUnits: 0,
   }))
-  const llmLeg = settledValue(llmSettled, () => ({
+
+  // The scan contract only releases the caller early after Azure has a usable
+  // result. Azure failures still wait for the LLM because it may be the only
+  // usable parse; operator-disabled and capped legs settle immediately through
+  // the same settled LLM promise.
+  let llmSettled
+  let releasedAfterAzureGrace = false
+  if (azureLeg.status === 'succeeded') {
+    const pendingLlmSettled = asSettled(llmPromise)
+    const graceMs = azureGraceMs(env)
+    if (graceMs > 0 && hasBackgroundSupport(ctx)) {
+      const deadline = azureGraceDeadline(graceMs)
+      try {
+        const raced = await Promise.race([pendingLlmSettled, deadline.promise])
+        releasedAfterAzureGrace = raced === LLM_AZURE_GRACE_EXPIRED
+        llmSettled = releasedAfterAzureGrace ? pendingLlmSettled : raced
+      } finally {
+        deadline.cancel()
+      }
+    } else {
+      llmSettled = await pendingLlmSettled
+    }
+  } else {
+    llmSettled = await asSettled(llmPromise)
+  }
+
+  const llmLeg = releasedAfterAzureGrace ? abandonedLlmLeg(env, model) : settledValue(llmSettled, () => ({
     status: 'provider_error',
     provider: llmProvider(env),
     model,
@@ -417,6 +477,122 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   }))
   const { accountingUnits: azureStartedUnits = 0, ...azure } = azureLeg
   const { accountingUnits: anthropicStartedUnits = 0, ...llm } = llmLeg
+
+  if (releasedAfterAzureGrace) {
+    // Do not settle the reservation yet: only the late LLM settlement knows
+    // whether its provider unit actually started. Releasing Azure early would
+    // under-charge the paid leg.
+    const divergence = null
+    const result = {
+      scanId,
+      status: dualScanStatus(azure.status, llm.status),
+      azure,
+      llm,
+      divergence,
+    }
+    const totalMs = Date.now() - start
+    logDualScanMonitoring(env, {
+      result, route, requestId, clientVersion, attest, cache: 'miss',
+      azureLatencyMs: azure.latencyMs, totalMs,
+    })
+
+    const background = (async () => {
+      try {
+        const lateLlm = settledValue(await llmSettled, () => ({
+          status: 'provider_error',
+          provider: llmProvider(env),
+          model,
+          scanned: null,
+          latencyMs: null,
+          httpStatus: 502,
+          errorBody: 'llm_leg_threw',
+          diagnostic: null,
+          inputPx: null,
+          accountingUnits: 0,
+        }))
+        const { accountingUnits: lateAnthropicUnits = 0, ...lateLlmPublic } = lateLlm
+        await settleOcrWork(env, {
+          route, requestId, scanId, reservation: admission.reservation,
+          azureUnits: azureStartedUnits, anthropicUnits: lateAnthropicUnits,
+        })
+        const lateDivergence = computeDivergence(
+          azure.raw, lateLlmPublic.scanned, azure.status, lateLlmPublic.status,
+        )
+        const lateResult = {
+          scanId,
+          status: dualScanStatus(azure.status, lateLlmPublic.status),
+          azure,
+          llm: lateLlmPublic,
+          divergence: lateDivergence,
+        }
+        if (lateLlmPublic.status === 'succeeded') {
+          await writeOcrCacheBestEffort(env, {
+            cacheKey,
+            value: JSON.stringify(lateResult),
+            route,
+            scanId,
+          })
+        }
+
+        const lateMs = Date.now() - start
+        logOcrMonitoringEvent(lateLlmPublic.status === 'succeeded' ? 'info' : 'warn', {
+          signal: 'ocr_llm_late_result',
+          phase: 'scan',
+          route,
+          status: lateResult.status,
+          azure_status: azure.status,
+          llm_status: lateLlmPublic.status,
+          llm_provider: lateLlmPublic.provider,
+          llm_model: lateLlmPublic.model,
+          llm_input_px: lateLlmPublic.inputPx ?? null,
+          llm_ms: lateLlmPublic.latencyMs ?? null,
+          totals_agree: lateDivergence?.totalsAgree ?? null,
+          scanId,
+          requestId,
+        }, env)
+
+        if (lateLlmPublic.status === 'provider_error') {
+          await captureOcrLlmFailure({
+            scanId, requestId, route, llmStatus: lateLlmPublic.status,
+            httpStatus: lateLlmPublic.httpStatus, reason: lateLlmPublic.errorBody,
+            model: lateLlmPublic.model, attest, clientVersion, totalMs: lateMs,
+          }, env)
+        }
+        if (lateDivergence?.totalsAgree === false) {
+          await captureOcrTotalsDivergence({
+            scanId, requestId, route,
+            azureTotal: lateDivergence.azureTotal,
+            llmTotal: lateDivergence.llmTotal,
+            llmRecoveredAmount: lateDivergence.llmRecoveredAmount,
+            extrasKindsDelta: lateDivergence.extrasKindsDelta,
+            model: lateLlmPublic.model, attest, clientVersion, totalMs: lateMs,
+          }, env)
+        }
+      } catch (error) {
+        try {
+          logOcrMonitoringEvent('error', {
+            signal: 'ocr_llm_background_failed',
+            phase: 'scan',
+            route,
+            status: 'failed',
+            reason: error instanceof Error ? error.name : 'background_failed',
+            scanId,
+            requestId,
+          }, env)
+        } catch {
+          // Background cleanup must not throw back into Worker runtime.
+        }
+      }
+    })()
+
+    try {
+      ctx.waitUntil(background)
+    } catch {
+      await background
+    }
+    return renderScan(shapeEnvelope, result, requestId)
+  }
+
   await settleOcrWork(env, {
     route, requestId, scanId, reservation: admission.reservation,
     azureUnits: azureStartedUnits, anthropicUnits: anthropicStartedUnits,
@@ -1135,6 +1311,32 @@ async function underLlmDailyCap(env) {
 function settledValue(result, fallback) {
   if (result.status === 'fulfilled') return result.value
   return fallback(result.reason)
+}
+
+function asSettled(promise) {
+  return promise.then(
+    (value) => ({ status: 'fulfilled', value }),
+    (reason) => ({ status: 'rejected', reason }),
+  )
+}
+
+// The public leg vocabulary stays stable for shipped clients; the machine-
+// readable reason is what distinguishes a provider failure from an intentionally
+// abandoned slow leg. `accountingUnits` stays zero because the late settlement
+// will charge the provider only if its transport actually started.
+function abandonedLlmLeg(env, model) {
+  return {
+    status: 'provider_error',
+    provider: llmProvider(env),
+    model,
+    scanned: null,
+    latencyMs: null,
+    httpStatus: 502,
+    errorBody: 'llm_abandoned_after_azure_grace',
+    diagnostic: null,
+    inputPx: null,
+    accountingUnits: 0,
+  }
 }
 
 function dualScanStatus(azureStatus_, llmStatus) {
