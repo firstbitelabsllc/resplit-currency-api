@@ -28,7 +28,14 @@ import {
   getLayoutKeyValueAnalyzeResult,
   OCR_PROVIDER,
 } from './azure.mjs'
-import { scanReceiptWithAnthropic, receiptShapeViolation, LLM_PROVIDER } from './anthropic.mjs'
+import { receiptShapeViolation, LLM_PROVIDER } from './anthropic.mjs'
+import {
+  scanReceiptWithLlm,
+  llmProvider,
+  llmProviderConfigured,
+  llmModel,
+  llmCacheVariant,
+} from './llm-provider.mjs'
 import {
   verifyAssertion,
   AttestError,
@@ -61,7 +68,6 @@ const DEFAULT_SOFT_FAIL_DAILY_CAP = 20
 const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
-const DEFAULT_LLM_SCAN_MODEL = 'claude-sonnet-5'
 const DEFAULT_LLM_SCAN_DAILY_CAP = 50
 const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 const LEGACY_PARTIAL_COMPAT_VERSIONS = new Set([
@@ -350,8 +356,9 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   // the key is route-agnostic: dual-scan and analyze share one scan for the same
   // image+gate+model (the Azure+Anthropic work is byte-identical; only presentation
   // differs). The `v2core` token stops a read from parsing a pre-deploy v1-envelope
-  // cache entry as an internal result.
-  const cacheKey = `cache:dualScan:v2core:${imageHash}:${llmGate.cacheKey}:${model}`
+  // cache entry as an internal result. llmCacheVariant() is empty for the default
+  // provider/edge configuration and namespaces any flip.
+  const cacheKey = `cache:dualScan:v2core:${imageHash}:${llmGate.cacheKey}:${model}${llmCacheVariant(env)}`
   const cached = await env.ATTEST_KV.get(cacheKey)
   if (cached) {
     const result = JSON.parse(cached)
@@ -398,13 +405,14 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   }))
   const llmLeg = settledValue(llmSettled, () => ({
     status: 'provider_error',
-    provider: LLM_PROVIDER,
+    provider: llmProvider(env),
     model,
     scanned: null,
     latencyMs: null,
     httpStatus: 502,
     errorBody: 'llm_leg_threw',
     diagnostic: null,
+    inputPx: null,
     accountingUnits: 0,
   }))
   const { accountingUnits: azureStartedUnits = 0, ...azure } = azureLeg
@@ -652,7 +660,7 @@ function accountingUnavailableMulti(env, { route, shapeEnvelope, scanId, attest,
     status: 'provider_error',
     azure: { status: 'provider_error', raw: null, httpStatus: 502, latencyMs: 0 },
     llm: {
-      status: 'not_started', provider: LLM_PROVIDER, model: llmModel(env),
+      status: 'not_started', provider: llmProvider(env), model: llmModel(env),
       scanned: null, latencyMs: 0, httpStatus: 502, errorBody: null,
     },
     divergence: null,
@@ -680,7 +688,7 @@ function respondRateLimited(env, { route, shapeEnvelope, scanId, attest, request
     scanId,
     status: 'rate_limited',
     azure: { status: 'rate_limited', raw: null, httpStatus: 429, latencyMs: 0 },
-    llm: { status: 'not_started', provider: LLM_PROVIDER, model: llmModel(env), scanned: null, latencyMs: 0, httpStatus: 429, errorBody: null },
+    llm: { status: 'not_started', provider: llmProvider(env), model: llmModel(env), scanned: null, latencyMs: 0, httpStatus: 429, errorBody: null },
     divergence: null,
   }
   logDualScanMonitoring(env, {
@@ -702,7 +710,7 @@ function dualScanEnvelope({ scanId, status, azure, llm, divergence }) {
     azure: { status: azure.status, raw: azure.raw ?? null },
     llm: {
       status: llm.status,
-      provider: LLM_PROVIDER,
+      provider: llm.provider ?? LLM_PROVIDER,
       model: llm.model,
       scanned: llm.scanned ?? null,
       latencyMs: llm.latencyMs,
@@ -774,7 +782,7 @@ function analyzeLlmEngine(llm) {
   const engine = {
     id: 'llm',
     kind: 'vision-llm',
-    provider: LLM_PROVIDER,
+    provider: llm.provider ?? LLM_PROVIDER,
     model: llm.model,
     status: llm.status,
     latencyMs: llm.latencyMs ?? null,
@@ -977,16 +985,18 @@ async function runLlmLeg({
   imageBytes, contentType, env, gate, model,
   accountingEnforced = false, accountingAllowed = true,
 }) {
+  const provider = llmProvider(env)
   if (gate.status !== 'allowed') {
     return {
       status: gate.status,
-      provider: LLM_PROVIDER,
+      provider,
       model,
       scanned: null,
       latencyMs: 0,
       httpStatus: gate.httpStatus,
       errorBody: null,
       diagnostic: gate.diagnostic ?? null,
+      inputPx: null,
       accountingUnits: 0,
     }
   }
@@ -995,21 +1005,22 @@ async function runLlmLeg({
   if (!underDailyCap) {
     return {
       status: 'rate_limited',
-      provider: LLM_PROVIDER,
+      provider,
       model,
       scanned: null,
       latencyMs: 0,
       httpStatus: 429,
       errorBody: null,
       diagnostic: null,
+      inputPx: null,
       accountingUnits: 0,
     }
   }
 
-  const result = await scanReceiptWithAnthropic(imageBytes, contentType, env)
+  const result = await scanReceiptWithLlm(imageBytes, contentType, env)
   return {
     status: result.ok ? 'succeeded' : azureStatus(result.httpStatus),
-    provider: LLM_PROVIDER,
+    provider,
     model: result.model || model,
     scanned: result.scanned ?? null,
     latencyMs: result.latencyMs,
@@ -1018,6 +1029,9 @@ async function runLlmLeg({
     // Sentry capture below can tag WHY the paid leg failed, not just that it did.
     errorBody: result.errorBody ?? null,
     diagnostic: null,
+    // Long edge of the image the provider actually received (after any
+    // LLM_SCAN_MAX_EDGE scale-down); surfaces as llm_input_px in monitoring.
+    inputPx: result.inputPx ?? null,
     accountingUnits: result.providerStarted === true ? 1 : 0,
   }
 }
@@ -1036,7 +1050,9 @@ function readLlmGate(env, keyId, attest) {
     }
   }
 
-  if (!env.ANTHROPIC_API_KEY) {
+  // The selected provider's secret (ANTHROPIC_API_KEY, or ZAI_API_KEY when
+  // LLM_SCAN_PROVIDER=zai) must exist before any cap, cache, or paid work.
+  if (!llmProviderConfigured(env)) {
     return { status: 'provider_unavailable', httpStatus: 503, cacheKey: 'provider_unavailable' }
   }
 
@@ -1087,10 +1103,6 @@ function readLlmGate(env, keyId, attest) {
   }
 
   return { status: 'allowed', httpStatus: 200, cacheKey: `allowed:${keyId}` }
-}
-
-function llmModel(env) {
-  return (env.LLM_SCAN_MODEL || DEFAULT_LLM_SCAN_MODEL).trim() || DEFAULT_LLM_SCAN_MODEL
 }
 
 // A daily cap read from env config: parse to a non-negative integer, else fall
@@ -1557,6 +1569,7 @@ function logDualScanMonitoring(env, { result, route, requestId, clientVersion, a
     llm_diagnostic: result.llm?.diagnostic ?? null,
     llm_provider: result.llm?.provider ?? LLM_PROVIDER,
     llm_model: result.llm?.model,
+    llm_input_px: result.llm?.inputPx ?? null,
     llm_reasoning: result.llm?.status === 'succeeded',
     attest,
     cache,
