@@ -4,6 +4,7 @@ node_modules/
 package/
 .env.local
 /ocr
+/fx-publish
 .agent-ledger/*
 !.agent-ledger/
 !.agent-ledger/activity.jsonl
