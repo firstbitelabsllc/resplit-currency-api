@@ -68,6 +68,10 @@ export async function buildFxCoverageReport({
     historyCoverage: history.coverage,
     freshness,
     mismatchCount: computeMismatchCount(quote, history, freshness),
+    // Correctness-only subset: is the rate we just returned wrong or stale?
+    // `mismatchCount` also counts historical archive holes, which say nothing
+    // about the returned quote — see computeQuoteMismatchCount.
+    quoteMismatchCount: computeQuoteMismatchCount(quote, freshness),
     signals,
   }
 }
@@ -120,6 +124,30 @@ function collectSignals(quote, history, freshness) {
   }
 
   return [...signals]
+}
+
+/**
+ * The paging subset of `mismatchCount`.
+ *
+ * A wrong or stale quote is a user-visible money bug. A hole in the historical
+ * window is a data-completeness issue that does not change the rate we just
+ * returned — on 2026-07-31 a single missing 2026-01 archive day made every
+ * 180-day anchor report 2 mismatches, so the canary alerted every day for
+ * weeks while all recent anchors were exact. A canary that is always red is a
+ * canary nobody reads.
+ *
+ * `archiveLatestLagDays` stays in here on purpose: if the archive's newest date
+ * trails the anchor, today's rates really are stale.
+ */
+function computeQuoteMismatchCount(quote, freshness) {
+  let count = 0
+  if (quote.resolutionKind !== 'exact') {
+    count += 1
+  }
+  if (freshness.archiveLatestLagDays > 0) {
+    count += 1
+  }
+  return count
 }
 
 function computeMismatchCount(quote, history, freshness) {

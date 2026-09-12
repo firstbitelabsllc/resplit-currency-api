@@ -63,7 +63,7 @@ export async function runFxCanary({
         results.push({
           pair,
           anchorDate: dateToCheck,
-          ok: report.mismatchCount === 0,
+          ok: report.quoteMismatchCount === 0,
           report,
           summary: summarizeFxCoverageReport(report),
         })
@@ -82,12 +82,21 @@ export async function runFxCanary({
     (total, result) => total + (result.report?.mismatchCount ?? 0),
     0
   )
+  // The canary pages on quote correctness only. Historical coverage holes stay
+  // reported via mismatchCount/signals but must not turn the cron red — a
+  // single missing 2026-01 archive day kept every 180-day anchor failing while
+  // every recent anchor resolved exactly.
+  const quoteMismatchCount = results.reduce(
+    (total, result) => total + (result.report?.quoteMismatchCount ?? 0),
+    0
+  )
   const failureCount = results.filter(result => result.error).length
 
   return {
     checkedAt: new Date().toISOString(),
-    ok: mismatchCount === 0 && failureCount === 0,
+    ok: quoteMismatchCount === 0 && failureCount === 0,
     mismatchCount,
+    quoteMismatchCount,
     failureCount,
     results,
   }
