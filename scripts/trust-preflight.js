@@ -22,10 +22,20 @@ if (require.main === module) {
       process.stdout.write(`trust-preflight: wrote ${result.report.outputPath}\n`)
       process.stdout.write(`trust-preflight: wrote ${result.report.markdownPath}\n`)
     }
-    process.exitCode = result.report.status === 'red' ? 1 : 0
+    // Tri-state report -> tri-state exit, matching the lane contract in
+    // .firstbite/local-ci.json (yellowExitCodes: [1], "exit 2 remains red/fail").
+    // Before 2026-07-30 this collapsed red and yellow into 1 and 2 was UNREACHABLE,
+    // so a red report (red Cloudflare destination, red Grafana proof, red cockpit
+    // verdict) was classified by the lane as "expected yellow while proof is
+    // incomplete", and a genuinely yellow report exited 0 and read fully green.
+    // The lane whose own note says "do not treat endpoint smoke as launch-green
+    // without this lane" could not say no.
+    process.exitCode =
+      result.report.status === 'red' ? 2 : result.report.status === 'yellow' ? 1 : 0
   }).catch(error => {
     console.error(`trust-preflight: FAILED\n${error.stack || error.message}`)
-    process.exitCode = 1
+    // A crash is a hard failure, not "proof incomplete" — red, not yellow.
+    process.exitCode = 2
   })
 }
 
