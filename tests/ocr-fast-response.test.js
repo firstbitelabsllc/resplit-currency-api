@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import cockpit from '../scripts/reliability-cockpit.js'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
+
+const wrangler = JSON.parse(cockpit.stripJsonComments(
+  readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'),
+))
 
 const realFetch = globalThis.fetch
 const realConsole = {
@@ -157,13 +163,19 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-function stubProviders({ azure = azureReceipt(), azureStatus = 202, llm } = {}) {
-  const calls = { azureSubmit: 0, azurePoll: 0, anthropic: 0 }
+function stubProviders({ azure = azureReceipt(), azureStatus = 202, llm, azureReady } = {}) {
+  const calls = { azureSubmit: 0, azurePoll: 0, anthropic: 0, zai: 0 }
   globalThis.fetch = async (url, init = {}) => {
     const target = String(url)
     if (target === 'https://api.anthropic.com/v1/messages') {
       calls.anthropic += 1
       return llm.promise.then(() => Response.json(anthropicToolResponse(scannedReceipt())))
+    }
+    if (target === 'https://api.z.ai/api/coding/paas/v4/chat/completions') {
+      calls.zai += 1
+      return llm.promise.then(() => Response.json({
+        choices: [{ message: { content: JSON.stringify(scannedReceipt()) }, finish_reason: 'stop' }],
+      }))
     }
     if (init.method === 'POST' && target.includes(':analyze')) {
       calls.azureSubmit += 1
@@ -177,6 +189,7 @@ function stubProviders({ azure = azureReceipt(), azureStatus = 202, llm } = {}) 
     }
     if (target.includes('/analyzeResults/')) {
       calls.azurePoll += 1
+      azureReady?.resolve()
       return Response.json(azure, { status: 200 })
     }
     throw new Error(`unexpected fetch ${init.method || 'GET'} ${target}`)
@@ -202,8 +215,8 @@ function makeEnv(accounting, extra = {}) {
   }
 }
 
-function scanRequest(imageBytes) {
-  return new Request('https://fx.resplit.app/ocr/dual-scan', {
+function scanRequest(imageBytes, route = '/ocr/dual-scan') {
+  return new Request(`https://fx.resplit.app${route}`, {
     method: 'POST',
     headers: {
       'content-type': 'image/jpeg',
@@ -317,3 +330,64 @@ test('OCR does not release early when Azure fails, even if the grace timer expir
   assert.equal(body.llm.status, 'succeeded')
   assert.deepEqual(ctx.tasks, [])
 })
+
+test('both production configurations disable premature Azure release', () => {
+  for (const vars of [wrangler.vars, wrangler.env.production.vars]) {
+    assert.equal(vars.LLM_SCAN_AZURE_GRACE_MS, '0')
+  }
+})
+
+for (const [route, vars] of [
+  ['/ocr/dual-scan', wrangler.vars],
+  ['/ocr/analyze', wrangler.env.production.vars],
+]) {
+  for (const outcome of ['success', 'failure']) {
+    test(`${route} keeps the caller until the delayed production LLM ${outcome}`, async (t) => {
+      assert.equal(vars.LLM_SCAN_AZURE_GRACE_MS, '0')
+      const llm = deferred()
+      t.after(() => llm.resolve())
+      const azureReady = deferred()
+      const calls = stubProviders({ llm, azureReady })
+      const accounting = makeAccountingBinding()
+      const ctx = makeCtx()
+      const env = makeEnv(accounting, {
+        LLM_SCAN_AZURE_GRACE_MS: vars.LLM_SCAN_AZURE_GRACE_MS,
+        LLM_SCAN_PROVIDER: vars.LLM_SCAN_PROVIDER,
+        LLM_SCAN_MODEL: vars.LLM_SCAN_MODEL,
+        LLM_SCAN_BASE_URL: vars.LLM_SCAN_BASE_URL,
+        LLM_SCAN_MAX_EDGE: vars.LLM_SCAN_MAX_EDGE,
+        ZAI_API_KEY: 'zai-test-key',
+      })
+      const pending = handleOcr(scanRequest(jpegWithDimensions(814, 614), route), env, ctx)
+      let settled = false
+      void pending.then(() => { settled = true })
+      await azureReady.promise
+      // Cross the previous production 3-second grace while the useful LLM is pending.
+      await new Promise((resolve) => setTimeout(resolve, 3_200))
+      assert.equal(settled, false, 'Azure success must not discard the pending LLM result')
+      assert.equal(accounting.records.commits.length, 0)
+
+      if (outcome === 'success') llm.resolve()
+      else llm.reject(new Error('provider transport failed'))
+      const response = await pending
+      assert.equal(response.status, 200)
+      const body = await response.json()
+      const azure = body.azure ?? body.engines.find((engine) => engine.id === 'azure')
+      const returnedLlm = body.llm ?? body.engines.find((engine) => engine.id === 'llm')
+      assert.equal(azure.status, 'succeeded')
+      assert.equal(body.status, outcome === 'success' ? 'succeeded' : 'partial')
+      assert.equal(returnedLlm.status, outcome === 'success' ? 'succeeded' : 'provider_error')
+      if (outcome === 'success') assert.deepEqual(returnedLlm.scanned, scannedReceipt())
+      else assert.equal(returnedLlm.scanned, null)
+      assert.equal(calls.zai, 1)
+      assert.equal(calls.anthropic, 0)
+      assert.equal(calls.azureSubmit, 1)
+      assert.deepEqual(ctx.tasks, [], 'the response contains the terminal result without background recovery')
+      assert.equal(accounting.records.reservations.length, 1)
+      assert.equal(accounting.records.commits.length, 1)
+      assert.equal(accounting.records.commits[0].azureUnits, 1)
+      assert.equal(accounting.records.commits[0].anthropicUnits, 1, 'the started LLM call remains chargeable')
+      assert.equal(accounting.records.refunds.length, 0)
+    })
+  }
+}
