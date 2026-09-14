@@ -299,7 +299,7 @@ test('POST /ocr/analyze closes timeout and malformed-output diagnostics on the a
     ]) {
       calls = { azureSubmit: 0, azurePoll: 0, openai: 0 }
       globalThis.setTimeout = (callback, delay, ...args) => {
-        if (delay === 60_000) {
+        if (mode === 'timeout' && delay === 60_000) {
           callback(...args)
           return undefined
         }
