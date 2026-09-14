@@ -95,6 +95,7 @@ test('Azure submit timeout aborts fetch and returns the legacy-safe provider sha
     httpStatus: 504,
     operationId: null,
     errorBody: 'azure_timeout',
+    failureCode: 'transport_timeout',
   })
   assert.deepEqual(timers.delays, [1])
   assert.equal(timers.active.size, 0, 'timeout handle must be cleared after the aborted fetch settles')
@@ -120,9 +121,22 @@ test('Azure poll timeout aborts fetch and returns the legacy-safe provider shape
     status: null,
     body: null,
     errorBody: 'azure_timeout',
+    failureCode: 'transport_timeout',
   })
   assert.deepEqual(timers.delays, [1])
   assert.equal(timers.active.size, 0, 'timeout handle must be cleared after the aborted fetch settles')
+})
+
+test('Azure malformed poll JSON returns a closed malformed-output failure code', { concurrency: false }, async (t) => {
+  installFetch(t, async () => new Response('{', { status: 200, headers: { 'content-type': 'application/json' } }))
+
+  const result = await getReceiptAnalyzeResult('operation-1', BASE_ENV)
+
+  assert.equal(result.ok, false)
+  assert.equal(result.httpStatus, 200)
+  assert.equal(result.status, null)
+  assert.equal(result.body, null)
+  assert.equal(result.failureCode, 'malformed_output')
 })
 
 test('Azure transport failure stays data-shaped instead of escaping the OCR route', { concurrency: false }, async (t) => {
@@ -140,6 +154,7 @@ test('Azure transport failure stays data-shaped instead of escaping the OCR rout
     httpStatus: 502,
     operationId: null,
     errorBody: 'azure_transport_error',
+    failureCode: 'transport_error',
   })
   assert.equal(timers.active.size, 0, 'transport failures must clear their pending timeout')
 })

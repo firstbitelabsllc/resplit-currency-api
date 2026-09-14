@@ -52,6 +52,7 @@ test('incomplete output is rejected even when its partial JSON happens to parse'
   assert.equal(result.ok, false)
   assert.equal(result.scanned, null)
   assert.equal(result.errorBody, 'llm_incomplete:max_output_tokens')
+  assert.equal(result.failureCode, 'malformed_output')
 })
 
 test('refusal, invalid JSON and wrong amount types remain provider failures', async () => {
@@ -66,6 +67,7 @@ test('refusal, invalid JSON and wrong amount types remain provider failures', as
     assert.equal(result.ok, false)
     assert.equal(result.scanned, null)
     assert.ok(result.errorBody.startsWith(error))
+    assert.equal(result.failureCode, 'malformed_output')
   }
 })
 
@@ -74,9 +76,11 @@ test('rate limits retain HTTP status and transport failures retain attempted-cal
   let result = await scanReceiptWithOpenAI(image, 'image/jpeg', env)
   assert.equal(result.httpStatus, 429)
   assert.equal(result.providerStarted, true)
+  assert.equal(result.failureCode, 'upstream_rate_limited')
   globalThis.fetch = async () => { throw new DOMException('timeout', 'AbortError') }
   result = await scanReceiptWithOpenAI(image, 'image/jpeg', env)
   assert.equal(result.ok, false)
   assert.equal(result.providerStarted, true)
   assert.equal(result.scanned, null)
+  assert.equal(result.failureCode, 'transport_error')
 })

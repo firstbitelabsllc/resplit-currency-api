@@ -569,6 +569,7 @@ test('POST /ocr/dual-scan LLM daily cap trip returns Azure success plus LLM rate
   assert.equal(body.status, 'partial')
   assert.equal(body.azure.status, 'succeeded')
   assert.equal(body.llm.status, 'rate_limited')
+  assert.equal(body.llm.diagnostic, 'llm_daily_cap')
   assert.equal(calls.anthropic, 0)
 })
 
@@ -856,11 +857,12 @@ test('POST /ocr/dual-scan additive fields reflect a failed LLM leg (llmReasoning
 test('POST /ocr/dual-scan reports a failed LLM leg to Sentry (paid-leg error observability)', async () => {
   // Azure succeeds, Anthropic 500s -> llm provider_error. With a DSN set, the paid leg's
   // failure must surface as a Sentry issue tagged ocr_llm_error (finding #7).
+  const rawProviderError = 'RAW_PROVIDER_ERROR_MUST_NOT_LEAK'
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url)
     if (u === 'https://api.anthropic.com/v1/messages') {
       calls.anthropic++
-      return new Response('anthropic upstream boom', { status: 500 })
+      return new Response(rawProviderError, { status: 500 })
     }
     if (init.method === 'POST' && u.includes(':analyze')) {
       calls.azureSubmit++
@@ -888,9 +890,11 @@ test('POST /ocr/dual-scan reports a failed LLM leg to Sentry (paid-leg error obs
     assert.equal(res.status, 200)
     const body = await res.json()
     assert.equal(body.llm.status, 'provider_error')
+    assert.equal(body.llm.diagnostic, 'upstream_rejected')
     const llmScope = captured.scopes.find((s) => s.tags['monitoring.signal'] === 'ocr_llm_error')
     assert.ok(llmScope, 'a failed llm leg must emit an ocr_llm_error Sentry issue')
     assert.equal(captured.messages.some((m) => /llm_error/.test(m)), true, 'the captured message names llm_error')
+    assert.doesNotMatch(JSON.stringify(captured), new RegExp(rawProviderError))
     // Azure succeeded — the azure-leg capture must NOT fire here.
     assert.equal(captured.scopes.some((s) => s.tags['monitoring.signal'] === 'ocr_provider_error'), false)
   } finally {

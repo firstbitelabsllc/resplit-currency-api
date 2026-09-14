@@ -290,6 +290,77 @@ test('POST /ocr/analyze with a failed LLM leg is partial: llmReasoning false, ai
   assert.equal(calls.anthropic, 1)
 })
 
+test('POST /ocr/analyze closes timeout and malformed-output diagnostics on the actual route', async () => {
+  const realSetTimeout = globalThis.setTimeout
+  try {
+    for (const [mode, seed, expectedDiagnostic] of [
+      ['timeout', 231, 'transport_timeout'],
+      ['malformed_output', 232, 'malformed_output'],
+    ]) {
+      calls = { azureSubmit: 0, azurePoll: 0, openai: 0 }
+      globalThis.setTimeout = (callback, delay, ...args) => {
+        if (delay === 60_000) {
+          callback(...args)
+          return undefined
+        }
+        return realSetTimeout(callback, delay, ...args)
+      }
+      globalThis.fetch = async (url, init = {}) => {
+        const u = String(url)
+        if (u === 'https://api.openai.com/v1/responses') {
+          calls.openai++
+          if (mode === 'timeout') {
+            if (init.signal?.aborted) throw new DOMException('aborted', 'AbortError')
+            return await new Promise((resolve, reject) => {
+              init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+            })
+          }
+          return new Response('{', { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        if (init.method === 'POST' && u.includes(':analyze')) {
+          calls.azureSubmit++
+          return new Response('', {
+            status: 202,
+            headers: { 'operation-location': 'https://test.cognitiveservices.azure.com/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-route?api-version=2024-11-30' },
+          })
+        }
+        if (u.includes('/analyzeResults/')) {
+          calls.azurePoll++
+          return Response.json(azureRaw(), { status: 200 })
+        }
+        throw new Error(`unexpected fetch ${init.method} ${u}`)
+      }
+
+      const requestId = `trace-diagnostic-${seed}`
+      const env = makeEnv({
+        OPENAI_API_KEY: 'openai-key',
+        LLM_SCAN_PROVIDER: 'openai',
+        LLM_SCAN_MODEL: 'gpt-6-astra',
+        LLM_SCAN_AZURE_GRACE_MS: '0',
+      })
+      const response = await handleOcr(analyzeRequest(jpegFixture(seed), {
+        'x-resplit-trace-id': requestId,
+      }), env)
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('x-request-id'), requestId)
+      assert.equal(response.headers.get('x-resplit-trace-id'), requestId)
+      const body = await response.json()
+      assert.equal(body.v, 2)
+      assert.equal(typeof body.scanId, 'string')
+      const llm = body.engines.find((engine) => engine.id === 'llm')
+      assert.equal(body.status, 'partial')
+      assert.equal(llm.status, 'provider_error')
+      assert.equal(llm.diagnostic, expectedDiagnostic)
+      assert.ok(Number.isFinite(llm.latencyMs) && llm.latencyMs >= 0)
+      assert.equal(calls.openai, 1)
+      assert.equal(calls.azureSubmit, 1)
+      assert.equal(calls.azurePoll, 1)
+    }
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+  }
+})
+
 test('POST /ocr/analyze preserves an Azure-usable partial when OCR Sentry flush rejects', async () => {
   stubProviders({ anthropicStatus: 500 })
   setOcrSentrySdkForTests({
