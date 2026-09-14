@@ -635,8 +635,9 @@ const isStringOrNull = (v) => v === null || typeof v === 'string'
 // kind, …), or null when the shape is sound. Never trust the LLM's shape blindly.
 export function receiptShapeViolation(scanned) {
   if (!scanned || typeof scanned !== 'object' || Array.isArray(scanned)) return 'not_object'
+  if (Object.keys(scanned).some((key) => !REQUIRED_RECEIPT_KEYS.includes(key))) return 'additional_property'
   for (const key of REQUIRED_RECEIPT_KEYS) {
-    if (!(key in scanned)) return `missing:${key}`
+    if (!Object.hasOwn(scanned, key)) return `missing:${key}`
   }
   if (!isStringOrNull(scanned.merchantName)) return 'merchantName'
   if (!isStringOrNull(scanned.merchantAddress)) return 'merchantAddress'
@@ -649,6 +650,9 @@ export function receiptShapeViolation(scanned) {
   if (!Array.isArray(scanned.lineItems)) return 'lineItems'
   for (const item of scanned.lineItems) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return 'lineItem'
+    if (Object.keys(item).some((key) => !['name', 'amount', 'quantity'].includes(key))) {
+      return 'lineItem.additional_property'
+    }
     if (typeof item.name !== 'string') return 'lineItem.name'
     if (!isNumberOrNull(item.amount)) return 'lineItem.amount'
     if (!isNumberOrNull(item.quantity)) return 'lineItem.quantity'
@@ -657,6 +661,9 @@ export function receiptShapeViolation(scanned) {
   if (!Array.isArray(scanned.extras)) return 'extras'
   for (const extra of scanned.extras) {
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return 'extra'
+    if (Object.keys(extra).some((key) => !['label', 'amount', 'kind'].includes(key))) {
+      return 'extra.additional_property'
+    }
     if (typeof extra.label !== 'string') return 'extra.label'
     if (!isNumber(extra.amount)) return 'extra.amount'
     if (!EXTRA_KINDS.has(extra.kind)) return 'extra.kind'

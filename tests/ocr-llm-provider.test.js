@@ -107,7 +107,7 @@ function stubProviders({ azure = azureRaw(), scanned = scannedReceipt() } = {}) 
       calls.zaiBody = JSON.parse(init.body)
       return Response.json({
         id: 'chatcmpl-test', model: 'glm-5.3-flash',
-        choices: [{ index: 0, message: { role: 'assistant', content: '```json\n' + JSON.stringify(scanned) + '\n```' }, finish_reason: 'stop' }],
+        choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(scanned) }, finish_reason: 'stop' }],
       }, { status: 200 })
     }
     if (u === 'https://api.openai.com/v1/responses') {

@@ -12,7 +12,12 @@ const receipt = {
   currencyCode: 'USD', currencySymbol: '$', subtotal: null, total: null, extras: [],
   lineItems: [{ name: 'Unreadable price', amount: null, quantity: null }, { name: 'Printed free item', amount: 0, quantity: 1 }],
 }
-const completed = scanned => ({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(scanned) }] }] })
+const completed = (scanned, overrides = {}) => ({
+  status: 'completed', model: 'gpt-6-astra', service_tier: 'default',
+  usage: { input_tokens: 1500, input_tokens_details: { cached_tokens: 500 }, output_tokens: 250, total_tokens: 1750 },
+  output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(scanned) }] }],
+  ...overrides,
+})
 
 test('OpenAI sends the shared contract and preserves null, printed zero and item identity unchanged', async () => {
   let request
@@ -27,13 +32,41 @@ test('OpenAI sends the shared contract and preserves null, printed zero and item
   assert.equal(result.model, 'gpt-6-astra')
   assert.equal(result.inputPx, 800)
   assert.equal(result.providerStarted, true)
+  assert.equal(result.structuredOutputValid, true)
+  assert.equal(result.serviceTierRequested, 'default')
+  assert.equal(result.serviceTierServed, 'default')
+  assert.equal(result.servedModel, 'gpt-6-astra')
+  assert.deepEqual(result.usage, { inputTokens: 1500, cachedInputTokens: 500, outputTokens: 250, totalTokens: 1750 })
   assert.ok(Number.isFinite(result.latencyMs) && result.latencyMs >= 0)
   assert.deepEqual(request.reasoning, { effort: 'low' })
+  assert.equal(request.service_tier, 'default')
   assert.equal(request.store, false)
   assert.equal(request.instructions, RECEIPT_JSON_SYSTEM_PROMPT)
   assert.deepEqual(request.text.format.schema, receiptSchema)
   assert.equal(request.text.format.strict, true)
   assert.equal(request.input[0].content[0].detail, 'high')
+})
+
+test('Astra fast requests priority processing and reports the tier actually served', async () => {
+  let request
+  globalThis.fetch = async (_url, init) => {
+    request = JSON.parse(init.body)
+    return Response.json(completed(receipt, { service_tier: 'priority' }))
+  }
+  const result = await scanReceiptWithOpenAI(image, 'image/jpeg', { ...env, LLM_SCAN_SERVICE_TIER: 'fast' })
+  assert.equal(request.service_tier, 'fast')
+  assert.equal(result.serviceTierRequested, 'fast')
+  assert.equal(result.serviceTierServed, 'priority')
+  assert.equal(result.structuredOutputValid, true)
+})
+
+test('an unsupported service tier fails before contacting OpenAI', async () => {
+  globalThis.fetch = async () => { assert.fail('must reject configuration before provider call') }
+  const result = await scanReceiptWithOpenAI(image, 'image/jpeg', { ...env, LLM_SCAN_SERVICE_TIER: 'turbo' })
+  assert.equal(result.ok, false)
+  assert.equal(result.providerStarted, false)
+  assert.equal(result.serviceTierRequested, 'turbo')
+  assert.equal(result.failureCode, null)
 })
 
 test('missing OpenAI key and malformed input do not start a paid request', async () => {
@@ -68,6 +101,7 @@ test('refusal, invalid JSON and wrong amount types remain provider failures', as
     assert.equal(result.scanned, null)
     assert.ok(result.errorBody.startsWith(error))
     assert.equal(result.failureCode, 'malformed_output')
+    assert.equal(result.structuredOutputValid, false)
   }
 })
 

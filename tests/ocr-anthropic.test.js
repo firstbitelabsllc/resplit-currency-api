@@ -552,7 +552,9 @@ test('receiptShapeViolation accepts a well-formed receipt', () => {
 
 test('receiptShapeViolation rejects string amounts, missing keys, and bad kinds', () => {
   assert.equal(receiptShapeViolation(null), 'not_object')
-  assert.match(receiptShapeViolation({ ...scannedReceipt(), total: undefined, missing: true }) || '', /^(missing:total|total)$/)
+  const receiptWithoutTotal = scannedReceipt()
+  delete receiptWithoutTotal.total
+  assert.match(receiptShapeViolation(receiptWithoutTotal) || '', /^(missing:total|total)$/)
   assert.equal(receiptShapeViolation(scannedReceipt({ total: '10' })), 'total')
   assert.equal(receiptShapeViolation(scannedReceipt({ lineItems: [{ name: 'x', amount: '9', quantity: 1 }] })), 'lineItem.amount')
   assert.equal(receiptShapeViolation(scannedReceipt({ extras: [{ label: 'x', amount: '1', kind: 'tax' }] })), 'extra.amount')
