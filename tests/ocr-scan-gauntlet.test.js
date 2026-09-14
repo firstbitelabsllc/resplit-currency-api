@@ -162,6 +162,75 @@ test('money scoring requires exact currency minor units and rejects excess fract
   }
 })
 
+test('locale-aware item-name WER tokenizes English and Japanese words and leaves unlabeled rows unscored', async () => {
+  const { root, set: baseSet } = await fixtureReplaySet()
+  try {
+    const fixtures = [
+      {
+        ...baseSet[0],
+        locale: 'en-US',
+        lineItems: [{ name: 'ＦＯＯ fresh' }, { name: 'eggs' }],
+      },
+      {
+        ...baseSet[1],
+        locale: 'ja-JP',
+        lineItems: [{ name: 'りんごを食べる' }],
+      },
+      {
+        ...baseSet[2],
+        currencyCode: 'JPY',
+        merchantName: '東京店',
+        lineItems: [{ name: 'receipt line' }],
+      },
+    ]
+    const outputs = {
+      a: [{ name: 'foo fresh eggs' }],
+      b: [{ name: 'りんごを飲む' }],
+      c: [{ name: 'unrelated text' }],
+    }
+    const report = await runProviderReplay({
+      set: fixtures,
+      root,
+      env: { LLM_SCAN_PROVIDER: 'openai' },
+      scan: async (bytes) => ({
+        ok: true,
+        httpStatus: 200,
+        latencyMs: 10,
+        providerStarted: String.fromCharCode(bytes[0]) !== 'b',
+        scanned: { total: 1, lineItems: outputs[String.fromCharCode(bytes[0])] },
+      }),
+      readImage: (entry) => new Uint8Array([entry.id.charCodeAt(0)]),
+    })
+
+    const allNames = report.correctness.item_name
+    assert.equal(allNames.word_sequence_edit_distance, 2)
+    assert.equal(allNames.reference_word_tokens, 7)
+    assert.equal(allNames.wer, 2 / 7)
+
+    const providerNames = report.provider_started.correctness.item_name
+    assert.equal(providerNames.word_sequence_edit_distance, 1)
+    assert.equal(providerNames.reference_word_tokens, 4)
+    assert.equal(providerNames.wer, 1 / 4)
+    assert.equal(report.provider_started.correctness.by_locale['en-US'].name_wer, 1 / 4)
+    assert.equal(report.provider_started.correctness.by_locale.unlabeled.name_wer, null)
+
+    const byLocale = report.correctness.by_locale
+    assert.equal(byLocale['en-US'].name_word_sequence_edit_distance, 1)
+    assert.equal(byLocale['en-US'].name_reference_word_tokens, 4)
+    assert.equal(byLocale['en-US'].name_wer, 1 / 4)
+    assert.equal(byLocale['ja-JP'].name_word_sequence_edit_distance, 1)
+    assert.equal(byLocale['ja-JP'].name_reference_word_tokens, 3)
+    assert.equal(byLocale['ja-JP'].name_wer, 1 / 3)
+    assert.equal(byLocale.unlabeled.name_word_sequence_edit_distance, 0)
+    assert.equal(byLocale.unlabeled.name_reference_word_tokens, 0)
+    assert.equal(byLocale.unlabeled.name_wer, null)
+    assert.equal(report.rows.find((row) => row.id === hashedId('c')).name_word_sequence_edit_distance, null)
+    assert.equal(report.rows.find((row) => row.id === hashedId('c')).name_reference_word_tokens, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('JSONL corpus inventory reports explicit exclusions, coverage and zero/null counts without inferring locale', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ocr-gauntlet-'))
   try {

@@ -57,6 +57,21 @@ function normalizedNameSequence(items) {
   return Array.from(normalizedItems.join('\u241e'))
 }
 
+const NAME_ITEM_BOUNDARY = Symbol('name-item-boundary')
+
+function normalizedNameWordSequence(items, locale) {
+  const segmenter = new Intl.Segmenter(locale, { granularity: 'word' })
+  return items.flatMap((item, index) => {
+    const name = typeof item?.name === 'string'
+      ? item.name.normalize('NFKC').toLocaleLowerCase(locale)
+      : ''
+    const words = [...segmenter.segment(name)]
+      .filter((part) => part.isWordLike)
+      .map((part) => part.segment)
+    return index === 0 ? words : [NAME_ITEM_BOUNDARY, ...words]
+  })
+}
+
 function editDistance(left, right) {
   const a = left
   const b = right
@@ -243,6 +258,8 @@ function aggregateCorrectness(rows) {
   let itemCountDenominator = 0
   let nameEditDistance = 0
   let nameReferenceCharacters = 0
+  let nameWordEditDistance = 0
+  let nameReferenceWordTokens = 0
   let amountEditDistance = 0
   let amountReferenceItems = 0
   let expectedUnknownAmounts = 0
@@ -266,6 +283,8 @@ function aggregateCorrectness(rows) {
       structured_output_unknown: 0,
       name_sequence_edit_distance: 0,
       name_reference_characters: 0,
+      name_word_sequence_edit_distance: 0,
+      name_reference_word_tokens: 0,
       amount_sequence_edit_distance: 0,
       amount_reference_items: 0,
     }
@@ -281,6 +300,12 @@ function aggregateCorrectness(rows) {
       if (row.items_exact) group.item_count_exact += 1
       nameEditDistance += row.name_sequence_edit_distance
       nameReferenceCharacters += row.name_reference_characters
+      if (Number.isSafeInteger(row.name_word_sequence_edit_distance)) {
+        nameWordEditDistance += row.name_word_sequence_edit_distance
+        nameReferenceWordTokens += row.name_reference_word_tokens
+        group.name_word_sequence_edit_distance += row.name_word_sequence_edit_distance
+        group.name_reference_word_tokens += row.name_reference_word_tokens
+      }
       amountEditDistance += row.amount_sequence_edit_distance
       amountReferenceItems += row.amount_reference_items
       expectedUnknownAmounts += row.expected_unknown_amounts
@@ -310,6 +335,8 @@ function aggregateCorrectness(rows) {
     group.item_count_accuracy = group.item_count_denominator
       ? group.item_count_exact / group.item_count_denominator : null
     group.name_cer = group.name_reference_characters ? group.name_sequence_edit_distance / group.name_reference_characters : null
+    group.name_wer = group.name_reference_word_tokens
+      ? group.name_word_sequence_edit_distance / group.name_reference_word_tokens : null
     group.amount_sequence_error_rate = group.amount_reference_items ? group.amount_sequence_edit_distance / group.amount_reference_items : null
   }
 
@@ -321,6 +348,10 @@ function aggregateCorrectness(rows) {
       sequence_edit_distance: nameEditDistance,
       reference_characters: nameReferenceCharacters,
       cer: nameReferenceCharacters ? nameEditDistance / nameReferenceCharacters : null,
+      word_metric: 'locale-aware word error rate over ordered item names tokenized with Intl.Segmenter; NFKC, locale-aware lowercase, item-boundary tokens included in the reference denominator; only explicit valid locale labels are scored',
+      word_sequence_edit_distance: nameWordEditDistance,
+      reference_word_tokens: nameReferenceWordTokens,
+      wer: nameReferenceWordTokens ? nameWordEditDistance / nameReferenceWordTokens : null,
     },
     item_amount_sequence: {
       metric: 'Levenshtein error rate over ordered amount tokens in exact currency minor units; unknown is distinct from printed zero; non-canonical precision is an error; scoring only, never output repair',
@@ -333,7 +364,7 @@ function aggregateCorrectness(rows) {
       returned_zero: returnedZeroAmounts,
     },
     by_locale: Object.fromEntries(Object.entries(localeGroups).sort(([a], [b]) => a.localeCompare(b))),
-    locale_limit: 'Only valid fixture-authored locale labels are used. Unlabeled receipts remain in the unlabeled denominator; currency is not used to infer locale.',
+    locale_limit: 'Only valid fixture-authored locale labels are used for WER. Unlabeled receipts remain in the unlabeled denominator with WER unscored; currency is not used to infer locale.',
     structured_output: {
       valid: structuredValid,
       invalid: structuredInvalid,
@@ -646,6 +677,13 @@ export async function runProviderReplay({
       const actualItemRows = Array.isArray(scanned?.lineItems) ? scanned.lineItems : []
       const expectedNames = normalizedNameSequence(expectedItemRows)
       const actualNames = normalizedNameSequence(actualItemRows)
+      const scoredLocale = explicitLocale(entry.receipt)
+      const expectedNameWords = scoredLocale && Array.isArray(expected?.lineItems)
+        ? normalizedNameWordSequence(expectedItemRows, scoredLocale)
+        : null
+      const actualNameWords = expectedNameWords === null
+        ? []
+        : normalizedNameWordSequence(actualItemRows, scoredLocale)
       const currencyCode = safeCurrency(expected?.currencyCode) || safeCurrency(scanned?.currencyCode)
       const expectedAmountTokens = expectedItemRows.map((item) => amountToken(item?.amount, currencyCode, 'reference'))
       const actualAmountTokens = actualItemRows.map((item) => amountToken(item?.amount, currencyCode, 'returned'))
@@ -660,7 +698,7 @@ export async function runProviderReplay({
         ? result.serviceTierServed
         : null
       const usage = result?.usage && typeof result.usage === 'object' ? result.usage : {}
-      const locale = explicitLocale(entry.receipt) || 'unlabeled'
+      const locale = scoredLocale || 'unlabeled'
       const row = {
         id: reportFixtureId(entry.id),
         ok: result?.ok === true,
@@ -686,6 +724,8 @@ export async function runProviderReplay({
         items_exact: expectedItems !== null && actualItems !== null && actualItems === expectedItems,
         name_sequence_edit_distance: Array.isArray(expected?.lineItems) ? editDistance(expectedNames, actualNames) : 0,
         name_reference_characters: Array.isArray(expected?.lineItems) ? expectedNames.length : 0,
+        name_word_sequence_edit_distance: expectedNameWords === null ? null : editDistance(expectedNameWords, actualNameWords),
+        name_reference_word_tokens: expectedNameWords?.length || 0,
         amount_sequence_edit_distance: Array.isArray(expected?.lineItems) ? editDistance(expectedAmountTokens, actualAmountTokens) : 0,
         amount_reference_items: Array.isArray(expected?.lineItems) ? expectedAmountTokens.length : 0,
         expected_unknown_amounts: expectedItemRows.filter((item) => typeof item?.amount !== 'number' || !Number.isFinite(item.amount)).length,
