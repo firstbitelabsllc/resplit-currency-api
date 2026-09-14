@@ -1,4 +1,11 @@
-# Receipt inference candidate: Astra low and item groups v2
+# Receipt inference candidate: Astra low and item groups v2 (superseded)
+
+The Astra production switch proposed here is superseded by the fresh paired
+matrix and targeted Bánh Anh Em evidence in
+`r311-model-comparison-20260914.md`. Keep the production selection on Z.AI
+`glm-5.3-flash`; the available evidence does not establish an Astra accuracy
+win over GLM. Treat this file as historical candidate evidence, not a rollout
+instruction.
 
 Audience: Leo and the existing Worker operator. Reduce incorrect item splits,
 unreadable names and invented zero prices so Leo does not have to repair scans.
@@ -91,9 +98,10 @@ alone does not measure failure waits or successful LLM extraction frequency.
 
 ## Activation and remaining acceptance
 
-Production variables, secrets and provider selection are unchanged in this
-candidate. Keep this branch off `origin/main` until activation is authorized:
-the existing scheduled publish can deploy merged Worker changes.
+Production variables, secrets and provider selection were unchanged in this
+historical candidate. Do not merge it as an Astra activation: the existing
+scheduled publish can deploy merged Worker changes. The active configuration
+and release decision are in `r311-model-comparison-20260914.md`.
 
 An activation revision must combine this source with the already prepared
 zero-Azure-grace change `b281bee7e1770988fef05b9e5c478243cb48a324` from

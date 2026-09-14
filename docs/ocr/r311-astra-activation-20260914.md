@@ -1,10 +1,18 @@
-# Astra receipt inference: exact activation review
+# Astra receipt inference: superseded activation review
 
-Status: local activation revision tested; no merge, key write or deployment.
+Superseded on 2026-09-14 by the fresh paired Astra standard/Fast matrix and
+the targeted Bánh Anh Em replay in `r311-model-comparison-20260914.md`.
+Decision: keep production on Z.AI `glm-5.3-flash`; the evidence did not show a
+clear net accuracy win for Astra, and the comparable general Z.AI corpus replay
+is blocked by its last observed insufficient-balance response. Do not execute
+the historical activation steps below. There was no merge, key write or
+deployment.
+
+Status: historical local activation revision tested; not merged or deployed.
 Audience: Leo and the existing Worker operator. Owning rows: `~r311` for
 receipt correctness, `~sc08` for the production rollout boundary.
 
-## Change to approve
+## Historical proposed change (superseded; do not apply)
 
 Destination: existing root Worker `resplit-fx`, serving https://fx.resplit.app.
 Approve reuse of the existing OpenAI API credential used for the receipt trials
@@ -59,7 +67,7 @@ environment; its value was not printed. Deployment listing still assigns
 100% to version `7d0ecd12-da24-4de0-bf3b-8e9bbe3ce189`, created August 29.
 Refresh this identity and the exact source/configuration before activation.
 
-## Activation after approval
+## Historical activation steps (do not execute)
 
 1. Refresh `origin/main`, source diff and current deployment. Preserve the
    reviewed Worker inputs when landing without force; re-run affected checks

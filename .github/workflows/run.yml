@@ -195,7 +195,7 @@ jobs:
             echo "::error::Unable to inspect deployed Worker secret continuity."
             exit 1
           fi
-          printf "%s" "$deployed_worker_secrets" | node scripts/worker-secret-continuity.js AZURE_OCR_KEY ANTHROPIC_API_KEY OPENAI_API_KEY
+          printf "%s" "$deployed_worker_secrets" | node scripts/worker-secret-continuity.js AZURE_OCR_KEY ANTHROPIC_API_KEY ZAI_API_KEY
 
       - name: Deploy to Cloudflare Pages
         id: deploy_cloudflare

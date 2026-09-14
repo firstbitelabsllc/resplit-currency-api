@@ -2,7 +2,11 @@
 
 ## Decision
 
-Keep the current production provider. Standard Astra and Fast Astra are close on correctness, and neither earns a production switch on this evidence. Fast reduced measured API scan latency by 22.9% at p50 and 13.6% at p95, for about 2.08× the estimated token cost. Standard had one more exact receipt total; Fast had one more exact item count. The paired results do not show a clear accuracy winner.
+Keep the current production selection: Z.AI `glm-5.3-flash`. Standard Astra and Fast Astra are close on correctness, and neither earns a production switch on this evidence. The fresh paired matrix did not complete a comparable GLM run because the general Z.AI API returned HTTP 429 / business code 1113 for insufficient account balance. That means Astra has not demonstrated a net accuracy win over GLM; this is a conservative no-switch decision, not a claim that GLM won the corpus comparison.
+
+Within Astra, Fast reduced measured API scan latency by 22.9% at p50 and 13.6% at p95, for about 2.08× the estimated token cost. Standard had one more exact receipt total; Fast had one more exact item count. The paired results do not show a clear accuracy winner.
+
+The selected Z.AI route requires `ZAI_API_KEY`; the source secret declaration and remote continuity gate now require it alongside Azure and the retained Anthropic fallback. A read-only `wrangler secret list --config wrangler.jsonc --env=""` on 2026-09-14 showed the deployed root Worker has a `ZAI_API_KEY` secret entry (name/type only; its value was not read). This does not prove the deployed provider/model configuration matches the reviewed source, and no deployment or secret write was performed for this comparison.
 
 Fast is a service tier on the same `gpt-6-astra` model, not a separate “Astra Light” model. The API returned the requested `default` and `fast` tiers for all 77 provider-started calls in this run. The fast-tier cost premium is real; its latency benefit here is materially smaller than 2×. Keep it available for measured, latency-sensitive experiments, but leave production configuration unchanged.
 
@@ -10,7 +14,7 @@ No output repair was added. The scorer compares ordered item-name and amount seq
 
 ## Corpus and run binding
 
-The canonical manifest contains 98 fixture records. The shared checkout has image bytes for 85; 13 image-less/private fixtures were excluded. The Bánh Anh Em receipt Leo identified is absent from the manifest, so this run cannot establish what that receipt printed. The available fixtures have no reviewed locale labels.
+The canonical manifest contains 98 fixture records. The shared checkout has image bytes for 85; 13 image-less/private fixtures were excluded. The Bánh Anh Em receipt Leo identified is absent from this manifest, but it has separate targeted image and model-output evidence below. The available fixtures have no reviewed locale labels.
 
 The 85-image ground truth contains 530 line items (528 names present, 2 missing), two missing or unreadable amounts, and 19 printed-zero amounts. Currency labels cover USD 50, MYR 22, AUD 6, EUR 3, AED 3, and SGD 1; these do not establish spoken or written locale.
 
@@ -19,6 +23,14 @@ This result comes from the fresh paired matrix at `/Users/leokwan/.shadow/plans/
 Each of the 85 eligible images was read once and its same bytes were offered to both cases. Provider order rotated by fixture. Three fixture workers ran concurrently, while each fixture’s two provider calls ran sequentially. The matrix reports `same_prompt=true` and `case_order=rotating`.
 
 Eight of the 85 images were rejected before either model call: seven exceeded the Worker dimension limit and one exceeded the byte limit. These are not model failures. The remaining 77 fixtures reached both providers. Both tiers completed all 77 calls, and every completed response passed the shared structured-output schema. The eight rejected images still need a separate replay through the canonical iOS preprocessing path before they can be counted as actual user-facing failures or included in an end-to-end quality decision.
+
+## Targeted Bánh Anh Em receipt evidence
+
+This receipt is not in the 98-record manifest, so these calls are a separate diagnostic and are not included in the 77-fixture matrix. The exact source JPEG is retained at `/Users/leokwan/lab/proofs/r317-azure-before-20260912-2306/http/0000/request-body.jpeg` (SHA-256 `187b30d6dd0cc50b024e1bb2a737418db186c9b23282ec28cdc967691474397c`). Visual review shows ten purchased item groups, each with a printed nonzero amount; the receipt prints subtotal $233.33 and final total $304.85. There is no printed `$0.00` item.
+
+Four focused calls used that source image and the same clarified prompt hash (`6c575bbc398246824b3c0a57ac686a687dbb6182a0e80fa3db50f02719997822`): two Z.AI GLM 5.3 Flash calls at 1280px and two GPT-6 Astra standard calls at 1568px. All four recorded 10 items, zero missing prices, zero zero-priced items, exact ordered amounts and quantities, and exact receipt summaries. Full-response network latency was 6.302s and 6.645s for GLM, and 7.255s and 7.096s for Astra. Runner latency including image preparation and validation was 6.863s and 7.215s for GLM, and 7.860s and 7.700s for Astra. The provider image derivatives use different configured edge sizes, so this is not an identical-pixels model-only test. The focused prompt explicitly says a missing price is never zero and must remain `null` when unreadable.
+
+This confirms that the photo itself and these focused structured model responses do not explain the reported zero-priced rows. It does not establish which result the historical native scan selected or what the saved app receipt contained. Current iOS source also has a separate nil-to-zero conversion via `amount.valueToUse`; preserve the original scan response and saved receipt when diagnosing that app path. No post-inference name/amount repair was used in these calls or in the matrix.
 
 ## Paired results
 
@@ -64,7 +76,7 @@ Cost is a usage-based estimate from recorded token counts and the checked-in Ast
 
 ## What remains unresolved
 
-- The exact Bánh Anh Em receipt is absent from the canonical corpus, so its reported `$0.00` items cannot be checked against its image here.
+- The Bánh Anh Em photo and four focused v2 model runs show ten priced items and no zero-priced outputs, but its exact historical app response and saved receipt have not been recovered into the current corpus.
 - The 8 pre-provider rejects need the canonical iOS preprocessing path applied before a full image-set provider comparison.
 - No fixture has a reviewed locale label. The locale WER-equivalent is implemented but cannot score this corpus yet.
 - The general Z.AI API comparison remains blocked by its last observed HTTP 429 / business code 1113 balance error. The Coding Plan route is not a comparable general-API baseline. Do not retry until a real key or balance change is observed.

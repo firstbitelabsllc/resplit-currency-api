@@ -5,7 +5,7 @@ const path = require('node:path')
 
 const scriptPath = path.join(__dirname, '..', 'scripts', 'worker-secret-continuity.js')
 
-const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']
+const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY']
 
 test('continuity check accepts all required deployed Worker secrets by exact name and type', () => {
   const result = spawnSync(process.execPath, [scriptPath, ...requiredOcrSecrets], {
@@ -13,7 +13,7 @@ test('continuity check accepts all required deployed Worker secrets by exact nam
       { name: 'SENTRY_DSN', type: 'secret_text' },
       { name: 'AZURE_OCR_KEY', type: 'secret_text' },
       { name: 'ANTHROPIC_API_KEY', type: 'secret_text', value: 'must-not-be-logged' },
-      { name: 'OPENAI_API_KEY', type: 'secret_text', value: 'must-not-be-logged' },
+      { name: 'ZAI_API_KEY', type: 'secret_text', value: 'must-not-be-logged' },
     ]),
     encoding: 'utf8',
   })
@@ -21,20 +21,20 @@ test('continuity check accepts all required deployed Worker secrets by exact nam
   assert.equal(result.status, 0)
   assert.match(
     result.stdout,
-    /continuity preserved: AZURE_OCR_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY exist on the deployed Worker/
+    /continuity preserved: AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY exist on the deployed Worker/
   )
   assert.doesNotMatch(result.stdout, /secret_text/)
   assert.doesNotMatch(result.stdout, /SENTRY_DSN|must-not-be-logged/)
 })
 
-test('continuity check fails closed when a required deployed secret is absent or mistyped', () => {
+test('continuity check fails closed when any required deployed secret is absent or mistyped', () => {
   for (const { entries, missing } of [
     {
       entries: [
         { name: 'AZURE_OCR_KEY', type: 'secret_text' },
         { name: 'ANTHROPIC_API_KEY', type: 'secret_text' },
       ],
-      missing: 'OPENAI_API_KEY',
+      missing: 'ZAI_API_KEY',
     },
     {
       entries: [{ name: 'ANTHROPIC_API_KEY', type: 'secret_text' }],
@@ -50,6 +50,14 @@ test('continuity check fails closed when a required deployed secret is absent or
         { name: 'ANTHROPIC_API_KEY', type: 'plain_text' },
       ],
       missing: 'ANTHROPIC_API_KEY',
+    },
+    {
+      entries: [
+        { name: 'AZURE_OCR_KEY', type: 'secret_text' },
+        { name: 'ANTHROPIC_API_KEY', type: 'secret_text' },
+        { name: 'ZAI_API_KEY', type: 'plain_text' },
+      ],
+      missing: 'ZAI_API_KEY',
     },
   ]) {
     const result = spawnSync(process.execPath, [scriptPath, ...requiredOcrSecrets], {

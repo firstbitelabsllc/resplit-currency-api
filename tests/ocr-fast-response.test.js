@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import cockpit from '../scripts/reliability-cockpit.js'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 
-const wrangler = JSON.parse(cockpit.stripJsonComments(
-  readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8'),
-))
+const experimentalZeroGraceAstraConfig = {
+  LLM_SCAN_AZURE_GRACE_MS: '0',
+  LLM_SCAN_PROVIDER: 'openai',
+  LLM_SCAN_MODEL: 'gpt-6-astra',
+  LLM_SCAN_MAX_EDGE: '1568',
+  OPENAI_API_KEY: 'openai-test-key',
+}
 
 const realFetch = globalThis.fetch
 const realConsole = {
@@ -338,36 +340,16 @@ test('OCR does not release early when Azure fails, even if the grace timer expir
   assert.deepEqual(ctx.tasks, [])
 })
 
-test('both production configurations disable premature Azure release', () => {
-  for (const vars of [wrangler.vars, wrangler.env.production.vars]) {
-    assert.equal(vars.LLM_SCAN_AZURE_GRACE_MS, '0')
-    assert.equal(vars.LLM_SCAN_PROVIDER, 'openai')
-    assert.equal(vars.LLM_SCAN_MODEL, 'gpt-6-astra')
-    assert.equal(vars.LLM_SCAN_MAX_EDGE, '1568')
-  }
-})
-
-for (const [route, vars] of [
-  ['/ocr/dual-scan', wrangler.vars],
-  ['/ocr/analyze', wrangler.env.production.vars],
-]) {
+for (const route of ['/ocr/dual-scan', '/ocr/analyze']) {
   for (const outcome of ['success', 'failure']) {
-    test(`${route} keeps the caller until the delayed production LLM ${outcome}`, async (t) => {
-      assert.equal(vars.LLM_SCAN_AZURE_GRACE_MS, '0')
+    test(`${route} keeps the caller until the delayed zero-grace Astra LLM ${outcome}`, async (t) => {
       const llm = deferred()
       t.after(() => llm.resolve())
       const azureReady = deferred()
       const calls = stubProviders({ llm, azureReady })
       const accounting = makeAccountingBinding()
       const ctx = makeCtx()
-      const env = makeEnv(accounting, {
-        LLM_SCAN_AZURE_GRACE_MS: vars.LLM_SCAN_AZURE_GRACE_MS,
-        LLM_SCAN_PROVIDER: vars.LLM_SCAN_PROVIDER,
-        LLM_SCAN_MODEL: vars.LLM_SCAN_MODEL,
-        LLM_SCAN_BASE_URL: vars.LLM_SCAN_BASE_URL,
-        LLM_SCAN_MAX_EDGE: vars.LLM_SCAN_MAX_EDGE,
-        OPENAI_API_KEY: 'openai-test-key',
-      })
+      const env = makeEnv(accounting, experimentalZeroGraceAstraConfig)
       const pending = handleOcr(scanRequest(jpegWithDimensions(814, 614), route), env, ctx)
       let settled = false
       void pending.then(() => { settled = true })
