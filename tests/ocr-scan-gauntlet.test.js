@@ -71,6 +71,8 @@ test('provider replay carries the provider env and measures failed attempts with
     assert.equal(report.items_exact, 2)
     assert.equal(seen.length, 3)
     assert.equal(seen.every((s) => s.provider === 'zai' && s.contentType === 'image/jpeg'), true)
+    const oneCentMismatch = report.rows.find((row) => row.id === hashedId('b'))
+    assert.equal(oneCentMismatch.total_exact, false)
     const c = report.rows.find((row) => row.id === hashedId('c'))
     assert.equal(c.failure_code, 'provider_error')
     assert.equal(c.total_exact, false)
