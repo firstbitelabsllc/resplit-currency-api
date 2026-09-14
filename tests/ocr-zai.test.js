@@ -226,7 +226,8 @@ test('a transport timeout is a data-shaped provider_error with providerStarted t
   const res = await pending
   assert.equal(res.ok, false)
   assert.equal(res.httpStatus, 502)
-  assert.equal(res.errorBody, 'timeout')
+  assert.equal(res.errorBody, null)
+  assert.equal(res.failureCode, 'transport_timeout')
   assert.equal(res.providerStarted, true)
 })
 
