@@ -390,8 +390,8 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   // the key is route-agnostic: dual-scan and analyze share one scan for the same
   // image+gate+model (the Azure+Anthropic work is byte-identical; only presentation
   // differs). The `v2core` token stops a read from parsing a pre-deploy v1-envelope
-  // cache entry as an internal result. llmCacheVariant() is empty for the default
-  // provider/edge configuration and namespaces any flip.
+  // cache entry as an internal result. llmCacheVariant() isolates the selected
+  // provider, image edge and prompt revision.
   const cacheKey = `cache:dualScan:v2core:${imageHash}:${llmGate.cacheKey}:${model}${llmCacheVariant(env)}`
   const cached = await env.ATTEST_KV.get(cacheKey)
   if (cached) {

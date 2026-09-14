@@ -51,7 +51,15 @@ const REQUIRED_RECEIPT_KEYS = [
 
 export const LLM_PROVIDER = 'anthropic'
 
-export const RECEIPT_SYSTEM_PROMPT = 'You are a precise receipt-extraction engine. Read the receipt image and emit the receipt via the emit_receipt tool with EXACTLY its schema. All amounts are JSON numbers. Comma-decimal 12,50 means 12.50. Strip thousands separators (1.234,50 -> 1234.50 and 4,500 -> 4500). No-decimal currencies (JPY/KRW) stay integers. currencyCode is ISO-4217. Put every tax/tip/service-charge/mandate/discount line into extras with the correct kind (an included service charge is serviceCharge, not tip). Negative line items like coupons stay in lineItems with negative amounts. LINE-ITEM GRANULARITY: emit EXACTLY one lineItems entry per printed product line on the receipt — never merge two printed lines into one, and never split one printed line into several. A line printed as "N x unit_price" (or "N @ price") is ONE entry: quantity=N and amount = the line total for that row. Do not create extra entries for quantity multipliers, size/modifier sub-lines, or blank rows. Match the printed line count of purchased items.'
+export const RECEIPT_PROMPT_REVISION = 'item-groups-v2'
+export const RECEIPT_SYSTEM_PROMPT = `You are a precise receipt-extraction engine. Read the receipt image and emit the receipt via the emit_receipt tool with EXACTLY its schema.
+Extract only what the image supports. Preserve the printed language, spelling and diacritics; do not translate or replace unfamiliar product names. Printed bilingual descriptions belong together.
+LINE-ITEM GRANULARITY: return one entry per purchased item group, not per physical text line. A product description may wrap across lines and include a translation, size or modifier. Keep those details in that item's name. Do not make separate items for continuation text, quantity/unit-price lines, headings or blank lines. Keep distinct purchased items separate, including repeated items that the receipt lists separately.
+Use each item's printed line total as amount and its printed item count as quantity. For a grouped quantity such as N x unit_price, return one entry with quantity N and the printed line total, not N entries or the unit price as amount. Do not assume a leading product/menu number is a quantity.
+Amounts must be JSON numbers when readable, or null where the schema permits when missing or unreadable. A printed zero is 0; a missing price is never 0. If a purchased item is clearly present but its amount cannot be read, retain it with amount null. Do not invent amounts or items to make totals balance.
+Comma-decimal 12,50 means 12.50. Strip thousands separators (1.234,50 -> 1234.50 and 4,500 -> 4500). No-decimal currencies (JPY/KRW) stay integers. currencyCode is ISO-4217.
+Record each charge or discount exactly once. Receipt-level tax, tip, service charge, fees, mandates, rounding and discounts belong only in extras with the correct kind (an included service charge is serviceCharge, not tip). A separately itemized negative product or product-specific coupon may remain a negative line item; do not also repeat it in extras. A discount already reflected in a printed line total must not be subtracted from that line total again. Preserve genuine printed zero-price promotional items. Keep subtotal, total, tender and change separate from purchased items. Check the complete image once more for missed items, wrapped descriptions, quantities and amount-column alignment before returning the JSON.
+Read handwritten tips and final totals when legible. total is the final payable receipt amount after any explicitly printed rounding or clearly written tip, not an earlier pre-tip total or a tender/change amount. Keep the printed subtotal in subtotal. If a final amount or handwritten figure is unclear, return null for that field instead of guessing or inventing a balancing adjustment.`
 
 class AnthropicConfigError extends Error {
   constructor(message) {
@@ -140,6 +148,22 @@ export const receiptSchema = {
     'total',
     'extras',
   ],
+}
+
+// JSON transports use the same schema and extraction instructions as the tool
+// transport. Keep the response contract in one place when adding a provider.
+export const RECEIPT_JSON_SYSTEM_PROMPT = RECEIPT_SYSTEM_PROMPT.replace(
+  'emit the receipt via the emit_receipt tool with EXACTLY its schema.',
+  `emit ONLY a JSON object with exactly the emit_receipt schema keys (${describeReceiptSchema(receiptSchema)}). Every key is required; use null where allowed. No prose, no code fence.`,
+)
+
+function describeReceiptSchema(schema) {
+  const field = (name, s) => {
+    if (s.enum) return `${name}: one of ${s.enum.join('|')}`
+    if (s.type === 'array') return `${name}: array of {${Object.entries(s.items.properties).map(([n, p]) => field(n, p)).join(', ')}}`
+    return `${name}: ${Array.isArray(s.type) ? s.type.join('|') : s.type}`
+  }
+  return Object.entries(schema.properties).map(([name, s]) => field(name, s)).join('; ')
 }
 
 export function bytesToBase64(imageBytes) {

@@ -108,6 +108,10 @@ function stubProviders({ azure = azureRaw(), scanned = scannedReceipt() } = {}) 
         choices: [{ index: 0, message: { role: 'assistant', content: '```json\n' + JSON.stringify(scanned) + '\n```' }, finish_reason: 'stop' }],
       }, { status: 200 })
     }
+    if (u === 'https://api.openai.com/v1/responses') {
+      calls.openai = (calls.openai || 0) + 1
+      return Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(scanned) }] }] })
+    }
     if (init.method === 'POST' && u.includes(':analyze')) {
       calls.azureSubmit++
       calls.azureBody = new Uint8Array(init.body)
@@ -285,11 +289,12 @@ test('provider=zai without ZAI_API_KEY fails closed to provider_unavailable befo
 
 test('an unknown LLM_SCAN_PROVIDER fails closed to provider_unavailable', async () => {
   stubProviders()
-  const env = makeEnv({ LLM_SCAN_PROVIDER: 'openai', ANTHROPIC_API_KEY: 'a', ZAI_API_KEY: 'z' })
+  const env = makeEnv({ LLM_SCAN_PROVIDER: 'unsupported-test-provider', ANTHROPIC_API_KEY: 'a', ZAI_API_KEY: 'z', OPENAI_API_KEY: 'o' })
   const res = await handleOcr(analyzeRequest(jpegWithDimensions(800, 600)), env)
   const body = await res.json()
   assert.equal(body.engines.find((e) => e.id === 'llm').status, 'provider_unavailable')
   assert.equal(calls.zai + calls.anthropic, 0)
+  assert.equal(calls.openai || 0, 0)
 })
 
 test('a Z.AI transport failure is a data-shaped provider_error and Azure still succeeds', async () => {
@@ -310,16 +315,48 @@ test('a Z.AI transport failure is a data-shaped provider_error and Azure still s
   assert.equal(calls.zai, 1)
 })
 
-test('the shared cache key is unchanged for the default provider and distinct once the seam is flipped', async () => {
+test('the shared cache key isolates provider, image edge and prompt revision', async () => {
   stubProviders()
   const image = jpegWithDimensions(800, 600, 3)
   const anthropic = makeEnv({ ANTHROPIC_API_KEY: 'a', LLM_SCAN_MODEL: 'claude-sonnet-5' })
   await handleOcr(analyzeRequest(image), anthropic)
   const legacyKey = [...anthropic.ATTEST_KV.store.keys()].find((k) => k.startsWith('cache:dualScan:v2core:'))
-  assert.match(legacyKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:claude-sonnet-5$/)
+  assert.match(legacyKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:claude-sonnet-5:anthropic:0:item-groups-v2$/)
 
   const zai = makeEnv({ LLM_SCAN_PROVIDER: 'zai', ZAI_API_KEY: 'z', LLM_SCAN_MODEL: 'glm-5.3-flash', LLM_SCAN_MAX_EDGE: '1600' })
   await handleOcr(analyzeRequest(image), zai)
   const zaiKey = [...zai.ATTEST_KV.store.keys()].find((k) => k.startsWith('cache:dualScan:v2core:'))
-  assert.match(zaiKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:glm-5\.3-flash:zai:1600$/)
+  assert.match(zaiKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:glm-5\.3-flash:zai:1600:item-groups-v2$/)
+})
+
+test('OpenAI uses only its own key and returns through the unchanged analyze envelope and cache', async () => {
+  assert.equal(llmProviderConfigured({ LLM_SCAN_PROVIDER: 'openai', OPENAI_API_KEY: 'o' }), true)
+  assert.equal(llmModel({ LLM_SCAN_PROVIDER: 'openai' }), 'gpt-6-astra')
+  const env = makeEnv({ LLM_SCAN_PROVIDER: 'openai', OPENAI_API_KEY: 'o', LLM_SCAN_AZURE_GRACE_MS: '0' })
+  stubProviders()
+  const image = jpegWithDimensions(800, 600, 4)
+  const result = await (await handleOcr(analyzeRequest(image), env)).json()
+  assert.equal(result.v, 2)
+  const llm = result.engines.find(e=>e.kind==='vision-llm')
+  assert.equal(llm.provider, 'openai')
+  assert.equal(llm.model, 'gpt-6-astra')
+  assert.equal(llm.status, 'succeeded')
+  assert.deepEqual(llm.scanned, scannedReceipt())
+  await handleOcr(analyzeRequest(image), env)
+  assert.equal(calls.openai, 1)
+  assert.equal(calls.zai, 0)
+  assert.equal(calls.anthropic, 0)
+})
+
+test('a receipt cached under the old prompt cannot satisfy a new-prompt scan', async () => {
+  const env = makeEnv({ LLM_SCAN_PROVIDER: 'zai', ZAI_API_KEY: 'z' })
+  const image = jpegWithDimensions(800, 600, 5)
+  stubProviders()
+  await handleOcr(analyzeRequest(image), env)
+  const key = [...env.ATTEST_KV.store.keys()].find(k=>k.startsWith('cache:dualScan:v2core:'))
+  const legacyKey = key.replace(':item-groups-v2', '')
+  env.ATTEST_KV.store.set(legacyKey, env.ATTEST_KV.store.get(key))
+  if (key !== legacyKey) env.ATTEST_KV.store.delete(key)
+  await handleOcr(analyzeRequest(image), env)
+  assert.equal(calls.zai, 2, 'old prompt receipt must not mask the new inference')
 })

@@ -6,10 +6,9 @@
 // when LLM_SCAN_PROVIDER=zai; the default Anthropic path is untouched.
 
 import {
-  RECEIPT_SYSTEM_PROMPT,
+  RECEIPT_JSON_SYSTEM_PROMPT,
   LLM_FETCH_TIMEOUT_MS,
   LLM_MAX_TOKENS,
-  receiptSchema,
   receiptShapeViolation,
   prepareLlmImage,
   llmMaxEdge,
@@ -47,22 +46,7 @@ function zaiTargetMaxEdge(env) {
   return llmMaxEdge(env) || DEFAULT_TARGET_MAX_EDGE
 }
 
-// GLM has no strict tool schema, so the prompt spells out the emit_receipt keys
-// verbatim from receiptSchema (the same object Anthropic receives as input_schema).
-function describeSchema(schema) {
-  const type = (s) => (Array.isArray(s.type) ? s.type.join('|') : s.type)
-  const field = (name, s) => {
-    if (s.enum) return `${name}: one of ${s.enum.join('|')}`
-    if (s.type === 'array') return `${name}: array of {${Object.entries(s.items.properties).map(([n, p]) => field(n, p)).join(', ')}}`
-    return `${name}: ${type(s)}`
-  }
-  return Object.entries(schema.properties).map(([name, s]) => field(name, s)).join('; ')
-}
-
-const TOOL_INSTRUCTION = 'emit the receipt via the emit_receipt tool with EXACTLY its schema.'
-const JSON_INSTRUCTION = `emit ONLY a JSON object with exactly the emit_receipt schema keys (${describeSchema(receiptSchema)}). Every key is required; use null where allowed. No prose, no code fence.`
-
-export const ZAI_RECEIPT_SYSTEM_PROMPT = RECEIPT_SYSTEM_PROMPT.replace(TOOL_INSTRUCTION, JSON_INSTRUCTION)
+export const ZAI_RECEIPT_SYSTEM_PROMPT = RECEIPT_JSON_SYSTEM_PROMPT
 
 /**
  * Pull the first JSON object out of a chat completion's text: strips ```json

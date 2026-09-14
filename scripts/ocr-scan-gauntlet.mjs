@@ -2,8 +2,8 @@
 // Replay the 16-receipt ground-truth set through the worker's LLM provider seam
 // (no Worker, no Azure) and print latency p50/p95 plus total-exact / item-count
 // parity. The provider dimension is the same env the Worker reads
-// (LLM_SCAN_PROVIDER anthropic|zai, LLM_SCAN_MODEL, LLM_SCAN_BASE_URL,
-// LLM_SCAN_MAX_EDGE, ANTHROPIC_API_KEY / ZAI_API_KEY), so the parity run repeats
+// (LLM_SCAN_PROVIDER anthropic|zai|openai, LLM_SCAN_MODEL, LLM_SCAN_BASE_URL,
+// LLM_SCAN_MAX_EDGE, ANTHROPIC_API_KEY / ZAI_API_KEY / OPENAI_API_KEY), so the parity run repeats
 // for either provider by changing only env. Latency includes the Photon
 // scale-down, the same accounting as llm_ms in production.
 //
@@ -88,6 +88,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     LLM_SCAN_MAX_EDGE: process.env.LLM_SCAN_MAX_EDGE,
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     ZAI_API_KEY: process.env.ZAI_API_KEY,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   }
   const concurrency = Math.max(1, parseInt(process.env.OCR_GAUNTLET_CONCURRENCY || '3', 10) || 3)
   console.error(`provider=${llmProvider(env)} model=${llmModel(env)} maxEdge=${llmMaxEdge(env) || 'transport default'} concurrency=${concurrency}`)
