@@ -31,14 +31,14 @@ The operational row counts below treat a provider timeout as a failed receipt re
 | Exact item count | 68 / 77 (88.31%) | 68 / 77 (88.31%) |
 | Ordered item-name CER | 29.47% (2,653 edits / 9,003 reference characters) | 27.96% (2,517 / 9,003) |
 | Ordered amount-sequence error | 47 / 484 (9.71%) | 42 / 484 (8.68%) |
-| Provider-call latency p50 | 10,177 ms | 5,342 ms |
-| Provider-call latency p95 | 21,035 ms | 9,212 ms |
-| Provider-call latency max | 60,632 ms | 11,607 ms |
+| OCR-leg latency p50 | 10,177 ms | 5,342 ms |
+| OCR-leg latency p95 | 21,035 ms | 9,212 ms |
+| OCR-leg latency max | 60,632 ms | 11,607 ms |
 | Estimated usage cost | $3.43 | $7.17 |
 
 Among the 76 receipts where **both** tiers returned a valid result, standard was slightly more accurate: exact totals 73/76 versus 72/76; exact item counts 68/76 versus 67/76; name CER 28.14% versus 28.48%; amount-sequence error 8.58% versus 8.79%. The differences are small and do not establish a stable quality gap. Fast had one more completed response overall and no provider timeout.
 
-Fast reduced the observed median provider-call latency by 47.5% and p95 by 56.2%. Standard's maximum includes one timeout at the shared 60-second provider limit. Fixture reads were shared between the cases (median 3.3 ms, p95 19.4 ms, maximum 1,024 ms); these timing figures exclude that local read from provider latency. The run does not claim full native-app scan latency.
+Fast reduced the observed median OCR-leg latency by 47.5% and p95 by 56.2%. Standard's maximum includes one timeout at the shared 60-second provider limit. Fixture reads were shared between the cases (median 3.3 ms, p95 19.4 ms, maximum 1,024 ms); these timing figures exclude that local read from OCR-leg latency. The run does not claim full native-app scan latency.
 
 The model-call cohort has one expected unknown amount and 19 expected printed zeros. Standard's successful outputs returned 0 unknowns and 13 zero amounts over 16 expected zeros. Fast returned 0 unknowns and 16 zero amounts over 19 expected zeros. Since the ordered sequence score does not provide item-level name-to-price alignment, these counts do not say which individual item was misread. Both tiers missed the expected unknown amount in their successful outputs.
 
