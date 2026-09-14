@@ -35,6 +35,7 @@ Correctness uses the same 77 provider-started fixtures per tier. Totals and item
 | API scan-leg p50 | 7,627 ms | 5,880 ms | Fast 22.9% lower |
 | API scan-leg p95 | 14,074 ms | 12,158 ms | Fast 13.6% lower |
 | API scan-leg max | 17,023 ms | 12,402 ms | Fast 27.1% lower |
+| Post-read runner wall, all 85 attempts, p50 / p95 / max | 7,402 / 13,957 / 17,024 ms | 5,791 / 10,858 / 12,402 ms | Includes pre-provider rejects; excludes the shared image read |
 | Estimated usage cost | $3.45 | $7.18 | Fast 2.08×; estimated combined total $10.63 |
 
 The CER is Levenshtein character error over ordered item names after Unicode normalization, case folding, whitespace normalization, and explicit item boundaries. The amount score is Levenshtein error over ordered currency-minor-unit tokens; unknown and printed zero are distinct. It does not assert a name-to-price pairing.
@@ -57,7 +58,7 @@ The shared prompt already states that a printed zero is `0`, a missing or unread
 
 ## Latency and cost scope
 
-`API scan-leg` p50/p95/max is measured after the shared image bytes are available and includes all 77 provider-started calls. There were no failed provider calls in this run. The eight pre-provider rejections took 0–1 ms and are reported separately, not folded into model latency. Shared local fixture-read p50/p95/max was 3.39/6.78/1,019.61 ms. This run does not measure the iOS image-preprocessing, upload, or full native-app save/reopen latency.
+`API scan-leg` p50/p95/max is measured after the shared image bytes are available and includes all 77 provider-started calls. There were no failed provider calls in this run. The separate post-read runner-wall row includes all 85 attempts, including the eight 0–1 ms pre-provider rejections; it excludes the one shared fixture read per image. Shared local fixture-read p50/p95/max was 3.39/6.78/1,019.61 ms. None of these is full native-app latency: this run does not measure the iOS image-preprocessing, upload, or saved-receipt reopen.
 
 Cost is a usage-based estimate from recorded token counts and the checked-in Astra rates, not a billing receipt. The current [GPT-6 Astra API pricing](https://developers.openai.com/api/docs/models/gpt-6-astra) lists $10 per million input tokens, $1 cached input, and $50 output, with Fast priced at 2× applicable rates. Observed cost is therefore about $3.45 standard and $7.18 fast for this corpus; amounts can vary with image detail, output tokens, caching, and later rate changes.
 
