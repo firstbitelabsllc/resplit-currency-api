@@ -11,7 +11,7 @@ const publishGuard =
   `(${continueGuard}) && steps.publish_needed.outputs.publish_required == 'true'`
 const workerReleaseGuard =
   `(${continueGuard}) && steps.worker_release_needed.outputs.worker_release_required == 'true'`
-const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
+const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']
 const rootWorkerSecretWrites = [
   'printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc --env=""',
   'printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc --env=""',
@@ -188,6 +188,7 @@ test('required OCR secret gate rejects omission, substitution, and order mutatio
     `node scripts/worker-secret-continuity.js ${requiredOcrSecrets.join(' ')}`
   const mutations = [
     exactCommand.replace(' ANTHROPIC_API_KEY', ''),
+    exactCommand.replace(' OPENAI_API_KEY', ''),
     exactCommand.replace('ANTHROPIC_API_KEY', 'ANTHROPIC_API_TOKEN'),
     'node scripts/worker-secret-continuity.js ANTHROPIC_API_KEY AZURE_OCR_KEY',
   ]
@@ -197,7 +198,7 @@ test('required OCR secret gate rejects omission, substitution, and order mutatio
     assert.notEqual(mutatedWorkflow, workflow, 'mutation must alter the workflow fixture')
     assert.throws(
       () => assertRequiredOcrSecretGate(mutatedWorkflow),
-      /must verify exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY in that order/
+      /must verify exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY in that order/
     )
   }
 })

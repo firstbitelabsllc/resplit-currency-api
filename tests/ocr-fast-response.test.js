@@ -164,7 +164,7 @@ function deferred() {
 }
 
 function stubProviders({ azure = azureReceipt(), azureStatus = 202, llm, azureReady } = {}) {
-  const calls = { azureSubmit: 0, azurePoll: 0, anthropic: 0, zai: 0 }
+  const calls = { azureSubmit: 0, azurePoll: 0, anthropic: 0, zai: 0, openai: 0 }
   globalThis.fetch = async (url, init = {}) => {
     const target = String(url)
     if (target === 'https://api.anthropic.com/v1/messages') {
@@ -175,6 +175,13 @@ function stubProviders({ azure = azureReceipt(), azureStatus = 202, llm, azureRe
       calls.zai += 1
       return llm.promise.then(() => Response.json({
         choices: [{ message: { content: JSON.stringify(scannedReceipt()) }, finish_reason: 'stop' }],
+      }))
+    }
+    if (target === 'https://api.openai.com/v1/responses') {
+      calls.openai += 1
+      return llm.promise.then(() => Response.json({
+        status: 'completed',
+        output: [{ content: [{ type: 'output_text', text: JSON.stringify(scannedReceipt()) }] }],
       }))
     }
     if (init.method === 'POST' && target.includes(':analyze')) {
@@ -334,6 +341,9 @@ test('OCR does not release early when Azure fails, even if the grace timer expir
 test('both production configurations disable premature Azure release', () => {
   for (const vars of [wrangler.vars, wrangler.env.production.vars]) {
     assert.equal(vars.LLM_SCAN_AZURE_GRACE_MS, '0')
+    assert.equal(vars.LLM_SCAN_PROVIDER, 'openai')
+    assert.equal(vars.LLM_SCAN_MODEL, 'gpt-6-astra')
+    assert.equal(vars.LLM_SCAN_MAX_EDGE, '1568')
   }
 })
 
@@ -356,7 +366,7 @@ for (const [route, vars] of [
         LLM_SCAN_MODEL: vars.LLM_SCAN_MODEL,
         LLM_SCAN_BASE_URL: vars.LLM_SCAN_BASE_URL,
         LLM_SCAN_MAX_EDGE: vars.LLM_SCAN_MAX_EDGE,
-        ZAI_API_KEY: 'zai-test-key',
+        OPENAI_API_KEY: 'openai-test-key',
       })
       const pending = handleOcr(scanRequest(jpegWithDimensions(814, 614), route), env, ctx)
       let settled = false
@@ -379,7 +389,8 @@ for (const [route, vars] of [
       assert.equal(returnedLlm.status, outcome === 'success' ? 'succeeded' : 'provider_error')
       if (outcome === 'success') assert.deepEqual(returnedLlm.scanned, scannedReceipt())
       else assert.equal(returnedLlm.scanned, null)
-      assert.equal(calls.zai, 1)
+      assert.equal(calls.openai, 1)
+      assert.equal(calls.zai, 0)
       assert.equal(calls.anthropic, 0)
       assert.equal(calls.azureSubmit, 1)
       assert.deepEqual(ctx.tasks, [], 'the response contains the terminal result without background recovery')

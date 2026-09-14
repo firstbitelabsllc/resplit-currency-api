@@ -5,6 +5,9 @@ unreadable names and invented zero prices so Leo does not have to repair scans.
 This is a source-tested candidate, not a deployed provider change or completed
 native receipt workflow. Shadow `~r311` remains open.
 
+This document records candidate commit `86912e80`. The subsequent combined
+activation revision is described in `r311-astra-activation-20260914.md`.
+
 ## Decision and observed failure
 
 Use GPT-6 Astra with low reasoning and a 1568 px image as the next accuracy

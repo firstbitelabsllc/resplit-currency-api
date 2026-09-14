@@ -8,7 +8,7 @@ const { stripJsonComments } = require('../scripts/reliability-cockpit.js')
 const wranglerPath = path.join(__dirname, '..', 'wrangler.jsonc')
 const wrangler = JSON.parse(stripJsonComments(fs.readFileSync(wranglerPath, 'utf8')))
 const runbook = fs.readFileSync(path.join(__dirname, '..', 'RUNBOOK.md'), 'utf8')
-const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
+const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']
 
 function assertExactRequiredSecrets(config, scope) {
   const required = config?.secrets?.required
@@ -22,7 +22,7 @@ function assertExactRequiredSecrets(config, scope) {
   )
 }
 
-test('root Worker declares both OCR provider secrets for local dev and type generation', () => {
+test('root Worker declares selected and retained OCR provider secrets for local dev and type generation', () => {
   assertExactRequiredSecrets(wrangler, 'root Worker')
 })
 
@@ -34,12 +34,13 @@ test('required-secret declaration rejects omission, substitution, or extras', ()
   for (const invalid of [
     ['AZURE_OCR_KEY'],
     ['ANTHROPIC_API_KEY'],
+    ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY'],
     ['AZURE_OCR_KEY', 'ANTHROPIC_API_TOKEN'],
     ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'UNRELATED_SECRET'],
   ]) {
     assert.throws(
       () => assertExactRequiredSecrets({ secrets: { required: invalid } }, 'mutated Worker'),
-      /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY/
+      /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY/
     )
   }
 })

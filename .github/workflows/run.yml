@@ -143,7 +143,7 @@ jobs:
       # data-only publication unless a Worker/config/secret-sync input changed.
       # GitHub cannot expose secret value changes, so an operator uses the
       # explicit force_worker_release dispatch input after a GitHub-managed
-      # secret rotation. ANTHROPIC_API_KEY remains Cloudflare-managed and is
+      # secret rotation. Provider API keys remain Cloudflare-managed and are
       # only continuity-checked here.
       - name: Decide whether FX Worker release is needed
         id: worker_release_needed
@@ -195,7 +195,7 @@ jobs:
             echo "::error::Unable to inspect deployed Worker secret continuity."
             exit 1
           fi
-          printf "%s" "$deployed_worker_secrets" | node scripts/worker-secret-continuity.js AZURE_OCR_KEY ANTHROPIC_API_KEY
+          printf "%s" "$deployed_worker_secrets" | node scripts/worker-secret-continuity.js AZURE_OCR_KEY ANTHROPIC_API_KEY OPENAI_API_KEY
 
       - name: Deploy to Cloudflare Pages
         id: deploy_cloudflare

@@ -40,17 +40,12 @@
     // (router.mjs keyValueExtrasEnabled). 2x cost/scan — APPROVED by Leo 2026-06-22 (low
     // traffic). Revertible: set "false" + redeploy.
     "AZURE_OCR_KV_EXTRAS": "true",
-    // /ocr/dual-scan Anthropic leg. ANTHROPIC_API_KEY is a wrangler secret; empty allowlist
-    // ships the endpoint dark until specific App Attest keyIds are admitted.
-    "LLM_SCAN_MODEL": "glm-5.3-flash",
-    // Z.AI GLM provider for the LLM leg (worker/src/ocr/llm-provider.mjs).
-    // ZAI_API_KEY is required and must precede this rollout. Keep these four
-    // values together: a Claude model id sent to Z.AI fails every scan.
-    // Rollback: restore claude-sonnet-5 and provider "anthropic"; remove
-    // LLM_SCAN_BASE_URL/MAX_EDGE only after the provider is reverted.
-    "LLM_SCAN_PROVIDER": "zai",
-    "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-    "LLM_SCAN_MAX_EDGE": "1280",
+    // Astra low receipt inference. Provision OPENAI_API_KEY before activating
+    // this revision. Provider, model and image edge must change together.
+    // Previous provider credentials remain available for version rollback.
+    "LLM_SCAN_MODEL": "gpt-6-astra",
+    "LLM_SCAN_PROVIDER": "openai",
+    "LLM_SCAN_MAX_EDGE": "1568",
     // Return the bounded LLM result to this caller; zero disables early Azure release.
     "LLM_SCAN_AZURE_GRACE_MS": "0",
     "LLM_SCAN_ALLOWED_KEY_IDS": "",
@@ -77,8 +72,8 @@
   "secrets": {
     // LLM_SCAN_KILL_SWITCH is an optional operator secret (unset = off), not a
     // source var. This keeps a live emergency stop intact across routine deploys.
-    // ZAI_API_KEY is required only once LLM_SCAN_PROVIDER=zai is uncommented above.
-    "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
+    // Keep existing rollback credentials and require the selected provider key.
+    "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
   },
   "durable_objects": {
     "bindings": [
@@ -140,11 +135,10 @@
         "AZURE_OCR_FETCH_TIMEOUT_MS": "15000",
         // Discount/credit/fee capture (2x cost/scan) — APPROVED Leo 2026-06-22. Revert: "false".
         "AZURE_OCR_KV_EXTRAS": "true",
-        "LLM_SCAN_MODEL": "glm-5.3-flash",
-        // Mirror the root Z.AI rollout block; keep all four values aligned.
-        "LLM_SCAN_PROVIDER": "zai",
-        "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-        "LLM_SCAN_MAX_EDGE": "1280",
+        // Mirror the root Astra rollout block.
+        "LLM_SCAN_MODEL": "gpt-6-astra",
+        "LLM_SCAN_PROVIDER": "openai",
+        "LLM_SCAN_MAX_EDGE": "1568",
         // Match the root response policy; retain the existing provider timeout.
         "LLM_SCAN_AZURE_GRACE_MS": "0",
         "LLM_SCAN_ALLOWED_KEY_IDS": "",
@@ -164,7 +158,7 @@
       // Environments do not inherit this local-dev/type-generation metadata.
       "secrets": {
         // Optional operator secret: LLM_SCAN_KILL_SWITCH (unset = off).
-        "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
+        "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
       },
       "durable_objects": {
         "bindings": [
