@@ -569,7 +569,13 @@ test('POST /ocr/dual-scan LLM daily cap trip returns Azure success plus LLM rate
   assert.equal(body.status, 'partial')
   assert.equal(body.azure.status, 'succeeded')
   assert.equal(body.llm.status, 'rate_limited')
-  assert.equal(body.llm.diagnostic, 'llm_daily_cap')
+  const analyze = await handleOcr(new Request('https://fx.resplit.app/ocr/analyze', {
+    method: 'POST',
+    headers: { 'content-type': 'image/jpeg', 'x-resplit-attest-soft-fail': 'true' },
+    body: new Uint8Array([4, 4, 5]),
+  }), env)
+  const analyzeBody = await analyze.json()
+  assert.equal(analyzeBody.engines.find((engine) => engine.id === 'llm').diagnostic, 'llm_daily_cap')
   assert.equal(calls.anthropic, 0)
 })
 
@@ -886,13 +892,13 @@ test('POST /ocr/dual-scan reports a failed LLM leg to Sentry (paid-leg error obs
   })
   try {
     const env = makeEnv({ ANTHROPIC_API_KEY: 'anthropic-key', LLM_SCAN_ALLOW_SOFT_FAIL: 'true', SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' })
-    const res = await handleOcr(dualScanRequest(new Uint8Array([7, 7, 7])), env)
+    const res = await handleOcr(dualScanRequest(jpegWithDimensions(803, 604)), env)
     assert.equal(res.status, 200)
     const body = await res.json()
     assert.equal(body.llm.status, 'provider_error')
-    assert.equal(body.llm.diagnostic, 'upstream_rejected')
     const llmScope = captured.scopes.find((s) => s.tags['monitoring.signal'] === 'ocr_llm_error')
     assert.ok(llmScope, 'a failed llm leg must emit an ocr_llm_error Sentry issue')
+    assert.equal(llmScope.tags['ocr.llm_reason'], 'upstream_rejected')
     assert.equal(captured.messages.some((m) => /llm_error/.test(m)), true, 'the captured message names llm_error')
     assert.doesNotMatch(JSON.stringify(captured), new RegExp(rawProviderError))
     // Azure succeeded — the azure-leg capture must NOT fire here.

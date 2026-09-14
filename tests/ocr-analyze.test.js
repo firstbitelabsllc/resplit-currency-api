@@ -361,6 +361,63 @@ test('POST /ocr/analyze closes timeout and malformed-output diagnostics on the a
   }
 })
 
+test('POST /ocr/analyze preserves correlation and finite leg timing when both providers fail', async () => {
+  globalThis.fetch = async () => { throw new TypeError('RAW_PROVIDER_ERROR_MUST_NOT_LEAK') }
+  const requestId = 'trace-total-provider-failure'
+  const env = makeEnv({
+    OPENAI_API_KEY: 'openai-key',
+    LLM_SCAN_PROVIDER: 'openai',
+    LLM_SCAN_MODEL: 'gpt-6-astra',
+    LLM_SCAN_AZURE_GRACE_MS: '0',
+  })
+  const response = await handleOcr(analyzeRequest(jpegFixture(233), {
+    'x-resplit-trace-id': requestId,
+  }), env)
+  assert.equal(response.status, 502)
+  assert.equal(response.headers.get('x-request-id'), requestId)
+  assert.equal(response.headers.get('x-resplit-trace-id'), requestId)
+  const body = await response.json()
+  assert.equal(body.status, 'provider_error')
+  assert.equal(typeof body.scanId, 'string')
+  for (const engine of body.engines) {
+    assert.equal(engine.status, 'provider_error')
+    assert.ok(Number.isFinite(engine.latencyMs) && engine.latencyMs >= 0)
+  }
+  assert.equal(body.engines.find((engine) => engine.id === 'azure').diagnostic, 'transport_error')
+  assert.equal(body.engines.find((engine) => engine.id === 'llm').diagnostic, 'transport_error')
+  assert.doesNotMatch(JSON.stringify(body), /RAW_PROVIDER_ERROR_MUST_NOT_LEAK/)
+})
+
+test('POST /ocr/analyze classifies an accepted Azure response without an operation ID as malformed output', async () => {
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url)
+    if (init.method === 'POST' && u.includes(':analyze')) {
+      return new Response('', { status: 202 })
+    }
+    if (u === 'https://api.openai.com/v1/responses') {
+      return new Response('provider unavailable in test', { status: 500 })
+    }
+    throw new Error(`unexpected fetch ${init.method} ${u}`)
+  }
+  const env = makeEnv({
+    LLM_SCAN_ALLOW_SOFT_FAIL: 'true',
+    OPENAI_API_KEY: 'openai-key',
+    LLM_SCAN_PROVIDER: 'openai',
+    LLM_SCAN_MODEL: 'gpt-6-astra',
+    LLM_SCAN_AZURE_GRACE_MS: '0',
+  })
+  const response = await handleOcr(analyzeRequest(jpegFixture(234)), env)
+  assert.equal(response.status, 502)
+  const body = await response.json()
+  const azure = body.engines.find((engine) => engine.id === 'azure')
+  assert.equal(azure.status, 'provider_error')
+  assert.equal(azure.diagnostic, 'malformed_output')
+  assert.equal(azure.raw, null)
+  const llm = body.engines.find((engine) => engine.id === 'llm')
+  assert.equal(llm.status, 'provider_error')
+  assert.equal(llm.diagnostic, 'upstream_rejected')
+})
+
 test('POST /ocr/analyze preserves an Azure-usable partial when OCR Sentry flush rejects', async () => {
   stubProviders({ anthropicStatus: 500 })
   setOcrSentrySdkForTests({
@@ -478,8 +535,8 @@ test('cache-first accounting: cap-zero multi-engine misses reject before provide
         llmReasoning: false,
         aiModels: [],
         engines: [
-          { id: 'azure', kind: 'ocr', provider: 'azure-di', model: 'prebuilt-receipt', status: 'rate_limited', latencyMs: 0, raw: null },
-          { id: 'llm', kind: 'vision-llm', provider: 'anthropic', model: 'claude-sonnet-5', status: 'not_started', latencyMs: 0, scanned: null },
+          { id: 'azure', kind: 'ocr', provider: 'azure-di', model: 'prebuilt-receipt', status: 'rate_limited', latencyMs: 0, raw: null, diagnostic: 'scan_rate_limited' },
+          { id: 'llm', kind: 'vision-llm', provider: 'anthropic', model: 'claude-sonnet-5', status: 'not_started', latencyMs: 0, scanned: null, diagnostic: 'scan_rate_limited' },
         ],
         consensus: null,
       },

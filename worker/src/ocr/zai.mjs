@@ -48,6 +48,15 @@ function zaiTargetMaxEdge(env) {
 
 export const ZAI_RECEIPT_SYSTEM_PROMPT = RECEIPT_JSON_SYSTEM_PROMPT
 
+function httpFailureCode(status) {
+  return status === 429 ? 'upstream_rate_limited' : 'upstream_rejected'
+}
+
+function bodyFailureCode(error, signal) {
+  if (signal?.aborted) return 'transport_timeout'
+  return error?.name === 'SyntaxError' ? 'malformed_output' : 'transport_error'
+}
+
 /**
  * Pull the first JSON object out of a chat completion's text: strips ```json
  * fences and any prose around the braces. Returns null when nothing parses.
@@ -105,8 +114,8 @@ export async function scanReceiptWithZai(imageBytes, contentType, env) {
   const model = zaiModel(env)
   let providerStarted = false
   let inputPx = null
-  const fail = (httpStatus, errorBody) => ({
-    ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody, providerStarted, inputPx,
+  const fail = (httpStatus, errorBody, failureCode = null) => ({
+    ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody, failureCode, providerStarted, inputPx,
   })
   try {
     const config = readConfig(env)
@@ -117,43 +126,56 @@ export async function scanReceiptWithZai(imageBytes, contentType, env) {
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort('timeout'), LLM_FETCH_TIMEOUT_MS)
-    let res
     try {
       // Once fetch is invoked, conservatively account for a paid provider attempt:
       // a transport timeout cannot prove Z.AI did not accept the request.
       providerStarted = true
-      res = await fetch(config.url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${config.key}`,
-        },
-        body: JSON.stringify(buildRequestBody({
-          imageBytes: prepared.imageBytes,
-          mediaType: prepared.mediaType,
-          model: config.model,
-        })),
-        signal: controller.signal,
-      })
+      let res
+      try {
+        res = await fetch(config.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${config.key}`,
+          },
+          body: JSON.stringify(buildRequestBody({
+            imageBytes: prepared.imageBytes,
+            mediaType: prepared.mediaType,
+            model: config.model,
+          })),
+          signal: controller.signal,
+        })
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+
+      if (res.status !== 200) {
+        let errorBody = ''
+        let failureCode = httpFailureCode(res.status)
+        try {
+          errorBody = await res.text()
+        } catch { /* The HTTP status still supplies the closed provider code. */ }
+        return fail(res.status, errorBody.slice(0, 500), failureCode)
+      }
+
+      let body
+      try {
+        body = await res.json()
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+      const choice = Array.isArray(body?.choices) ? body.choices[0] : null
+      // A length stop means the JSON was cut mid-object: never return a partial
+      // that happens to parse (a truncated lineItems array looks whole).
+      if (choice?.finish_reason === 'length') return fail(502, 'llm_truncated', 'malformed_output')
+      const scanned = extractJsonObject(messageText(choice?.message))
+      if (!scanned) return fail(502, 'llm_invalid_json', 'malformed_output')
+      const violation = receiptShapeViolation(scanned)
+      if (violation) return fail(502, `llm_schema_violation:${violation}`, 'malformed_output')
+      return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, failureCode: null, providerStarted, inputPx }
     } finally {
       clearTimeout(timeout)
     }
-
-    if (res.status !== 200) {
-      const errorBody = await res.text().catch(() => '')
-      return fail(res.status, errorBody.slice(0, 500))
-    }
-
-    const body = await res.json().catch(() => null)
-    const choice = Array.isArray(body?.choices) ? body.choices[0] : null
-    // A length stop means the JSON was cut mid-object: never return a partial
-    // that happens to parse (a truncated lineItems array looks whole).
-    if (choice?.finish_reason === 'length') return fail(502, 'llm_truncated')
-    const scanned = extractJsonObject(messageText(choice?.message))
-    if (!scanned) return fail(502, 'llm_invalid_json')
-    const violation = receiptShapeViolation(scanned)
-    if (violation) return fail(502, `llm_schema_violation:${violation}`)
-    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, providerStarted, inputPx }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return fail(error instanceof ZaiConfigError ? 503 : 502, message.slice(0, 500))

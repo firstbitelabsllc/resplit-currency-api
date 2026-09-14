@@ -1,6 +1,8 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
+import { scanReceiptWithAnthropic } from '../worker/src/ocr/anthropic.mjs'
+import { scanReceiptWithZai } from '../worker/src/ocr/zai.mjs'
 import { llmProvider, llmProviderConfigured, llmModel, llmMaxEdge } from '../worker/src/ocr/llm-provider.mjs'
 import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
 
@@ -164,6 +166,53 @@ test('env helpers: the provider defaults to anthropic and fails closed on an unk
   assert.equal(llmMaxEdge({ LLM_SCAN_MAX_EDGE: '1600' }), 1600)
   assert.equal(llmMaxEdge({ LLM_SCAN_MAX_EDGE: 'big' }), 0)
   assert.equal(llmMaxEdge({ LLM_SCAN_MAX_EDGE: '-5' }), 0)
+})
+
+test('Anthropic and Z.AI classify body JSON failures and body deadlines at the transport boundary', async () => {
+  const image = jpegWithDimensions(800, 600)
+  const realSetTimeout = globalThis.setTimeout
+  const realClearTimeout = globalThis.clearTimeout
+  try {
+    for (const [name, scan, env] of [
+      ['anthropic', scanReceiptWithAnthropic, { ANTHROPIC_API_KEY: 'anthropic-key' }],
+      ['zai', scanReceiptWithZai, { ZAI_API_KEY: 'zai-key' }],
+    ]) {
+      globalThis.fetch = async () => ({ status: 200, async json() { throw new SyntaxError(`${name} malformed`) } })
+      const malformed = await scan(image, 'image/jpeg', env)
+      assert.equal(malformed.failureCode, 'malformed_output', `${name} malformed body`)
+      assert.ok(Number.isFinite(malformed.latencyMs) && malformed.latencyMs >= 0)
+
+      globalThis.setTimeout = (callback, delay, ...args) => {
+        if (delay === 60_000) {
+          queueMicrotask(() => callback(...args))
+          return { timeout: true }
+        }
+        return realSetTimeout(callback, delay, ...args)
+      }
+      globalThis.clearTimeout = () => {}
+      globalThis.fetch = async (_url, init) => ({
+        status: 200,
+        async json() {
+          await new Promise((resolve, reject) => {
+            if (init.signal.aborted) {
+              reject(new DOMException('aborted', 'AbortError'))
+              return
+            }
+            init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+          })
+          return null
+        },
+      })
+      const timedOut = await scan(image, 'image/jpeg', env)
+      assert.equal(timedOut.failureCode, 'transport_timeout', `${name} body deadline`)
+      assert.ok(Number.isFinite(timedOut.latencyMs) && timedOut.latencyMs >= 0)
+      globalThis.setTimeout = realSetTimeout
+      globalThis.clearTimeout = realClearTimeout
+    }
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+    globalThis.clearTimeout = realClearTimeout
+  }
 })
 
 test('default (no LLM_SCAN_PROVIDER) still runs the Anthropic leg and never calls Z.AI', async () => {

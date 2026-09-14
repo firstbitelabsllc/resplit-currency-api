@@ -84,3 +84,17 @@ test('rate limits retain HTTP status and transport failures retain attempted-cal
   assert.equal(result.scanned, null)
   assert.equal(result.failureCode, 'transport_error')
 })
+
+test('HTTP 429 keeps the closed rate-limit diagnostic when the error body cannot be read', async () => {
+  const hostile = 'RAW_RATE_LIMIT_PROVIDER_ERROR_MUST_NOT_LEAK'
+  globalThis.fetch = async () => ({
+    status: 429,
+    async text() { throw new Error(hostile) },
+  })
+  const result = await scanReceiptWithOpenAI(image, 'image/jpeg', env)
+  assert.equal(result.ok, false)
+  assert.equal(result.httpStatus, 429)
+  assert.equal(result.failureCode, 'upstream_rate_limited')
+  assert.equal(result.errorBody, '')
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(hostile))
+})

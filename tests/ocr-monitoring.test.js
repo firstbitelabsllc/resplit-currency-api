@@ -198,6 +198,24 @@ test('captureOcrCacheWriteFailure swallows Sentry scope, capture, and flush fail
   }
 })
 
+test('captureOcrLlmFailure closes unknown diagnostics before Sentry', async () => {
+  const { calls, sdk } = makeSentryMock()
+  const hostile = 'RAW_PROVIDER_ERROR_MUST_NOT_LEAK'
+  setOcrSentrySdkForTests(sdk)
+  try {
+    assert.equal(await captureOcrLlmFailure({
+      scanId: 'scan-hostile', requestId: 'req-hostile', httpStatus: 500,
+      diagnostic: hostile, reason: hostile,
+    }, { SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' }), true)
+    assert.equal(calls.scopes[0].tags['ocr.llm_reason'], 'unknown')
+    assert.equal(calls.scopes[0].contexts.ocrLlmScan.reason, 'unknown')
+    assert.equal(calls.captureMessage[0].includes(hostile), false)
+    assert.doesNotMatch(JSON.stringify(calls), new RegExp(hostile))
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
+})
+
 test('OCR outcome telemetry swallows Sentry scope, capture, and flush failures', async () => {
   const env = { SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' }
   const captures = [

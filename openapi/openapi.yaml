@@ -854,6 +854,10 @@ components:
         status:
           type: string
           enum: [ok, rate_limited, provider_error]
+        diagnostic:
+          type: string
+          description: Optional closed failure classification; absent on success. No provider text is included.
+          enum: [transport_timeout, transport_error, malformed_output, upstream_rate_limited, upstream_rejected, llm_daily_cap, scan_rate_limited, operator_disabled, unknown]
         kv_extras:
           type: string
           enum: ["off", "merged", "empty", "failed"]
