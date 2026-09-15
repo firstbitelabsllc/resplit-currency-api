@@ -859,6 +859,62 @@ test('worker cron route returns canary report for authorized requests', async ()
   })
 })
 
+// Reproduces the 2026-07-31 production state: one archive day missing deep in
+// the 180-day window, every quote still resolving exactly. That single hole made
+// all three pairs report 2 mismatches each and the cron had been red daily for
+// weeks. Coverage holes must stay visible without paging.
+test('a historical archive hole is reported but does not fail the canary', async () => {
+  const { handleRequest } = await import('../worker/src/index.mjs')
+  const now = new Date()
+  const today = now.toISOString().slice(0, 10)
+  const anchorDates = [0, 7, 30, 180].map(days => {
+    const date = new Date(`${today}T00:00:00Z`)
+    date.setUTCDate(date.getUTCDate() - days)
+    return date.toISOString().slice(0, 10)
+  })
+  const earliestStart = new Date(`${anchorDates.at(-1)}T00:00:00Z`)
+  earliestStart.setUTCDate(earliestStart.getUTCDate() - 29)
+  const allDates = enumerateDates(
+    earliestStart.toISOString().slice(0, 10),
+    anchorDates[0]
+  )
+  // Punch out a day inside the oldest window but never an anchor itself, so the
+  // quotes stay exact and only history coverage degrades.
+  const holeDate = allDates.find(date => !anchorDates.includes(date))
+  assert.ok(holeDate, 'expected a non-anchor date to remove')
+  const availableDates = allDates.filter(date => date !== holeDate)
+
+  await withStubbedFetch(createArchiveFetchStub(availableDates), async () => {
+    const response = await handleRequest(
+      new Request('https://example.workers.dev/cron/fx-canary', {
+        headers: {
+          authorization: 'Bearer top-secret',
+          'x-request-id': 'req-canary-gap',
+        },
+      }),
+      {
+        ASSET_BASE_URL: 'https://example-assets.dev',
+        CRON_SECRET: 'top-secret',
+      }
+    )
+
+    assert.equal(response.status, 200)
+    const body = await response.json()
+
+    assert.ok(
+      body.mismatchCount > 0,
+      `expected the coverage hole to stay visible; got mismatchCount=${body.mismatchCount}`
+    )
+    assert.equal(
+      body.quoteMismatchCount,
+      0,
+      'every quote resolved exactly, so nothing should page'
+    )
+    assert.equal(body.failureCount, 0)
+    assert.equal(body.ok, true, 'a historical coverage hole must not fail the cron')
+  })
+})
+
 test('rejecting telemetry cannot turn a truthful successful canary into a failure', async () => {
   const { handleRequest } = await import('../worker/src/index.mjs')
   const now = new Date()
