@@ -51,8 +51,6 @@
     "LLM_SCAN_PROVIDER": "zai",
     "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
     "LLM_SCAN_MAX_EDGE": "1280",
-    // Return the bounded LLM result to this caller; zero disables early Azure release.
-    "LLM_SCAN_AZURE_GRACE_MS": "0",
     "LLM_SCAN_ALLOWED_KEY_IDS": "",
     "LLM_SCAN_DAILY_CAP": "3000",
     "SOFT_FAIL_DAILY_CAP": "150",
@@ -145,8 +143,6 @@
         "LLM_SCAN_PROVIDER": "zai",
         "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
         "LLM_SCAN_MAX_EDGE": "1280",
-        // Match the root response policy; retain the existing provider timeout.
-        "LLM_SCAN_AZURE_GRACE_MS": "0",
         "LLM_SCAN_ALLOWED_KEY_IDS": "",
         "LLM_SCAN_DAILY_CAP": "3000",
         // Mirror the root soft-fail Azure allowance so named production deploys

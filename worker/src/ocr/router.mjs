@@ -70,7 +70,9 @@ const CACHE_TTL_SECONDS = 600
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 18 // ~27s ceiling
 const DEFAULT_LLM_SCAN_DAILY_CAP = 50
-const DEFAULT_LLM_SCAN_AZURE_GRACE_MS = 3_000
+// Zero by default: a late LLM success is delivered to the same scan response
+// instead of releasing the (often partial) Azure result early. r311/sc07.
+const DEFAULT_LLM_SCAN_AZURE_GRACE_MS = 0
 const ENABLED_ENV_VALUES = new Set(['1', 'true', 'yes', 'on', 'enabled'])
 const LEGACY_PARTIAL_COMPAT_VERSIONS = new Set([
   '2.0.0+3798',
