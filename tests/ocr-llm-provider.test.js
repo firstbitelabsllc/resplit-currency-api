@@ -1,6 +1,8 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
+import { scanReceiptWithAnthropic } from '../worker/src/ocr/anthropic.mjs'
+import { scanReceiptWithZai } from '../worker/src/ocr/zai.mjs'
 import { llmProvider, llmProviderConfigured, llmModel, llmMaxEdge } from '../worker/src/ocr/llm-provider.mjs'
 import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
 
@@ -105,8 +107,12 @@ function stubProviders({ azure = azureRaw(), scanned = scannedReceipt() } = {}) 
       calls.zaiBody = JSON.parse(init.body)
       return Response.json({
         id: 'chatcmpl-test', model: 'glm-5.3-flash',
-        choices: [{ index: 0, message: { role: 'assistant', content: '```json\n' + JSON.stringify(scanned) + '\n```' }, finish_reason: 'stop' }],
+        choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(scanned) }, finish_reason: 'stop' }],
       }, { status: 200 })
+    }
+    if (u === 'https://api.openai.com/v1/responses') {
+      calls.openai = (calls.openai || 0) + 1
+      return Response.json({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(scanned) }] }] })
     }
     if (init.method === 'POST' && u.includes(':analyze')) {
       calls.azureSubmit++
@@ -160,6 +166,53 @@ test('env helpers: the provider defaults to anthropic and fails closed on an unk
   assert.equal(llmMaxEdge({ LLM_SCAN_MAX_EDGE: '1600' }), 1600)
   assert.equal(llmMaxEdge({ LLM_SCAN_MAX_EDGE: 'big' }), 0)
   assert.equal(llmMaxEdge({ LLM_SCAN_MAX_EDGE: '-5' }), 0)
+})
+
+test('Anthropic and Z.AI classify body JSON failures and body deadlines at the transport boundary', async () => {
+  const image = jpegWithDimensions(800, 600)
+  const realSetTimeout = globalThis.setTimeout
+  const realClearTimeout = globalThis.clearTimeout
+  try {
+    for (const [name, scan, env] of [
+      ['anthropic', scanReceiptWithAnthropic, { ANTHROPIC_API_KEY: 'anthropic-key' }],
+      ['zai', scanReceiptWithZai, { ZAI_API_KEY: 'zai-key' }],
+    ]) {
+      globalThis.fetch = async () => ({ status: 200, async json() { throw new SyntaxError(`${name} malformed`) } })
+      const malformed = await scan(image, 'image/jpeg', env)
+      assert.equal(malformed.failureCode, 'malformed_output', `${name} malformed body`)
+      assert.ok(Number.isFinite(malformed.latencyMs) && malformed.latencyMs >= 0)
+
+      globalThis.setTimeout = (callback, delay, ...args) => {
+        if (delay === 60_000) {
+          queueMicrotask(() => callback(...args))
+          return { timeout: true }
+        }
+        return realSetTimeout(callback, delay, ...args)
+      }
+      globalThis.clearTimeout = () => {}
+      globalThis.fetch = async (_url, init) => ({
+        status: 200,
+        async json() {
+          await new Promise((resolve, reject) => {
+            if (init.signal.aborted) {
+              reject(new DOMException('aborted', 'AbortError'))
+              return
+            }
+            init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+          })
+          return null
+        },
+      })
+      const timedOut = await scan(image, 'image/jpeg', env)
+      assert.equal(timedOut.failureCode, 'transport_timeout', `${name} body deadline`)
+      assert.ok(Number.isFinite(timedOut.latencyMs) && timedOut.latencyMs >= 0)
+      globalThis.setTimeout = realSetTimeout
+      globalThis.clearTimeout = realClearTimeout
+    }
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+    globalThis.clearTimeout = realClearTimeout
+  }
 })
 
 test('default (no LLM_SCAN_PROVIDER) still runs the Anthropic leg and never calls Z.AI', async () => {
@@ -285,11 +338,12 @@ test('provider=zai without ZAI_API_KEY fails closed to provider_unavailable befo
 
 test('an unknown LLM_SCAN_PROVIDER fails closed to provider_unavailable', async () => {
   stubProviders()
-  const env = makeEnv({ LLM_SCAN_PROVIDER: 'openai', ANTHROPIC_API_KEY: 'a', ZAI_API_KEY: 'z' })
+  const env = makeEnv({ LLM_SCAN_PROVIDER: 'unsupported-test-provider', ANTHROPIC_API_KEY: 'a', ZAI_API_KEY: 'z', OPENAI_API_KEY: 'o' })
   const res = await handleOcr(analyzeRequest(jpegWithDimensions(800, 600)), env)
   const body = await res.json()
   assert.equal(body.engines.find((e) => e.id === 'llm').status, 'provider_unavailable')
   assert.equal(calls.zai + calls.anthropic, 0)
+  assert.equal(calls.openai || 0, 0)
 })
 
 test('a Z.AI transport failure is a data-shaped provider_error and Azure still succeeds', async () => {
@@ -310,16 +364,48 @@ test('a Z.AI transport failure is a data-shaped provider_error and Azure still s
   assert.equal(calls.zai, 1)
 })
 
-test('the shared cache key is unchanged for the default provider and distinct once the seam is flipped', async () => {
+test('the shared cache key isolates provider, image edge and prompt revision', async () => {
   stubProviders()
   const image = jpegWithDimensions(800, 600, 3)
   const anthropic = makeEnv({ ANTHROPIC_API_KEY: 'a', LLM_SCAN_MODEL: 'claude-sonnet-5' })
   await handleOcr(analyzeRequest(image), anthropic)
   const legacyKey = [...anthropic.ATTEST_KV.store.keys()].find((k) => k.startsWith('cache:dualScan:v2core:'))
-  assert.match(legacyKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:claude-sonnet-5$/)
+  assert.match(legacyKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:claude-sonnet-5:anthropic:0:item-groups-v2$/)
 
   const zai = makeEnv({ LLM_SCAN_PROVIDER: 'zai', ZAI_API_KEY: 'z', LLM_SCAN_MODEL: 'glm-5.3-flash', LLM_SCAN_MAX_EDGE: '1600' })
   await handleOcr(analyzeRequest(image), zai)
   const zaiKey = [...zai.ATTEST_KV.store.keys()].find((k) => k.startsWith('cache:dualScan:v2core:'))
-  assert.match(zaiKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:glm-5\.3-flash:zai:1600$/)
+  assert.match(zaiKey, /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:glm-5\.3-flash:zai:1600:item-groups-v2$/)
+})
+
+test('OpenAI uses only its own key and returns through the unchanged analyze envelope and cache', async () => {
+  assert.equal(llmProviderConfigured({ LLM_SCAN_PROVIDER: 'openai', OPENAI_API_KEY: 'o' }), true)
+  assert.equal(llmModel({ LLM_SCAN_PROVIDER: 'openai' }), 'gpt-6-astra')
+  const env = makeEnv({ LLM_SCAN_PROVIDER: 'openai', OPENAI_API_KEY: 'o', LLM_SCAN_AZURE_GRACE_MS: '0' })
+  stubProviders()
+  const image = jpegWithDimensions(800, 600, 4)
+  const result = await (await handleOcr(analyzeRequest(image), env)).json()
+  assert.equal(result.v, 2)
+  const llm = result.engines.find(e=>e.kind==='vision-llm')
+  assert.equal(llm.provider, 'openai')
+  assert.equal(llm.model, 'gpt-6-astra')
+  assert.equal(llm.status, 'succeeded')
+  assert.deepEqual(llm.scanned, scannedReceipt())
+  await handleOcr(analyzeRequest(image), env)
+  assert.equal(calls.openai, 1)
+  assert.equal(calls.zai, 0)
+  assert.equal(calls.anthropic, 0)
+})
+
+test('a receipt cached under the old prompt cannot satisfy a new-prompt scan', async () => {
+  const env = makeEnv({ LLM_SCAN_PROVIDER: 'zai', ZAI_API_KEY: 'z' })
+  const image = jpegWithDimensions(800, 600, 5)
+  stubProviders()
+  await handleOcr(analyzeRequest(image), env)
+  const key = [...env.ATTEST_KV.store.keys()].find(k=>k.startsWith('cache:dualScan:v2core:'))
+  const legacyKey = key.replace(':item-groups-v2', '')
+  env.ATTEST_KV.store.set(legacyKey, env.ATTEST_KV.store.get(key))
+  if (key !== legacyKey) env.ATTEST_KV.store.delete(key)
+  await handleOcr(analyzeRequest(image), env)
+  assert.equal(calls.zai, 2, 'old prompt receipt must not mask the new inference')
 })

@@ -2,7 +2,6 @@ import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   scanReceiptWithZai,
-  extractJsonObject,
   ZAI_RECEIPT_SYSTEM_PROMPT,
   DEFAULT_ZAI_BASE_URL,
 } from '../worker/src/ocr/zai.mjs'
@@ -96,16 +95,6 @@ test('the Z.AI system prompt is derived from RECEIPT_SYSTEM_PROMPT and asks for 
   assert.ok(ZAI_RECEIPT_SYSTEM_PROMPT.includes('Comma-decimal 12,50 means 12.50'))
 })
 
-test('extractJsonObject strips code fences and surrounding prose', () => {
-  assert.deepEqual(extractJsonObject('{"a":1}'), { a: 1 })
-  assert.deepEqual(extractJsonObject('```json\n{"a":1}\n```'), { a: 1 })
-  assert.deepEqual(extractJsonObject('Here you go:\n```\n{"a":{"b":[1,2]}}\n```\nDone.'), { a: { b: [1, 2] } })
-  assert.equal(extractJsonObject('no json here'), null)
-  assert.equal(extractJsonObject('{"a":'), null)
-  assert.equal(extractJsonObject(''), null)
-  assert.equal(extractJsonObject(null), null)
-})
-
 test('happy path: unfenced JSON content returns ok:true with the shared result shape', async () => {
   stubZai(chatCompletion(JSON.stringify(scannedReceipt())))
   const res = await scanReceiptWithZai(image, 'image/jpeg', env())
@@ -116,6 +105,11 @@ test('happy path: unfenced JSON content returns ok:true with the shared result s
   assert.equal(res.model, 'glm-5.3-flash')
   assert.equal(res.errorBody, null)
   assert.equal(res.providerStarted, true)
+  assert.equal(res.structuredOutputValid, true)
+  assert.equal(res.serviceTierRequested, 'not_applicable')
+  assert.equal(res.serviceTierServed, null)
+  assert.deepEqual(res.usage, { inputTokens: 1000, cachedInputTokens: 0, outputTokens: 200, totalTokens: null })
+  assert.equal(res.servedModel, 'glm-5.3-flash')
   assert.equal(res.inputPx, 800)
   assert.equal(typeof res.latencyMs, 'number')
 
@@ -125,6 +119,7 @@ test('happy path: unfenced JSON content returns ok:true with the shared result s
   assert.equal(lastBody.temperature, 0)
   assert.equal(lastBody.max_tokens, LLM_MAX_TOKENS)
   assert.deepEqual(lastBody.thinking, { type: 'disabled' })
+  assert.deepEqual(lastBody.response_format, { type: 'json_object' })
   assert.equal(lastBody.messages[0].role, 'system')
   assert.equal(lastBody.messages[0].content, ZAI_RECEIPT_SYSTEM_PROMPT)
   assert.equal(lastBody.messages[1].role, 'user')
@@ -136,15 +131,23 @@ test('happy path: unfenced JSON content returns ok:true with the shared result s
   assert.deepEqual(textPart, { type: 'text', text: 'Extract this receipt.' })
 })
 
-test('happy path: fenced JSON content is parsed', async () => {
-  stubZai(chatCompletion('```json\n' + JSON.stringify(scannedReceipt({ total: 12.5 })) + '\n```'))
-  const res = await scanReceiptWithZai(image, 'image/jpeg', env())
-  assert.equal(res.ok, true)
-  assert.equal(res.scanned.total, 12.5)
+test('JSON mode output with prose or fences is rejected instead of repaired', async () => {
+  for (const content of [
+    '```json\n' + JSON.stringify(scannedReceipt()) + '\n```',
+    'Here is the receipt: ' + JSON.stringify(scannedReceipt()),
+  ]) {
+    stubZai(chatCompletion(content))
+    const res = await scanReceiptWithZai(image, 'image/jpeg', env())
+    assert.equal(res.ok, false)
+    assert.equal(res.failureCode, 'malformed_output')
+    assert.equal(res.structuredOutputValid, false)
+    assert.equal(res.scanned, null)
+  }
 })
 
 test('array-shaped message content is joined before parsing', async () => {
-  stubZai(chatCompletion([{ type: 'text', text: '```json\n' }, { type: 'text', text: JSON.stringify(scannedReceipt()) + '\n```' }]))
+  const serialized = JSON.stringify(scannedReceipt())
+  stubZai(chatCompletion([{ type: 'text', text: serialized.slice(0, 24) }, { type: 'text', text: serialized.slice(24) }]))
   const res = await scanReceiptWithZai(image, 'image/jpeg', env())
   assert.equal(res.ok, true)
   assert.equal(res.scanned.total, 10)
@@ -164,6 +167,37 @@ test('a schema-invalid JSON object is a data-shaped provider_error, never a thro
   assert.equal(res.scanned, null)
   assert.equal(res.errorBody, 'llm_schema_violation:total')
   assert.equal(res.providerStarted, true)
+  assert.equal(res.structuredOutputValid, false)
+})
+
+test('JSON with undeclared receipt, line-item, or extra fields is rejected without repair', async () => {
+  const valid = scannedReceipt()
+  const cases = [
+    [scannedReceipt({ providerMetadata: true }), 'llm_schema_violation:additional_property'],
+    [
+      scannedReceipt({
+        lineItems: [{ ...valid.lineItems[0], unitPrice: 9 }],
+      }),
+      'llm_schema_violation:lineItem.additional_property',
+    ],
+    [
+      scannedReceipt({
+        extras: [{ ...valid.extras[0], rate: 0.1 }],
+      }),
+      'llm_schema_violation:extra.additional_property',
+    ],
+  ]
+
+  for (const [scanned, diagnostic] of cases) {
+    stubZai(chatCompletion(JSON.stringify(scanned)))
+    const res = await scanReceiptWithZai(image, 'image/jpeg', env())
+    assert.equal(res.ok, false)
+    assert.equal(res.httpStatus, 502)
+    assert.equal(res.scanned, null)
+    assert.equal(res.errorBody, diagnostic)
+    assert.equal(res.failureCode, 'malformed_output')
+    assert.equal(res.structuredOutputValid, false)
+  }
 })
 
 test('content without a JSON object is a data-shaped provider_error', async () => {
@@ -189,6 +223,31 @@ test('a non-200 upstream is surfaced with its status and a bounded error body', 
   assert.equal(res.httpStatus, 429)
   assert.match(res.errorBody, /rate limited/)
   assert.equal(res.providerStarted, true)
+})
+
+test('known Z.AI business errors map to closed diagnostics while retaining provider status', async () => {
+  for (const [businessCode, expectedFailure] of [
+    [1113, 'upstream_balance_exhausted'],
+    [1304, 'upstream_daily_cap'],
+    [1308, 'upstream_quota_exhausted'],
+    [1309, 'upstream_plan_expired'],
+    [1311, 'upstream_model_unavailable'],
+    [1312, 'upstream_model_busy'],
+    [1313, 'upstream_policy_restricted'],
+    [1315, 'upstream_key_restricted'],
+    [1210, 'upstream_request_invalid'],
+    [1213, 'upstream_request_invalid'],
+    [1214, 'upstream_request_invalid'],
+    [1215, 'upstream_request_invalid'],
+    [1211, 'upstream_unknown_model'],
+    [1212, 'upstream_model_method_unsupported'],
+    [1220, 'upstream_api_permission_denied'],
+  ]) {
+    stubZai({ code: businessCode, message: 'PRIVATE PROVIDER MESSAGE' }, 429)
+    const res = await scanReceiptWithZai(image, 'image/jpeg', env())
+    assert.equal(res.failureCode, expectedFailure)
+    assert.equal(res.httpStatus, 429)
+  }
 })
 
 test('a missing ZAI_API_KEY fails closed as 503 before any paid call', async () => {
@@ -226,7 +285,8 @@ test('a transport timeout is a data-shaped provider_error with providerStarted t
   const res = await pending
   assert.equal(res.ok, false)
   assert.equal(res.httpStatus, 502)
-  assert.equal(res.errorBody, 'timeout')
+  assert.equal(res.errorBody, null)
+  assert.equal(res.failureCode, 'transport_timeout')
   assert.equal(res.providerStarted, true)
 })
 

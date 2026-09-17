@@ -10,6 +10,10 @@ const LAYOUT_MODEL_ID = 'prebuilt-layout'
 const API_VERSION = '2024-11-30'
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000
 const MAX_FETCH_TIMEOUT_MS = 60_000
+const HTTP_FAILURE_CODES = Object.freeze({
+  rateLimited: 'upstream_rate_limited',
+  rejected: 'upstream_rejected',
+})
 
 export const OCR_PROVIDER = 'azure-di'
 
@@ -31,6 +35,15 @@ function readConfig(env) {
     throw new AzureConfigError('AZURE_OCR_ENDPOINT and AZURE_OCR_KEY must be configured (wrangler secret)')
   }
   return { endpoint, key }
+}
+
+function httpFailureCode(status) {
+  return status === 429 ? HTTP_FAILURE_CODES.rateLimited : HTTP_FAILURE_CODES.rejected
+}
+
+function bodyFailureCode(error, signal) {
+  if (signal?.aborted) return 'transport_timeout'
+  return error?.name === 'SyntaxError' ? 'malformed_output' : 'transport_error'
 }
 
 /**
@@ -62,7 +75,7 @@ export function resolveAzureFetchTimeoutMs(value) {
  * @param {string} url
  * @param {RequestInit} init
  * @param {{ AZURE_OCR_FETCH_TIMEOUT_MS?: string | number }} env
- * @returns {Promise<{ response: Response | null, failure: { httpStatus: number, errorBody: string } | null }>}
+ * @returns {Promise<{ response: Response | null, failure: { httpStatus: number, errorBody: string, failureCode: string } | null }>}
  */
 async function fetchAzure(url, init, env) {
   const controller = new AbortController()
@@ -81,6 +94,7 @@ async function fetchAzure(url, init, env) {
       failure: {
         httpStatus: timedOut ? 504 : 502,
         errorBody: timedOut ? 'azure_timeout' : 'azure_transport_error',
+        failureCode: timedOut ? 'transport_timeout' : 'transport_error',
       },
     }
   } finally {
@@ -140,14 +154,18 @@ async function submitAnalyze(imageBytes, contentType, env, options = {}) {
   }, env)
 
   if (failure) {
-    return { ok: false, httpStatus: failure.httpStatus, operationId: null, errorBody: failure.errorBody }
+    return { ok: false, httpStatus: failure.httpStatus, operationId: null, errorBody: failure.errorBody, failureCode: failure.failureCode }
   }
 
   if (res.status === 202 || res.status === 200) {
     return { ok: true, httpStatus: res.status, operationId: extractOperationId(res.headers), errorBody: null }
   }
-  const errorBody = await res.text().catch(() => '')
-  return { ok: false, httpStatus: res.status, operationId: null, errorBody: errorBody.slice(0, 500) }
+  let errorBody = ''
+  let failureCode = httpFailureCode(res.status)
+  try {
+    errorBody = await res.text()
+  } catch { /* The HTTP status still supplies the closed provider code. */ }
+  return { ok: false, httpStatus: res.status, operationId: null, errorBody: errorBody.slice(0, 500), failureCode }
 }
 
 export async function submitReceiptAnalyze(imageBytes, contentType, env) {
@@ -183,17 +201,37 @@ async function getAnalyzeResult(operationId, env, options = {}) {
       status: null,
       body: null,
       errorBody: failure.errorBody,
+      failureCode: failure.failureCode,
     }
   }
 
   if (res.status !== 200) {
-    const errorBody = await res.text().catch(() => '')
-    return { ok: false, httpStatus: res.status, status: null, body: null, errorBody: errorBody.slice(0, 500) }
+    let errorBody = ''
+    let failureCode = httpFailureCode(res.status)
+    try {
+      errorBody = await res.text()
+    } catch { /* The HTTP status still supplies the closed provider code. */ }
+    return { ok: false, httpStatus: res.status, status: null, body: null, errorBody: errorBody.slice(0, 500), failureCode }
   }
 
-  const body = await res.json().catch(() => null)
-  const status = body && typeof body === 'object' ? (body.status ?? null) : null
-  return { ok: true, httpStatus: 200, status, body, errorBody: null }
+  let body
+  try {
+    body = await res.json()
+  } catch (error) {
+    return {
+      ok: false,
+      httpStatus: 200,
+      status: null,
+      body: null,
+      errorBody: null,
+      failureCode: bodyFailureCode(error),
+    }
+  }
+  const status = body && typeof body === 'object' && !Array.isArray(body) ? body.status : null
+  if (!['notStarted', 'running', 'succeeded', 'failed'].includes(status)) {
+    return { ok: false, httpStatus: 200, status: null, body: null, errorBody: null, failureCode: 'malformed_output' }
+  }
+  return { ok: true, httpStatus: 200, status, body, errorBody: null, failureCode: null }
 }
 
 export async function getReceiptAnalyzeResult(operationId, env) {

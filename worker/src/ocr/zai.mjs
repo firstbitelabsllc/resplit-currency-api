@@ -6,10 +6,9 @@
 // when LLM_SCAN_PROVIDER=zai; the default Anthropic path is untouched.
 
 import {
-  RECEIPT_SYSTEM_PROMPT,
+  RECEIPT_JSON_SYSTEM_PROMPT,
   LLM_FETCH_TIMEOUT_MS,
   LLM_MAX_TOKENS,
-  receiptSchema,
   receiptShapeViolation,
   prepareLlmImage,
   llmMaxEdge,
@@ -47,39 +46,45 @@ function zaiTargetMaxEdge(env) {
   return llmMaxEdge(env) || DEFAULT_TARGET_MAX_EDGE
 }
 
-// GLM has no strict tool schema, so the prompt spells out the emit_receipt keys
-// verbatim from receiptSchema (the same object Anthropic receives as input_schema).
-function describeSchema(schema) {
-  const type = (s) => (Array.isArray(s.type) ? s.type.join('|') : s.type)
-  const field = (name, s) => {
-    if (s.enum) return `${name}: one of ${s.enum.join('|')}`
-    if (s.type === 'array') return `${name}: array of {${Object.entries(s.items.properties).map(([n, p]) => field(n, p)).join(', ')}}`
-    return `${name}: ${type(s)}`
-  }
-  return Object.entries(schema.properties).map(([name, s]) => field(name, s)).join('; ')
+export const ZAI_RECEIPT_SYSTEM_PROMPT = RECEIPT_JSON_SYSTEM_PROMPT
+
+function httpFailureCode(status) {
+  return status === 429 ? 'upstream_rate_limited' : 'upstream_rejected'
 }
 
-const TOOL_INSTRUCTION = 'emit the receipt via the emit_receipt tool with EXACTLY its schema.'
-const JSON_INSTRUCTION = `emit ONLY a JSON object with exactly the emit_receipt schema keys (${describeSchema(receiptSchema)}). Every key is required; use null where allowed. No prose, no code fence.`
-
-export const ZAI_RECEIPT_SYSTEM_PROMPT = RECEIPT_SYSTEM_PROMPT.replace(TOOL_INSTRUCTION, JSON_INSTRUCTION)
-
-/**
- * Pull the first JSON object out of a chat completion's text: strips ```json
- * fences and any prose around the braces. Returns null when nothing parses.
- */
-export function extractJsonObject(text) {
-  if (typeof text !== 'string' || text.length === 0) return null
-  const unfenced = text.replace(/```[a-zA-Z]*\n?/g, '')
-  const start = unfenced.indexOf('{')
-  const end = unfenced.lastIndexOf('}')
-  if (start < 0 || end <= start) return null
+function businessFailureCode(status, responseText) {
+  let code
   try {
-    const parsed = JSON.parse(unfenced.slice(start, end + 1))
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
-  } catch {
-    return null
+    const body = JSON.parse(responseText)
+    code = body?.code ?? body?.error?.code
+  } catch { /* Keep the status-derived closed classification. */ }
+  switch (String(code ?? '')) {
+    case '1113': return 'upstream_balance_exhausted'
+    case '1303':
+    case '1302':
+    case '1305': return 'upstream_rate_limited'
+    case '1304': return 'upstream_daily_cap'
+    case '1308':
+    case '1310': return 'upstream_quota_exhausted'
+    case '1309': return 'upstream_plan_expired'
+    case '1311': return 'upstream_model_unavailable'
+    case '1312': return 'upstream_model_busy'
+    case '1313': return 'upstream_policy_restricted'
+    case '1315': return 'upstream_key_restricted'
+    case '1211': return 'upstream_unknown_model'
+    case '1212': return 'upstream_model_method_unsupported'
+    case '1220': return 'upstream_api_permission_denied'
+    case '1210':
+    case '1213':
+    case '1214':
+    case '1215': return 'upstream_request_invalid'
+    default: return httpFailureCode(status)
   }
+}
+
+function bodyFailureCode(error, signal) {
+  if (signal?.aborted) return 'transport_timeout'
+  return error?.name === 'SyntaxError' ? 'malformed_output' : 'transport_error'
 }
 
 function messageText(message) {
@@ -97,6 +102,7 @@ function buildRequestBody({ imageBytes, mediaType, model }) {
     temperature: 0,
     max_tokens: LLM_MAX_TOKENS,
     thinking: { type: 'disabled' },
+    response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: ZAI_RECEIPT_SYSTEM_PROMPT },
       {
@@ -110,6 +116,17 @@ function buildRequestBody({ imageBytes, mediaType, model }) {
   }
 }
 
+function safeUsage(value) {
+  if (!value || typeof value !== 'object') return null
+  const finiteCount = (number) => Number.isSafeInteger(number) && number >= 0 ? number : null
+  const inputTokens = finiteCount(value.prompt_tokens)
+  const cachedInputTokens = finiteCount(value.prompt_tokens_details?.cached_tokens) ?? 0
+  const outputTokens = finiteCount(value.completion_tokens)
+  const totalTokens = finiteCount(value.total_tokens)
+  if (inputTokens === null && outputTokens === null && totalTokens === null) return null
+  return { inputTokens, cachedInputTokens, outputTokens, totalTokens }
+}
+
 /**
  * @param {ArrayBuffer | Uint8Array} imageBytes
  * @param {string} contentType
@@ -121,8 +138,11 @@ export async function scanReceiptWithZai(imageBytes, contentType, env) {
   const model = zaiModel(env)
   let providerStarted = false
   let inputPx = null
-  const fail = (httpStatus, errorBody) => ({
-    ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody, providerStarted, inputPx,
+  const fail = (httpStatus, errorBody, failureCode = null) => ({
+    ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody, failureCode, providerStarted, inputPx,
+    serviceTierRequested: 'not_applicable', serviceTierServed: null,
+    structuredOutputValid: failureCode === 'malformed_output' ? false : null,
+    usage: null, servedModel: null,
   })
   try {
     const config = readConfig(env)
@@ -133,43 +153,63 @@ export async function scanReceiptWithZai(imageBytes, contentType, env) {
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort('timeout'), LLM_FETCH_TIMEOUT_MS)
-    let res
     try {
       // Once fetch is invoked, conservatively account for a paid provider attempt:
       // a transport timeout cannot prove Z.AI did not accept the request.
       providerStarted = true
-      res = await fetch(config.url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${config.key}`,
-        },
-        body: JSON.stringify(buildRequestBody({
-          imageBytes: prepared.imageBytes,
-          mediaType: prepared.mediaType,
-          model: config.model,
-        })),
-        signal: controller.signal,
-      })
+      let res
+      try {
+        res = await fetch(config.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${config.key}`,
+          },
+          body: JSON.stringify(buildRequestBody({
+            imageBytes: prepared.imageBytes,
+            mediaType: prepared.mediaType,
+            model: config.model,
+          })),
+          signal: controller.signal,
+        })
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+
+      if (res.status !== 200) {
+        let errorBody = ''
+        try {
+          errorBody = await res.text()
+        } catch { /* The HTTP status still supplies the closed provider code. */ }
+        const failureCode = businessFailureCode(res.status, errorBody)
+        return fail(res.status, errorBody.slice(0, 500), failureCode)
+      }
+
+      let body
+      try {
+        body = await res.json()
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+      const choice = Array.isArray(body?.choices) ? body.choices[0] : null
+      // A length stop means the JSON was cut mid-object: never return a partial
+      // that happens to parse (a truncated lineItems array looks whole).
+      if (choice?.finish_reason === 'length') return fail(502, 'llm_truncated', 'malformed_output')
+      const rawOutput = messageText(choice?.message).trim()
+      let scanned
+      try { scanned = JSON.parse(rawOutput) } catch { return fail(502, 'llm_invalid_json', 'malformed_output') }
+      const violation = receiptShapeViolation(scanned)
+      if (violation) return fail(502, `llm_schema_violation:${violation}`, 'malformed_output')
+      return {
+        ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model,
+        errorBody: null, failureCode: null, providerStarted, inputPx,
+        serviceTierRequested: 'not_applicable', serviceTierServed: null,
+        structuredOutputValid: true, usage: safeUsage(body.usage),
+        servedModel: typeof body.model === 'string' ? body.model : null,
+      }
     } finally {
       clearTimeout(timeout)
     }
-
-    if (res.status !== 200) {
-      const errorBody = await res.text().catch(() => '')
-      return fail(res.status, errorBody.slice(0, 500))
-    }
-
-    const body = await res.json().catch(() => null)
-    const choice = Array.isArray(body?.choices) ? body.choices[0] : null
-    // A length stop means the JSON was cut mid-object: never return a partial
-    // that happens to parse (a truncated lineItems array looks whole).
-    if (choice?.finish_reason === 'length') return fail(502, 'llm_truncated')
-    const scanned = extractJsonObject(messageText(choice?.message))
-    if (!scanned) return fail(502, 'llm_invalid_json')
-    const violation = receiptShapeViolation(scanned)
-    if (violation) return fail(502, `llm_schema_violation:${violation}`)
-    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, providerStarted, inputPx }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return fail(error instanceof ZaiConfigError ? 503 : 502, message.slice(0, 500))

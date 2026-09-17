@@ -38,6 +38,15 @@ const IMAGE_TRANSFORM_ERROR = 'llm_image_transform_failed'
 // caught below via stop_reason and rejected rather than returned as a partial.
 export const LLM_MAX_TOKENS = 4096
 
+function httpFailureCode(status) {
+  return status === 429 ? 'upstream_rate_limited' : 'upstream_rejected'
+}
+
+function bodyFailureCode(error, signal) {
+  if (signal?.aborted) return 'transport_timeout'
+  return error?.name === 'SyntaxError' ? 'malformed_output' : 'transport_error'
+}
+
 // Mirrors receiptSchema.required/enum so a returned tool input is validated
 // server-side before we trust it — strict:true guards the happy path, this guards
 // against a model/provider that ignores or partially honors the schema.
@@ -51,7 +60,15 @@ const REQUIRED_RECEIPT_KEYS = [
 
 export const LLM_PROVIDER = 'anthropic'
 
-export const RECEIPT_SYSTEM_PROMPT = 'You are a precise receipt-extraction engine. Read the receipt image and emit the receipt via the emit_receipt tool with EXACTLY its schema. All amounts are JSON numbers. Comma-decimal 12,50 means 12.50. Strip thousands separators (1.234,50 -> 1234.50 and 4,500 -> 4500). No-decimal currencies (JPY/KRW) stay integers. currencyCode is ISO-4217. Put every tax/tip/service-charge/mandate/discount line into extras with the correct kind (an included service charge is serviceCharge, not tip). Negative line items like coupons stay in lineItems with negative amounts. LINE-ITEM GRANULARITY: emit EXACTLY one lineItems entry per printed product line on the receipt — never merge two printed lines into one, and never split one printed line into several. A line printed as "N x unit_price" (or "N @ price") is ONE entry: quantity=N and amount = the line total for that row. Do not create extra entries for quantity multipliers, size/modifier sub-lines, or blank rows. Match the printed line count of purchased items.'
+export const RECEIPT_PROMPT_REVISION = 'item-groups-v2'
+export const RECEIPT_SYSTEM_PROMPT = `You are a precise receipt-extraction engine. Read the receipt image and emit the receipt via the emit_receipt tool with EXACTLY its schema.
+Extract only what the image supports. Preserve the printed language, spelling and diacritics; do not translate or replace unfamiliar product names. Printed bilingual descriptions belong together.
+LINE-ITEM GRANULARITY: return one entry per purchased item group, not per physical text line. A product description may wrap across lines and include a translation, size or modifier. Keep those details in that item's name. Do not make separate items for continuation text, quantity/unit-price lines, headings or blank lines. Keep distinct purchased items separate, including repeated items that the receipt lists separately.
+Use each item's printed line total as amount and its printed item count as quantity. For a grouped quantity such as N x unit_price, return one entry with quantity N and the printed line total, not N entries or the unit price as amount. Do not assume a leading product/menu number is a quantity.
+Amounts must be JSON numbers when readable, or null where the schema permits when missing or unreadable. A printed zero is 0; a missing price is never 0. If a purchased item is clearly present but its amount cannot be read, retain it with amount null. Do not invent amounts or items to make totals balance.
+Comma-decimal 12,50 means 12.50. Strip thousands separators (1.234,50 -> 1234.50 and 4,500 -> 4500). No-decimal currencies (JPY/KRW) stay integers. currencyCode is ISO-4217.
+Record each charge or discount exactly once. Receipt-level tax, tip, service charge, fees, mandates, rounding and discounts belong only in extras with the correct kind (an included service charge is serviceCharge, not tip). A separately itemized negative product or product-specific coupon may remain a negative line item; do not also repeat it in extras. A discount already reflected in a printed line total must not be subtracted from that line total again. Preserve genuine printed zero-price promotional items. Keep subtotal, total, tender and change separate from purchased items. Check the complete image once more for missed items, wrapped descriptions, quantities and amount-column alignment before returning the JSON.
+Read handwritten tips and final totals when legible. total is the final payable receipt amount after any explicitly printed rounding or clearly written tip, not an earlier pre-tip total or a tender/change amount. Keep the printed subtotal in subtotal. If a final amount or handwritten figure is unclear, return null for that field instead of guessing or inventing a balancing adjustment.`
 
 class AnthropicConfigError extends Error {
   constructor(message) {
@@ -140,6 +157,22 @@ export const receiptSchema = {
     'total',
     'extras',
   ],
+}
+
+// JSON transports use the same schema and extraction instructions as the tool
+// transport. Keep the response contract in one place when adding a provider.
+export const RECEIPT_JSON_SYSTEM_PROMPT = RECEIPT_SYSTEM_PROMPT.replace(
+  'emit the receipt via the emit_receipt tool with EXACTLY its schema.',
+  `emit ONLY a JSON object with exactly the emit_receipt schema keys (${describeReceiptSchema(receiptSchema)}). Every key is required; use null where allowed. No prose, no code fence.`,
+)
+
+function describeReceiptSchema(schema) {
+  const field = (name, s) => {
+    if (s.enum) return `${name}: one of ${s.enum.join('|')}`
+    if (s.type === 'array') return `${name}: array of {${Object.entries(s.items.properties).map(([n, p]) => field(n, p)).join(', ')}}`
+    return `${name}: ${Array.isArray(s.type) ? s.type.join('|') : s.type}`
+  }
+  return Object.entries(schema.properties).map(([name, s]) => field(name, s)).join('; ')
 }
 
 export function bytesToBase64(imageBytes) {
@@ -602,8 +635,9 @@ const isStringOrNull = (v) => v === null || typeof v === 'string'
 // kind, …), or null when the shape is sound. Never trust the LLM's shape blindly.
 export function receiptShapeViolation(scanned) {
   if (!scanned || typeof scanned !== 'object' || Array.isArray(scanned)) return 'not_object'
+  if (Object.keys(scanned).some((key) => !REQUIRED_RECEIPT_KEYS.includes(key))) return 'additional_property'
   for (const key of REQUIRED_RECEIPT_KEYS) {
-    if (!(key in scanned)) return `missing:${key}`
+    if (!Object.hasOwn(scanned, key)) return `missing:${key}`
   }
   if (!isStringOrNull(scanned.merchantName)) return 'merchantName'
   if (!isStringOrNull(scanned.merchantAddress)) return 'merchantAddress'
@@ -616,6 +650,9 @@ export function receiptShapeViolation(scanned) {
   if (!Array.isArray(scanned.lineItems)) return 'lineItems'
   for (const item of scanned.lineItems) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return 'lineItem'
+    if (Object.keys(item).some((key) => !['name', 'amount', 'quantity'].includes(key))) {
+      return 'lineItem.additional_property'
+    }
     if (typeof item.name !== 'string') return 'lineItem.name'
     if (!isNumberOrNull(item.amount)) return 'lineItem.amount'
     if (!isNumberOrNull(item.quantity)) return 'lineItem.quantity'
@@ -624,6 +661,9 @@ export function receiptShapeViolation(scanned) {
   if (!Array.isArray(scanned.extras)) return 'extras'
   for (const extra of scanned.extras) {
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return 'extra'
+    if (Object.keys(extra).some((key) => !['label', 'amount', 'kind'].includes(key))) {
+      return 'extra.additional_property'
+    }
     if (typeof extra.label !== 'string') return 'extra.label'
     if (!isNumber(extra.amount)) return 'extra.amount'
     if (!EXTRA_KINDS.has(extra.kind)) return 'extra.kind'
@@ -636,13 +676,24 @@ export function receiptShapeViolation(scanned) {
  * @param {ArrayBuffer | Uint8Array} imageBytes
  * @param {string} contentType
  * @param {{ ANTHROPIC_API_KEY?: string, LLM_SCAN_MODEL?: string }} env
- * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, providerStarted: boolean }>}
+ * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, failureCode?: string, providerStarted: boolean }>}
  */
 export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
   const start = Date.now()
   let model = (env.LLM_SCAN_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL
   let providerStarted = false
   let inputPx = null
+  const fail = (httpStatus, errorBody, failureCode = null) => ({
+    ok: false,
+    httpStatus,
+    scanned: null,
+    latencyMs: Date.now() - start,
+    model,
+    errorBody,
+    failureCode,
+    providerStarted,
+    inputPx,
+  })
   try {
     const config = readConfig(env)
     model = config.model
@@ -669,50 +720,63 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort('timeout'), LLM_FETCH_TIMEOUT_MS)
-    let res
     try {
       // Once fetch is invoked, conservatively account for a paid provider attempt:
       // a transport timeout cannot prove Anthropic did not accept the request.
       providerStarted = true
-      res = await fetch(ANTHROPIC_MESSAGES_URL, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': config.key,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify(buildRequestBody({
-          imageBytes: prepared.imageBytes,
-          mediaType: prepared.mediaType,
-          model,
-        })),
-        signal: controller.signal,
-      })
+      let res
+      try {
+        res = await fetch(ANTHROPIC_MESSAGES_URL, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': config.key,
+            'anthropic-version': ANTHROPIC_VERSION,
+          },
+          body: JSON.stringify(buildRequestBody({
+            imageBytes: prepared.imageBytes,
+            mediaType: prepared.mediaType,
+            model,
+          })),
+          signal: controller.signal,
+        })
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+
+      if (res.status !== 200) {
+        let errorBody = ''
+        let failureCode = httpFailureCode(res.status)
+        try {
+          errorBody = await res.text()
+        } catch { /* The HTTP status still supplies the closed provider code. */ }
+        return fail(res.status, errorBody.slice(0, 500), failureCode)
+      }
+
+      let body
+      try {
+        body = await res.json()
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+      // A max_tokens stop means the tool_use was truncated: the emitted receipt is a
+      // partial (missing line items, cut-off amounts). Never return it as a success —
+      // a partial that looks whole is worse than an explicit failure the caller retries.
+      if (body?.stop_reason === 'max_tokens') {
+        return fail(502, 'llm_truncated', 'malformed_output')
+      }
+      const scanned = toolInputFromMessagesBody(body)
+      if (!scanned) {
+        return fail(502, 'missing emit_receipt tool_use', 'malformed_output')
+      }
+      const violation = receiptShapeViolation(scanned)
+      if (violation) {
+        return fail(502, `llm_schema_violation:${violation}`, 'malformed_output')
+      }
+      return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, failureCode: null, providerStarted, inputPx }
     } finally {
       clearTimeout(timeout)
     }
-
-    if (res.status !== 200) {
-      const errorBody = await res.text().catch(() => '')
-      return { ok: false, httpStatus: res.status, scanned: null, latencyMs: Date.now() - start, model, errorBody: errorBody.slice(0, 500), providerStarted, inputPx }
-    }
-
-    const body = await res.json().catch(() => null)
-    // A max_tokens stop means the tool_use was truncated: the emitted receipt is a
-    // partial (missing line items, cut-off amounts). Never return it as a success —
-    // a partial that looks whole is worse than an explicit failure the caller retries.
-    if (body?.stop_reason === 'max_tokens') {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'llm_truncated', providerStarted, inputPx }
-    }
-    const scanned = toolInputFromMessagesBody(body)
-    if (!scanned) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'missing emit_receipt tool_use', providerStarted, inputPx }
-    }
-    const violation = receiptShapeViolation(scanned)
-    if (violation) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: `llm_schema_violation:${violation}`, providerStarted, inputPx }
-    }
-    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, providerStarted, inputPx }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const httpStatus = error instanceof AnthropicConfigError ? 503 : 502

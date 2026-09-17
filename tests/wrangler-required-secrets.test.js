@@ -8,7 +8,9 @@ const { stripJsonComments } = require('../scripts/reliability-cockpit.js')
 const wranglerPath = path.join(__dirname, '..', 'wrangler.jsonc')
 const wrangler = JSON.parse(stripJsonComments(fs.readFileSync(wranglerPath, 'utf8')))
 const runbook = fs.readFileSync(path.join(__dirname, '..', 'RUNBOOK.md'), 'utf8')
-const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY']
+const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY']
+const selectedReceiptProvider = 'zai'
+const selectedReceiptModel = 'glm-5.3-flash'
 
 function assertExactRequiredSecrets(config, scope) {
   const required = config?.secrets?.required
@@ -22,12 +24,23 @@ function assertExactRequiredSecrets(config, scope) {
   )
 }
 
-test('root Worker declares both OCR provider secrets for local dev and type generation', () => {
+test('root Worker declares selected and retained OCR provider secrets for local dev and type generation', () => {
   assertExactRequiredSecrets(wrangler, 'root Worker')
 })
 
 test('named production Worker mirrors the local-dev and type-generation declaration', () => {
   assertExactRequiredSecrets(wrangler.env?.production, 'production Worker')
+})
+
+test('root and named production retain the selected receipt provider and model', () => {
+  for (const [scope, config] of [
+    ['root Worker', wrangler],
+    ['production Worker', wrangler.env?.production],
+  ]) {
+    assert.equal(config?.vars?.LLM_SCAN_PROVIDER, selectedReceiptProvider, `${scope} provider`)
+    assert.equal(config?.vars?.LLM_SCAN_MODEL, selectedReceiptModel, `${scope} model`)
+    assert.equal('LLM_SCAN_AZURE_GRACE_MS' in config.vars, false, `${scope} grace override`)
+  }
 })
 
 test('required-secret declaration rejects omission, substitution, or extras', () => {
@@ -39,7 +52,7 @@ test('required-secret declaration rejects omission, substitution, or extras', ()
   ]) {
     assert.throws(
       () => assertExactRequiredSecrets({ secrets: { required: invalid } }, 'mutated Worker'),
-      /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY/
+    /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY/
     )
   }
 })

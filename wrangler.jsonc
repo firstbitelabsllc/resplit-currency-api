@@ -77,8 +77,8 @@
   "secrets": {
     // LLM_SCAN_KILL_SWITCH is an optional operator secret (unset = off), not a
     // source var. This keeps a live emergency stop intact across routine deploys.
-    // ZAI_API_KEY is required only once LLM_SCAN_PROVIDER=zai is uncommented above.
-    "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
+    // Keep the selected Z.AI provider credential required and continuity-checked.
+    "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "ZAI_API_KEY"]
   },
   "durable_objects": {
     "bindings": [
@@ -164,7 +164,7 @@
       // Environments do not inherit this local-dev/type-generation metadata.
       "secrets": {
         // Optional operator secret: LLM_SCAN_KILL_SWITCH (unset = off).
-        "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY"]
+        "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "ZAI_API_KEY"]
       },
       "durable_objects": {
         "bindings": [

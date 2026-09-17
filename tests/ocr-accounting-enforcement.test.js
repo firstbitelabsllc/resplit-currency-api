@@ -394,6 +394,38 @@ test('enforced dual scan commits both provider units after both paid operations 
   })
 })
 
+test('OpenAI shares the existing LLM attempt cap, commits once and charges no cache replay', async () => {
+  const calls = stubAzure()
+  const previousFetch = globalThis.fetch
+  let openaiCalls = 0
+  globalThis.fetch = async (url, init) => {
+    if (url !== 'https://api.openai.com/v1/responses') return previousFetch(url, init)
+    openaiCalls++
+    return Response.json({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({
+      merchantName: 'Cafe', merchantAddress: null, transactionDate: null,
+      currencyCode: 'USD', currencySymbol: '$', lineItems: [{ name: 'Meal', amount: 9, quantity: 1 }],
+      subtotal: 9, total: 10, extras: [{ label: 'Tax', amount: 1, kind: 'tax' }],
+    }) }] }] })
+  }
+  const accounting = makeAccountingBinding({ azureGlobalCap: 2, anthropicGlobalCap: 1 })
+  const env = makeEnv({ accounting, LLM_SCAN_PROVIDER: 'openai', OPENAI_API_KEY: 'o', LLM_SCAN_AZURE_GRACE_MS: '0' })
+  const image = new Uint8Array([255,216,255,192,0,17,8,2,88,3,32,3,1,34,0,2,17,1,3,17,1,7])
+  const first = await (await handleOcr(analyzeRequest(image), env)).json()
+  assert.equal(first.engines.find(e=>e.id==='llm').provider, 'openai')
+  assert.equal(first.engines.find(e=>e.id==='llm').status, 'succeeded')
+  assert.equal(accounting.records.commits[0].anthropicUnits, 1, 'historical bucket is one selected LLM attempt')
+  await handleOcr(dualScanRequest(image), env)
+  assert.equal(openaiCalls, 1)
+  assert.equal(accounting.records.commits.length, 1)
+  assert.equal(accounting.records.reservations.length, 1)
+  image[image.length-1] = 8
+  const second = await (await handleOcr(analyzeRequest(image), env)).json()
+  assert.equal(second.engines.find(e=>e.id==='llm').status, 'rate_limited')
+  assert.equal(openaiCalls, 1, 'shared cap must prevent another paid OpenAI attempt')
+  assert.equal(calls.anthropic, 0)
+  assert.equal(accounting.records.commits[1].anthropicUnits, 0)
+})
+
 test('enforced analyze kill switch reserves and commits Azure only', async () => {
   const calls = stubAzure()
   const accounting = makeAccountingBinding({ azureGlobalCap: 1, anthropicGlobalCap: 0 })

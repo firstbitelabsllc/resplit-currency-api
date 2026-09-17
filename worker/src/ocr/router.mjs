@@ -15,6 +15,7 @@ import { requestCorrelationHeaders, resolveRequestId } from '../request-id.mjs'
 import { captureFxRouteFailure } from '../monitoring.mjs'
 import { CORS_HEADERS, handlePreflight } from '../http/cors.mjs'
 import {
+  closedOcrFailureDiagnostic,
   logOcrMonitoringEvent,
   captureOcrProviderFailure,
   captureOcrLlmFailure,
@@ -300,15 +301,16 @@ async function handleScan(request, env, requestId, ctx) {
     const submit = await submitReceiptAnalyze(imageBytes, contentType, env)
     azureStartedUnits = submit.ok ? 1 : 0
     if (!submit.ok || !submit.operationId) {
-      return finishScan(env, { scanId, attest, status: azureStatus(submit.httpStatus), raw: null, requestId, clientVersion, start, azureStart, azureStatus: submit.httpStatus, cache: 'miss' })
+      return finishScan(env, { scanId, attest, status: azureStatus(submit.httpStatus), raw: null, requestId, clientVersion, start, azureStart, azureStatus: submit.httpStatus, cache: 'miss', diagnostic: submit.failureCode ?? (submit.ok ? 'malformed_output' : 'unknown') })
     }
 
     let result = null
     let azureHttp = submit.httpStatus
+    let diagnostic = 'unknown'
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       const poll = await getReceiptAnalyzeResult(submit.operationId, env)
       azureHttp = poll.httpStatus
-      if (!poll.ok) break
+      if (!poll.ok) { diagnostic = poll.failureCode ?? 'unknown'; break }
       if (poll.status === 'succeeded') { result = poll.body; break }
       if (poll.status === 'failed') break
       await sleep(POLL_INTERVAL_MS)
@@ -328,7 +330,7 @@ async function handleScan(request, env, requestId, ctx) {
     const status = result ? 'ok' : 'provider_error'
     return finishScan(env, {
       scanId, attest, status, raw: result, requestId, clientVersion, start, azureStart,
-      azureStatus: azureHttp, cache: 'miss', cacheKey, kvExtras,
+      azureStatus: azureHttp, cache: 'miss', cacheKey, kvExtras, diagnostic,
     })
   } finally {
     await settleOcrWork(env, {
@@ -390,8 +392,8 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   // the key is route-agnostic: dual-scan and analyze share one scan for the same
   // image+gate+model (the Azure+Anthropic work is byte-identical; only presentation
   // differs). The `v2core` token stops a read from parsing a pre-deploy v1-envelope
-  // cache entry as an internal result. llmCacheVariant() is empty for the default
-  // provider/edge configuration and namespaces any flip.
+  // cache entry as an internal result. llmCacheVariant() isolates the selected
+  // provider, image edge and prompt revision.
   const cacheKey = `cache:dualScan:v2core:${imageHash}:${llmGate.cacheKey}:${model}${llmCacheVariant(env)}`
   const cached = await env.ATTEST_KV.get(cacheKey)
   if (cached) {
@@ -429,12 +431,17 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     accountingAllowed: admission.anthropicAllowed,
   })
 
-  const azureSettled = await asSettled(azurePromise)
+  // Attach rejection handlers at launch so a fast unexpected provider throw cannot
+  // become an unhandled rejection while the other leg is settling.
+  const azureSettledPromise = asSettled(azurePromise)
+  const llmSettledPromise = asSettled(llmPromise)
+  const azureSettled = await azureSettledPromise
   const azureLeg = settledValue(azureSettled, () => ({
     status: 'provider_error',
     raw: null,
     httpStatus: 502,
-    latencyMs: null,
+    latencyMs: Date.now() - start,
+    diagnostic: null,
     accountingUnits: 0,
   }))
 
@@ -445,7 +452,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   let llmSettled
   let releasedAfterAzureGrace = false
   if (azureLeg.status === 'succeeded') {
-    const pendingLlmSettled = asSettled(llmPromise)
+    const pendingLlmSettled = llmSettledPromise
     const graceMs = azureGraceMs(env)
     if (graceMs > 0 && hasBackgroundSupport(ctx)) {
       const deadline = azureGraceDeadline(graceMs)
@@ -460,7 +467,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
       llmSettled = await pendingLlmSettled
     }
   } else {
-    llmSettled = await asSettled(llmPromise)
+    llmSettled = await llmSettledPromise
   }
 
   const llmLeg = releasedAfterAzureGrace ? abandonedLlmLeg(env, model) : settledValue(llmSettled, () => ({
@@ -468,7 +475,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     provider: llmProvider(env),
     model,
     scanned: null,
-    latencyMs: null,
+    latencyMs: Date.now() - start,
     httpStatus: 502,
     errorBody: 'llm_leg_threw',
     diagnostic: null,
@@ -503,7 +510,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
           provider: llmProvider(env),
           model,
           scanned: null,
-          latencyMs: null,
+          latencyMs: Date.now() - start,
           httpStatus: 502,
           errorBody: 'llm_leg_threw',
           diagnostic: null,
@@ -554,7 +561,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
         if (lateLlmPublic.status === 'provider_error') {
           await captureOcrLlmFailure({
             scanId, requestId, route, llmStatus: lateLlmPublic.status,
-            httpStatus: lateLlmPublic.httpStatus, reason: lateLlmPublic.errorBody,
+            httpStatus: lateLlmPublic.httpStatus, diagnostic: lateLlmPublic.diagnostic,
             model: lateLlmPublic.model, attest, clientVersion, totalMs: lateMs,
           }, env)
         }
@@ -637,7 +644,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
   if (llm.status === 'provider_error') {
     await captureOcrLlmFailure({
       scanId, requestId, route, llmStatus: llm.status, httpStatus: llm.httpStatus,
-      reason: llm.errorBody, model: llm.model, attest, clientVersion, totalMs,
+      diagnostic: llm.diagnostic, model: llm.model, attest, clientVersion, totalMs,
     }, env)
   }
 
@@ -863,8 +870,8 @@ function respondRateLimited(env, { route, shapeEnvelope, scanId, attest, request
   const result = {
     scanId,
     status: 'rate_limited',
-    azure: { status: 'rate_limited', raw: null, httpStatus: 429, latencyMs: 0 },
-    llm: { status: 'not_started', provider: llmProvider(env), model: llmModel(env), scanned: null, latencyMs: 0, httpStatus: 429, errorBody: null },
+    azure: { status: 'rate_limited', raw: null, httpStatus: 429, latencyMs: 0, diagnostic: 'scan_rate_limited' },
+    llm: { status: 'not_started', provider: llmProvider(env), model: llmModel(env), scanned: null, latencyMs: 0, httpStatus: 429, errorBody: null, diagnostic: 'scan_rate_limited' },
     divergence: null,
   }
   logDualScanMonitoring(env, {
@@ -873,8 +880,14 @@ function respondRateLimited(env, { route, shapeEnvelope, scanId, attest, request
   return renderScan(shapeEnvelope, result, requestId)
 }
 
-function envelope({ status, raw, scanId, kvExtras }) {
-  return { v: ENVELOPE_VERSION, mode: 'raw', provider: OCR_PROVIDER, scanId, status, kv_extras: kvExtras ?? 'off', raw: raw ?? null }
+function envelope({ status, raw, scanId, kvExtras, diagnostic }) {
+  return {
+    v: ENVELOPE_VERSION, mode: 'raw', provider: OCR_PROVIDER, scanId, status,
+    kv_extras: kvExtras ?? 'off', raw: raw ?? null,
+    ...(status === 'ok' ? {} : {
+      diagnostic: closedOcrFailureDiagnostic(diagnostic ?? (status === 'rate_limited' ? 'scan_rate_limited' : 'unknown')),
+    }),
+  }
 }
 
 function dualScanEnvelope({ scanId, status, azure, llm, divergence }) {
@@ -943,7 +956,7 @@ function contributingAiModels(result) {
 }
 
 function analyzeAzureEngine(azure) {
-  return {
+  const engine = {
     id: 'azure',
     kind: 'ocr',
     provider: OCR_PROVIDER,
@@ -952,6 +965,8 @@ function analyzeAzureEngine(azure) {
     latencyMs: azure.latencyMs ?? null,
     raw: azure.raw ?? null,
   }
+  if (azure.diagnostic) engine.diagnostic = azure.diagnostic
+  return engine
 }
 
 function analyzeLlmEngine(llm) {
@@ -1045,7 +1060,7 @@ function mergeKeyValuePairs(baseResult, layoutResult) {
 
 async function finishScan(env, ctx) {
   const env_ = env
-  const body = JSON.stringify(envelope({ status: ctx.status, raw: ctx.raw, scanId: ctx.scanId, kvExtras: ctx.kvExtras }))
+  const body = JSON.stringify(envelope({ status: ctx.status, raw: ctx.raw, scanId: ctx.scanId, kvExtras: ctx.kvExtras, diagnostic: ctx.diagnostic }))
   if (ctx.status === 'ok' && ctx.cacheKey) {
     await writeOcrCacheBestEffort(env_, {
       cacheKey: ctx.cacheKey,
@@ -1121,16 +1136,21 @@ async function runAzureRawLeg({ imageBytes, contentType, env, accountingEnforced
         raw: null,
         httpStatus: submit.httpStatus,
         latencyMs: Date.now() - start,
+        diagnostic: submit.failureCode ?? (submit.ok ? 'malformed_output' : null),
         accountingUnits,
       }
     }
 
     let raw = null
     let httpStatus = submit.httpStatus
+    let failureCode = null
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       const poll = await getReceiptAnalyzeResult(submit.operationId, env)
       httpStatus = poll.httpStatus
-      if (!poll.ok) break
+      if (!poll.ok) {
+        failureCode = poll.failureCode ?? null
+        break
+      }
       if (poll.status === 'succeeded') { raw = poll.body; break }
       if (poll.status === 'failed') break
       await sleep(POLL_INTERVAL_MS)
@@ -1141,10 +1161,10 @@ async function runAzureRawLeg({ imageBytes, contentType, env, accountingEnforced
       raw,
       httpStatus,
       latencyMs: Date.now() - start,
+      diagnostic: raw ? null : failureCode,
       accountingUnits,
     }
   } catch (error) {
-    if (!accountingEnforced) throw error
     // Preserve the conservative provider-start receipt if polling throws after
     // Azure accepted the analyze request.
     return {
@@ -1152,6 +1172,7 @@ async function runAzureRawLeg({ imageBytes, contentType, env, accountingEnforced
       raw: null,
       httpStatus: 502,
       latencyMs: Date.now() - start,
+      diagnostic: null,
       accountingUnits,
     }
   }
@@ -1187,28 +1208,42 @@ async function runLlmLeg({
       latencyMs: 0,
       httpStatus: 429,
       errorBody: null,
-      diagnostic: null,
+      diagnostic: 'llm_daily_cap',
       inputPx: null,
       accountingUnits: 0,
     }
   }
 
-  const result = await scanReceiptWithLlm(imageBytes, contentType, env)
-  return {
-    status: result.ok ? 'succeeded' : azureStatus(result.httpStatus),
-    provider,
-    model: result.model || model,
-    scanned: result.scanned ?? null,
-    latencyMs: result.latencyMs,
-    httpStatus: result.httpStatus,
-    // Carries 'llm_truncated' / 'llm_schema_violation:…' / provider error text so the
-    // Sentry capture below can tag WHY the paid leg failed, not just that it did.
-    errorBody: result.errorBody ?? null,
-    diagnostic: null,
-    // Long edge of the image the provider actually received (after any
-    // LLM_SCAN_MAX_EDGE scale-down); surfaces as llm_input_px in monitoring.
-    inputPx: result.inputPx ?? null,
-    accountingUnits: result.providerStarted === true ? 1 : 0,
+  const started = Date.now()
+  try {
+    const result = await scanReceiptWithLlm(imageBytes, contentType, env)
+    return {
+      status: result.ok ? 'succeeded' : azureStatus(result.httpStatus),
+      provider,
+      model: result.model || model,
+      scanned: result.scanned ?? null,
+      latencyMs: Number.isFinite(result.latencyMs) ? result.latencyMs : Date.now() - started,
+      httpStatus: result.httpStatus,
+      // The raw body remains internal for existing callers; monitoring receives
+      // only the closed failureCode below.
+      errorBody: result.errorBody ?? null,
+      diagnostic: result.failureCode ?? null,
+      inputPx: result.inputPx ?? null,
+      accountingUnits: result.providerStarted === true ? 1 : 0,
+    }
+  } catch {
+    return {
+      status: 'provider_error',
+      provider,
+      model,
+      scanned: null,
+      latencyMs: Date.now() - started,
+      httpStatus: 502,
+      errorBody: 'llm_leg_threw',
+      diagnostic: null,
+      inputPx: null,
+      accountingUnits: 0,
+    }
   }
 }
 
@@ -1851,9 +1886,9 @@ function scanDisabled(env, { scanId, requestId, clientVersion }) {
   logOcrMonitoringEvent('warn', {
     signal: 'scan', phase: 'scan', status: 'disabled', scanId, requestId, client_version: clientVersion,
   }, env)
-  return errorResponse('OCR_DISABLED', 'OCR scan temporarily disabled', 503, requestId, {
-    ...RESPONSE_HEADERS,
-    'Retry-After': '300',
+  return jsonResponse({ error: 'OCR_DISABLED', message: 'OCR scan temporarily disabled', requestId, traceId: requestId, scanId, diagnostic: 'operator_disabled' }, {
+    status: 503, requestId,
+    headers: { ...RESPONSE_HEADERS, 'Retry-After': '300' },
   })
 }
 
