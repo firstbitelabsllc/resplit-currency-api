@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -87,11 +88,18 @@ type CurrencyObject struct {
 	Rates       map[string]float64 `json:"rates"`        // <Base>->code, units-per-1-Base
 }
 
-// PublishResult summarizes a completed publish run for the caller's logs.
+// PublishResult summarizes a publish run for the caller's logs and telemetry.
+//
+// Sources names the upstreams that returned a usable snapshot, and is populated
+// on the gate failures that abort the publish too: during a partial upstream
+// outage the caller must still be able to tell a healthy provider from a failed
+// one. The one exception is the freshness gate, which excludes every snapshot it
+// rejects and so reports no available sources (their names go into the error
+// instead). Every other field is only meaningful when the run succeeded.
 type PublishResult struct {
 	Base          string   // EUR — the reconciliation base
 	Date          string   // reconciled snapshot date
-	Sources       []string // sources that contributed
+	Sources       []string // sources that returned a usable snapshot
 	CurrencyCount int      // number of per-currency objects written
 	FailedQuorum  []string // currencies that appeared but missed quorum
 }
@@ -118,12 +126,15 @@ func PublishLatest(ctx context.Context, sources []Source, w ObjectWriter, cfg Pu
 	}
 
 	snaps := fetchAll(ctx, sources)
+	// fetched is carried into every subsequent return, successful or not, so a
+	// failed run still reports which upstreams answered.
+	fetched := snapshotSources(snaps)
 
 	// Coverage gate (pre-reconcile): we must have at least minAgree usable
 	// snapshots, else quorum can never be reached. This is the gate that turns a
 	// single-source day into a no-publish day instead of a wrong-rate day.
 	if len(snaps) < cfg.MinAgree {
-		return PublishResult{}, fmt.Errorf("%w: %d usable sources, need %d",
+		return PublishResult{Sources: fetched}, fmt.Errorf("%w: %d usable sources, need %d",
 			ErrCoverageGate, len(snaps), cfg.MinAgree)
 	}
 
@@ -131,42 +142,44 @@ func PublishLatest(ctx context.Context, sources []Source, w ObjectWriter, cfg Pu
 	// A snapshot with an unparseable/blank date is treated as "fresh enough" so a
 	// provider that omits a date can still anchor a publish, but it cannot be the
 	// SOLE basis — coverage above already guarantees >= minAgree sources.
+	// The freshness gate excludes every snapshot it rejects, so no source is
+	// contributing here: report none as available and keep the fetched names in
+	// the error for diagnostics, otherwise a stale-data outage looks healthy.
 	if !anyFresh(snaps, cfg.now(), cfg.maxRateAge()) {
-		return PublishResult{}, fmt.Errorf("%w: all %d snapshots older than %s",
-			ErrStaleGate, len(snaps), cfg.maxRateAge())
+		return PublishResult{}, fmt.Errorf("%w: all %d snapshots older than %s (fetched: %s)",
+			ErrStaleGate, len(snaps), cfg.maxRateAge(), strings.Join(fetched, ","))
 	}
 
 	rates, failed, err := Reconcile(snaps, cfg.MinAgree)
 	if err != nil {
-		return PublishResult{}, fmt.Errorf("fx: reconcile: %w", err)
+		return PublishResult{Sources: fetched}, fmt.Errorf("fx: reconcile: %w", err)
 	}
 	if len(rates) == 0 {
-		return PublishResult{}, ErrEmptyReconcile
+		return PublishResult{Sources: fetched}, ErrEmptyReconcile
 	}
 
-	contributing := snapshotSources(snaps)
 	date := reconciledDate(snaps)
 	generatedAt := cfg.now().UTC().Format(time.RFC3339)
 
-	objects, err := PrecomputeObjects(rates, contributing, date, generatedAt)
+	objects, err := PrecomputeObjects(rates, fetched, date, generatedAt)
 	if err != nil {
-		return PublishResult{}, fmt.Errorf("fx: precompute: %w", err)
+		return PublishResult{Sources: fetched}, fmt.Errorf("fx: precompute: %w", err)
 	}
 
 	for _, obj := range objects {
 		body, marshalErr := json.Marshal(obj.payload)
 		if marshalErr != nil {
-			return PublishResult{}, fmt.Errorf("fx: marshal %s: %w", obj.path, marshalErr)
+			return PublishResult{Sources: fetched}, fmt.Errorf("fx: marshal %s: %w", obj.path, marshalErr)
 		}
 		if writeErr := w.WriteObject(ctx, obj.path, body, ObjectContentType, ObjectCacheControl); writeErr != nil {
-			return PublishResult{}, fmt.Errorf("fx: write %s: %w", obj.path, writeErr)
+			return PublishResult{Sources: fetched}, fmt.Errorf("fx: write %s: %w", obj.path, writeErr)
 		}
 	}
 
 	return PublishResult{
 		Base:          "EUR",
 		Date:          date,
-		Sources:       contributing,
+		Sources:       fetched,
 		CurrencyCount: len(objects),
 		FailedQuorum:  failed,
 	}, nil
