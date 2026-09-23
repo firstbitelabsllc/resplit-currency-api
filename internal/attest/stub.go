@@ -46,6 +46,18 @@ func (m *MemStore) PutKey(_ context.Context, keyID string, pubSPKI []byte, signC
 	return nil
 }
 
+// CreateKey registers a key only when absent. Concurrent callers racing the
+// same keyId see exactly one success; the rest get ErrAlreadyExists.
+func (m *MemStore) CreateKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.records[keyID]; ok {
+		return ErrAlreadyExists
+	}
+	m.records[keyID] = memRecord{spki: pubSPKI, signCount: signCount}
+	return nil
+}
+
 // StubOCRProvider is a placeholder OCR backend that echoes a fixed shape so the
 // service builds and the scan route is wired end to end.
 //

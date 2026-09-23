@@ -64,16 +64,25 @@ func attestErr(code, format string, args ...any) *Error {
 // Store implementations should return this (wrapped or bare) from GetKey.
 var ErrUnknownKey = &Error{Code: "UNKNOWN_KEY", Msg: "attested key not found"}
 
+// ErrAlreadyExists is returned by CreateKey when keyID is already registered.
+// VerifyAttestation treats a matching SPKI as an idempotent success so client
+// retries stay safe, but never resets an advanced signCount via PutKey.
+var ErrAlreadyExists = &Error{Code: "ALREADY", Msg: "attested key already registered"}
+
 // Store abstracts the Firestore-backed attest_keys state.
 //
 // GetKey loads an attested key's SPKI public key and current signCount; it must
 // surface ErrUnknownKey when the keyID is absent. PutKey persists (or replaces)
-// a key with the given SPKI and signCount.
+// a key with the given SPKI and signCount — used by the assertion path to
+// advance signCount. CreateKey registers a key only if absent (atomic); used by
+// the once-per-install attestation path so a captured /ocr/attest replay cannot
+// overwrite an advanced signCount back to 0 and resurrect old assertions.
 //
 // TODO(gcp): provide a *firestore.Client-backed implementation in cmd/ocr.
 type Store interface {
 	GetKey(ctx context.Context, keyID string) (pubSPKI []byte, signCount uint32, err error)
 	PutKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error
+	CreateKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error
 }
 
 // AssertionInput is the per-request payload verified at /ocr/scan.
