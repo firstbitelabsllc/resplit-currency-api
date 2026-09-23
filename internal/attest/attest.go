@@ -68,12 +68,18 @@ var ErrUnknownKey = &Error{Code: "UNKNOWN_KEY", Msg: "attested key not found"}
 //
 // GetKey loads an attested key's SPKI public key and current signCount; it must
 // surface ErrUnknownKey when the keyID is absent. PutKey persists (or replaces)
-// a key with the given SPKI and signCount.
+// a key with the given SPKI and signCount. AdvanceSignCount is the assertion
+// hot-path primitive: it must atomically move signCount to next only when the
+// stored value is strictly less than next, returning a REPLAY *Error otherwise.
+// A plain GetKey→check→PutKey sequence is not safe under concurrent /ocr/scan
+// (two valid assertions can both pass the check; a lower PutKey can also
+// regress the counter and resurrect a higher assertion).
 //
 // TODO(gcp): provide a *firestore.Client-backed implementation in cmd/ocr.
 type Store interface {
 	GetKey(ctx context.Context, keyID string) (pubSPKI []byte, signCount uint32, err error)
 	PutKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error
+	AdvanceSignCount(ctx context.Context, keyID string, next uint32) error
 }
 
 // AssertionInput is the per-request payload verified at /ocr/scan.
@@ -142,7 +148,8 @@ func VerifyAssertion(ctx context.Context, in AssertionInput, store Store) error 
 		return attestErr("UNKNOWN_KEY", "store GetKey failed: %v", err)
 	}
 
-	// signCount must strictly advance (replay guard).
+	// Cheap pre-check before ECDSA. The authoritative race-safe advance is
+	// AdvanceSignCount below — this only fails closed on clearly stale counters.
 	if ad.signCount <= signCount {
 		return attestErr("REPLAY", "signCount %d does not advance stored %d", ad.signCount, signCount)
 	}
@@ -160,8 +167,16 @@ func VerifyAssertion(ctx context.Context, in AssertionInput, store Store) error 
 		return attestErr("SIG", "assertion signature invalid")
 	}
 
-	if err := store.PutKey(ctx, in.KeyID, spki, ad.signCount); err != nil {
-		return attestErr("STORE", "store PutKey failed: %v", err)
+	// Atomic counter advance (Worker Durable Object equivalent). Must not be a
+	// blind PutKey: concurrent scans sharing one keyId would otherwise both
+	// bill Azure, and a lower signCount write winning a race would reopen a
+	// higher assertion already consumed.
+	if err := store.AdvanceSignCount(ctx, in.KeyID, ad.signCount); err != nil {
+		var ae *Error
+		if errors.As(err, &ae) {
+			return ae
+		}
+		return attestErr("STORE", "store AdvanceSignCount failed: %v", err)
 	}
 	return nil
 }

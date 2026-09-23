@@ -2,6 +2,7 @@ package firestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	gfs "cloud.google.com/go/firestore"
@@ -102,4 +103,42 @@ func (a *clientDocStore) Increment(ctx context.Context, coll, id, field string, 
 		return 0, fmt.Errorf("firestore increment %s/%s.%s: %w", coll, id, field, err)
 	}
 	return newVal, nil
+}
+
+// AdvanceInt64IfGreater sets field to next only when the document exists and the
+// stored value is strictly less than next. Used by App Attest signCount so two
+// concurrent /ocr/scan assertions cannot both advance (or regress) the counter.
+func (a *clientDocStore) AdvanceInt64IfGreater(ctx context.Context, coll, id, field string, next int64) error {
+	ref := a.cli.Collection(coll).Doc(id)
+	err := a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error {
+		snap, err := tx.Get(ref)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return ErrNotFound
+			}
+			return err
+		}
+		var cur int64
+		if v, derr := snap.DataAt(field); derr == nil {
+			switch n := v.(type) {
+			case int64:
+				cur = n
+			case int:
+				cur = int64(n)
+			case float64:
+				cur = int64(n)
+			}
+		}
+		if next <= cur {
+			return ErrConflict
+		}
+		return tx.Set(ref, map[string]any{field: next}, gfs.MergeAll)
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) {
+			return err
+		}
+		return fmt.Errorf("firestore advance %s/%s.%s: %w", coll, id, field, err)
+	}
+	return nil
 }

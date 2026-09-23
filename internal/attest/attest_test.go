@@ -52,6 +52,21 @@ func (s *fakeStore) PutKey(_ context.Context, keyID string, pubSPKI []byte, sign
 	return nil
 }
 
+func (s *fakeStore) AdvanceSignCount(_ context.Context, keyID string, next uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.records[keyID]
+	if !ok {
+		return ErrUnknownKey
+	}
+	if next <= r.signCount {
+		return attestErr("REPLAY", "signCount %d does not advance stored %d", next, r.signCount)
+	}
+	r.signCount = next
+	s.records[keyID] = r
+	return nil
+}
+
 // buildAuthData assembles the 37-byte assertion authenticatorData:
 // rpIdHash(32) || flags(1) || signCount(4 big-endian).
 func buildAuthData(appID string, signCount uint32) []byte {
@@ -307,5 +322,129 @@ func TestAppleRootEmbedded(t *testing.T) {
 	}
 	if cert.PublicKeyAlgorithm != x509.ECDSA {
 		t.Fatalf("expected ECDSA public key, got %v", cert.PublicKeyAlgorithm)
+	}
+}
+
+// TestVerifyAssertion_ConcurrentSameSignCount admits exactly one of many
+// identical assertions. The pre-fix GetKey→PutKey path let every goroutine
+// pass the monotonic check and bill Azure; AdvanceSignCount must serialize.
+func TestVerifyAssertion_ConcurrentSameSignCount(t *testing.T) {
+	ctx := context.Background()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	const keyID = "race-same-sc"
+	store := NewMemStore()
+	registerKey(t, store, keyID, key, 10)
+
+	clientData := []byte("same-image-bytes")
+	authData := buildAuthData(testAppID, 11)
+	assertion := signAssertion(t, key, authData, clientData)
+	in := AssertionInput{
+		KeyID:        keyID,
+		AssertionB64: base64.StdEncoding.EncodeToString(assertion),
+		ClientData:   clientData,
+		AppID:        testAppID,
+	}
+
+	const n = 32
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		wins    int
+		replays int
+	)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			err := VerifyAssertion(ctx, in, store)
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				wins++
+				return
+			}
+			var ae *Error
+			if errors.As(err, &ae) && ae.Code == "REPLAY" {
+				replays++
+				return
+			}
+			t.Errorf("unexpected error: %v", err)
+		}()
+	}
+	wg.Wait()
+	if wins != 1 {
+		t.Fatalf("successes = %d, want exactly 1", wins)
+	}
+	if replays != n-1 {
+		t.Fatalf("replays = %d, want %d", replays, n-1)
+	}
+	_, sc, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if sc != 11 {
+		t.Fatalf("signCount = %d, want 11", sc)
+	}
+}
+
+// TestVerifyAssertion_ConcurrentLowerCannotRegressCounter ensures a lower
+// signCount PutKey cannot win a race after a higher advance and reopen the
+// higher assertion (free OCR replay).
+func TestVerifyAssertion_ConcurrentLowerCannotRegressCounter(t *testing.T) {
+	ctx := context.Background()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	const keyID = "race-regress"
+	store := NewMemStore()
+	registerKey(t, store, keyID, key, 10)
+
+	clientData := []byte("image-for-regress-race")
+	lowAuth := buildAuthData(testAppID, 11)
+	highAuth := buildAuthData(testAppID, 12)
+	lowIn := AssertionInput{
+		KeyID:        keyID,
+		AssertionB64: base64.StdEncoding.EncodeToString(signAssertion(t, key, lowAuth, clientData)),
+		ClientData:   clientData,
+		AppID:        testAppID,
+	}
+	highIn := AssertionInput{
+		KeyID:        keyID,
+		AssertionB64: base64.StdEncoding.EncodeToString(signAssertion(t, key, highAuth, clientData)),
+		ClientData:   clientData,
+		AppID:        testAppID,
+	}
+
+	// Run many interleaved attempts so a non-atomic PutKey regression would
+	// occasionally leave signCount at 11 after 12 had already succeeded.
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = VerifyAssertion(ctx, highIn, store)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = VerifyAssertion(ctx, lowIn, store)
+		}()
+	}
+	wg.Wait()
+
+	_, sc, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if sc != 12 {
+		t.Fatalf("signCount = %d, want 12 (must not regress to 11)", sc)
+	}
+
+	// Higher assertion is consumed; replaying it must fail.
+	if err := VerifyAssertion(ctx, highIn, store); err == nil {
+		t.Fatal("expected REPLAY on consumed high assertion")
 	}
 }

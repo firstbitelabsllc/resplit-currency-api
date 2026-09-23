@@ -52,17 +52,23 @@ var ErrNotFound = errors.New("firestore: document not found")
 // atomic delta to an integer field (the production adapter maps this to
 // firestore.Increment so per-device counters are race-free across instances).
 // Create writes a document only if it does not already exist, returning
-// ErrAlreadyExists otherwise — the idempotency primitive.
+// ErrAlreadyExists otherwise — the idempotency primitive. AdvanceInt64IfGreater
+// is the App Attest signCount CAS: set field to next only when current < next.
 type docStore interface {
 	Get(ctx context.Context, coll, id string) (map[string]any, error)
 	Set(ctx context.Context, coll, id string, fields map[string]any) error
 	Create(ctx context.Context, coll, id string, fields map[string]any) error
 	Increment(ctx context.Context, coll, id, field string, delta int64) (int64, error)
+	AdvanceInt64IfGreater(ctx context.Context, coll, id, field string, next int64) error
 }
 
 // ErrAlreadyExists is returned by docStore.Create when the document is already
 // present. ReserveOCR maps it to a non-error "already seen" signal.
 var ErrAlreadyExists = errors.New("firestore: document already exists")
+
+// ErrConflict is returned by AdvanceInt64IfGreater when the stored value is
+// already greater than or equal to next (lost race or stale assertion).
+var ErrConflict = errors.New("firestore: advance conflict")
 
 // FirestoreStore implements attest.Store and hosts the idempotency + rate-cap
 // helpers over a docStore.
@@ -117,6 +123,24 @@ func (s *FirestoreStore) PutKey(ctx context.Context, keyID string, pubSPKI []byt
 		return fmt.Errorf("firestore put key %q: %w", keyID, err)
 	}
 	return nil
+}
+
+// AdvanceSignCount atomically moves attest_keys/{keyID}.signCount to next when
+// the stored counter is strictly less than next. Maps a missing document to
+// attest.ErrUnknownKey and a lost race / stale next onto a REPLAY *Error so
+// VerifyAssertion fails closed without regressing the counter.
+func (s *FirestoreStore) AdvanceSignCount(ctx context.Context, keyID string, next uint32) error {
+	err := s.docs.AdvanceInt64IfGreater(ctx, collAttestKeys, keyID, fieldSignCount, int64(next))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrNotFound):
+		return attest.ErrUnknownKey
+	case errors.Is(err, ErrConflict):
+		return &attest.Error{Code: "REPLAY", Msg: fmt.Sprintf("signCount %d did not advance", next)}
+	default:
+		return fmt.Errorf("firestore advance signCount %q: %w", keyID, err)
+	}
 }
 
 // ---- idempotency -------------------------------------------------------------
