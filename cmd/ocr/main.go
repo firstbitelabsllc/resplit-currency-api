@@ -402,12 +402,12 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowed {
 		// A same-image repeat is a RECOVERY attempt, not abuse. The reservation
-		// that produces `duplicate_scan` is taken before the provider runs and is
-		// never released, so a client whose transport died mid-upload used to get
-		// 429 on every retry (prod event 82d20dc195dd466a80ba6c552434d486). Serve
-		// the coalesced/cached answer instead — still exactly one provider
-		// execution, but the retry now completes. Genuine rate caps
-		// (`rate_cap`, `budget_kill_switch`, `rate_error`) still block.
+		// that produces `duplicate_scan` is taken before the provider runs. On
+		// provider failure we Release so a retry can re-reserve; on success the
+		// claim is kept for the idempotency TTL. Serve the coalesced/cached
+		// answer when present — still exactly one provider execution.
+		// Genuine rate caps (`rate_cap`, `budget_kill_switch`, `rate_error`)
+		// still block.
 		if reason == "duplicate_scan" {
 			if cached, ok := s.coalescer.Lookup(imageKey); ok {
 				s.recordScan(r.Context(), "ok", attestResult)
@@ -422,20 +422,31 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			// No answer to replay: the first attempt never completed (body never
-			// fully arrived, or it failed). Fall through to the provider via the
-			// coalescer, which still guarantees one execution per image.
-		} else {
+			// Reservation still holds (idempotency TTL, default 24h) but the
+			// in-memory coalesce answer is gone. Falling through here used to
+			// re-bill Azure on every post-TTL retry of a successful scan —
+			// ReserveOCR already consumed the spend slot. Fail closed; a
+			// provider failure path Releases the reservation so genuine
+			// retries still reach Allow as fresh.
 			s.recordScan(r.Context(), "rate_limited", attestResult)
 			log.Warn("[OCR_MONITORING] scan blocked",
 				slog.String("signal", "scan"), slog.String("status", "rate_limited"),
-				slog.String("attest", attestResult), slog.String("reason", reason),
+				slog.String("attest", attestResult), slog.String("reason", "duplicate_scan_no_cache"),
 				slog.Int64("count", count), slog.String("scan_id", scanID))
 			writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
 				V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
 			})
 			return
 		}
+		s.recordScan(r.Context(), "rate_limited", attestResult)
+		log.Warn("[OCR_MONITORING] scan blocked",
+			slog.String("signal", "scan"), slog.String("status", "rate_limited"),
+			slog.String("attest", attestResult), slog.String("reason", reason),
+			slog.Int64("count", count), slog.String("scan_id", scanID))
+		writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
+			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
+		})
+		return
 	}
 
 	result, executed, err := s.coalescer.Do(r.Context(), imageKey, func() ([]byte, error) {
@@ -443,6 +454,12 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	})
 	_ = executed
 	if err != nil {
+		// Reserve was taken before the provider ran. Drop it so the same image
+		// can retry; otherwise duplicate_scan + empty coalesce cache would
+		// rate-limit every recovery attempt for the full idempotency TTL.
+		if releaseErr := s.spendGate.Release(r.Context(), identity, image); releaseErr != nil {
+			log.Warn("ocr spend gate release failed", slog.Any("error", releaseErr), slog.String("scan_id", scanID))
+		}
 		status := scanErrorStatus(err)
 		code := http.StatusBadGateway
 		if status == "rate_limited" {

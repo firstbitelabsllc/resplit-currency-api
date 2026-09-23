@@ -288,6 +288,87 @@ func TestScanSpendGateDuplicateDoesNotRebill(t *testing.T) {
 	}
 }
 
+// After a successful scan, ReserveOCR still holds for the idempotency TTL
+// (hours) while the in-memory coalesce answer expires in seconds. Falling
+// through to the provider on that miss used to re-bill Azure for the same
+// bytes — the spend slot was already consumed.
+func TestScanSpendGateDuplicateAfterCoalesceTTLDoesNotRebill(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
+	provider := &countingProvider{}
+	gate := &ocrSpendGate{
+		mem:            newMemorySpendStore(time.Now),
+		window:         time.Hour,
+		idempotencyTTL: time.Hour,
+		attestedLimit:  100,
+		softFailLimit:  10,
+	}
+	srv := newServerWithGate(attest.NewMemStore(), provider, slog.Default(), nil, gate)
+
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	srv.coalescer = newScanCoalescer(30*time.Second, func() time.Time { return now })
+
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("same-image-bytes"))
+	req1.RemoteAddr = "203.0.113.20:1234"
+	req1.Header.Set(headerSoftFail, "true")
+	srv.routes().ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200 (body: %s)", rec1.Code, rec1.Body.String())
+	}
+
+	now = now.Add(31 * time.Second)
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("same-image-bytes"))
+	req2.RemoteAddr = "203.0.113.20:1234"
+	req2.Header.Set(headerSoftFail, "true")
+	srv.routes().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("post-TTL duplicate status = %d, want 429 (body: %s)", rec2.Code, rec2.Body.String())
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1 — coalesce miss must not re-enter Azure", provider.calls)
+	}
+}
+
+// Provider failure must Release the pre-provider reservation so the same image
+// can retry. Without Release, fail-closed duplicate_scan would lock the client
+// out for the full idempotency TTL after a transient Azure error.
+func TestScanSpendGateProviderFailureReleasesReservationForRetry(t *testing.T) {
+	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
+	provider := &countingProvider{err: errors.New("azure: analyze failed")}
+	gate := &ocrSpendGate{
+		mem:            newMemorySpendStore(time.Now),
+		window:         time.Hour,
+		idempotencyTTL: time.Hour,
+		attestedLimit:  100,
+		softFailLimit:  10,
+	}
+	srv := newServerWithGate(attest.NewMemStore(), provider, slog.Default(), nil, gate)
+
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("retryable-image"))
+	req1.RemoteAddr = "203.0.113.21:1234"
+	req1.Header.Set(headerSoftFail, "true")
+	srv.routes().ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusBadGateway {
+		t.Fatalf("first status = %d, want 502 (body: %s)", rec1.Code, rec1.Body.String())
+	}
+
+	provider.err = nil
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/ocr/scan", strings.NewReader("retryable-image"))
+	req2.RemoteAddr = "203.0.113.21:1234"
+	req2.Header.Set(headerSoftFail, "true")
+	srv.routes().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 (body: %s)", rec2.Code, rec2.Body.String())
+	}
+	if provider.calls != 2 {
+		t.Fatalf("provider calls = %d, want 2 — failure must release so retry can spend once", provider.calls)
+	}
+}
+
 func TestScanSpendGateSoftFailCapBlocksDistinctImages(t *testing.T) {
 	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
 	provider := &countingProvider{}
