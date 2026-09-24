@@ -70,6 +70,12 @@ gauntlet; Grafana is the production truth; the client contract is untouchable.
 - **Usage is metered or the attempt is excluded.** Cost comparisons use only
   rows with provider `usage`; the runner reports
   `attempts_without_usage` — never average over unknown-cost attempts.
+- **Pre-register bars the remedy can physically meet.** A retry always spends
+  the failed attempt's tokens and always doubles the wait on the fixtures it
+  touches, so a token bar under ~15% or a tight aggregate-p95 bar refutes ANY
+  retry by construction (ro20 A/B: 12/12 failures recovered, 0 parity loss,
+  refused on +28.6% tokens / +10.4 s p95). Decide the bar from what the fix
+  structurally costs, write it down before the run, and honor it after.
 - **Deploy gate.** Merging Worker-touching changes to main rides the
   scheduled publish = a production rollout; that needs the recorded owner
   approval for the exact payload (same gate as ~sc07/~sc08). Bench on a
