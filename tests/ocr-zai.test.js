@@ -318,3 +318,91 @@ test('without LLM_SCAN_MAX_EDGE the Z.AI leg keeps the shared 1568px ceiling', a
   assert.equal(res.inputPx, 1568)
   assert.equal(calls[0].width, 1568)
 })
+
+// ---- bounded single retry on malformed output (LLM_SCAN_ZAI_RETRY_MALFORMED) ----
+// Malformed GLM failures are stochastic at temperature 0 (ro18 run-1 vs run-2:
+// zero fixture overlap), so one bounded retry is the candidate remedy. The
+// default stays OFF: the deployed request path is byte-identical until the
+// paired bench proves the retry recovers more scans than it costs.
+
+function stubZaiSequence(responses) {
+  let call = 0
+  globalThis.fetch = async (url, init = {}) => {
+    const response = responses[Math.min(call, responses.length - 1)]
+    call += 1
+    lastUrl = String(url)
+    lastInit = init
+    lastBody = JSON.parse(init.body)
+    return Response.json(response.body, { status: response.status ?? 200 })
+  }
+  return () => call
+}
+
+test('malformed output does not retry unless the operator enables it (default off)', async () => {
+  const calls = stubZaiSequence([{ body: chatCompletion('definitely not json') }])
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env())
+  assert.equal(res.ok, false)
+  assert.equal(res.failureCode, 'malformed_output')
+  assert.equal(calls(), 1)
+})
+
+test('enabled retry rewrites a malformed first attempt into success and sums usage across attempts', async () => {
+  const calls = stubZaiSequence([
+    { body: chatCompletion('definitely not json') },
+    { body: chatCompletion(JSON.stringify(scannedReceipt())) },
+  ])
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env({ LLM_SCAN_ZAI_RETRY_MALFORMED: '1' }))
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.scanned, scannedReceipt())
+  assert.equal(res.providerStarted, true)
+  assert.equal(calls(), 2)
+  // The scan paid for both provider attempts, so billed usage sums them.
+  assert.deepEqual(res.usage, { inputTokens: 2000, cachedInputTokens: 0, outputTokens: 400, totalTokens: null })
+  assert.equal(typeof res.latencyMs, 'number')
+})
+
+test('enabled retry that fails malformed again returns the final failure without inventing success', async () => {
+  const calls = stubZaiSequence([
+    { body: chatCompletion('nope') },
+    { body: chatCompletion('still nope') },
+  ])
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env({ LLM_SCAN_ZAI_RETRY_MALFORMED: '1' }))
+  assert.equal(res.ok, false)
+  assert.equal(res.failureCode, 'malformed_output')
+  assert.equal(res.structuredOutputValid, false)
+  assert.equal(calls(), 2)
+})
+
+test('non-malformed provider failures never retry', async () => {
+  const calls = stubZaiSequence([
+    { body: { error: { message: 'rejected' } }, status: 400 },
+    { body: chatCompletion(JSON.stringify(scannedReceipt())) },
+  ])
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env({ LLM_SCAN_ZAI_RETRY_MALFORMED: '1' }))
+  assert.equal(res.ok, false)
+  assert.equal(res.failureCode, 'upstream_rejected')
+  assert.equal(calls(), 1)
+})
+
+test('the retry stays inside the client budget: no second attempt when little time remains', async () => {
+  const realNow = Date.now
+  let firstCall = true
+  // First read is the leg start; every later read reports 80s elapsed, which
+  // leaves 90 - 80 - 5 = 5s — under the 10s retry minimum, so no second call.
+  Date.now = () => {
+    if (firstCall) { firstCall = false; return 0 }
+    return 80_000
+  }
+  try {
+    const calls = stubZaiSequence([
+      { body: chatCompletion('nope') },
+      { body: chatCompletion(JSON.stringify(scannedReceipt())) },
+    ])
+    const res = await scanReceiptWithZai(image, 'image/jpeg', env({ LLM_SCAN_ZAI_RETRY_MALFORMED: '1' }))
+    assert.equal(res.ok, false)
+    assert.equal(res.failureCode, 'malformed_output')
+    assert.equal(calls(), 1)
+  } finally {
+    Date.now = realNow
+  }
+})

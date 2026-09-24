@@ -133,10 +133,43 @@ function safeUsage(value) {
   return { inputTokens, cachedInputTokens, outputTokens, totalTokens }
 }
 
+// Client-side scan budget: the iOS scanner abandons the visible wait at 90 s
+// (r311), so a retry must leave headroom for the response round trip after
+// the LLM leg settles.
+const CLIENT_SCAN_BUDGET_MS = 90_000
+const RETRY_MIN_DEADLINE_MS = 10_000
+const RETRY_SAFETY_MARGIN_MS = 5_000
+
+// True only when the operator explicitly opts in via per-environment config.
+// Off by default: the deployed request path stays byte-identical until a
+// paired bench proves the retry recovers more scans than it costs
+// (ai/skills/ocr-perf-loop). Malformed failures are stochastic at temperature
+// 0 (ro18 run-1 vs run-2: zero fixture overlap), so one bounded retry is the
+// smallest candidate remedy; the bench verdict owns keep-or-revert.
+function malformedRetryEnabled(env) {
+  return String(env.LLM_SCAN_ZAI_RETRY_MALFORMED ?? '').trim() === '1'
+}
+
+// Billed truth across attempts: a scan that needed a retry paid for both
+// provider calls, so the reported usage sums every metered attempt. The
+// result shape stays frozen — aggregation lives inside the existing usage
+// object, no new fields reach the router, cache, or client envelope.
+function addUsage(a, b) {
+  if (!a) return b
+  if (!b) return a
+  const sum = (x, y) => (x == null && y == null) ? null : (x ?? 0) + (y ?? 0)
+  return {
+    inputTokens: sum(a.inputTokens, b.inputTokens),
+    cachedInputTokens: sum(a.cachedInputTokens, b.cachedInputTokens),
+    outputTokens: sum(a.outputTokens, b.outputTokens),
+    totalTokens: sum(a.totalTokens, b.totalTokens),
+  }
+}
+
 /**
  * @param {ArrayBuffer | Uint8Array} imageBytes
  * @param {string} contentType
- * @param {{ ZAI_API_KEY?: string, LLM_SCAN_MODEL?: string, LLM_SCAN_BASE_URL?: string, LLM_SCAN_MAX_EDGE?: string }} env
+ * @param {{ ZAI_API_KEY?: string, LLM_SCAN_MODEL?: string, LLM_SCAN_BASE_URL?: string, LLM_SCAN_MAX_EDGE?: string, LLM_SCAN_ZAI_RETRY_MALFORMED?: string }} env
  * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, providerStarted: boolean, inputPx: number | null }>}
  */
 export async function scanReceiptWithZai(imageBytes, contentType, env) {
@@ -157,68 +190,95 @@ export async function scanReceiptWithZai(imageBytes, contentType, env) {
     if (!prepared.ok) return fail(prepared.httpStatus, prepared.reason)
     inputPx = prepared.longEdge
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort('timeout'), LLM_FETCH_TIMEOUT_MS)
-    try {
-      // Once fetch is invoked, conservatively account for a paid provider attempt:
-      // a transport timeout cannot prove Z.AI did not accept the request.
-      providerStarted = true
-      let res
+    // One bounded provider attempt. Returns the final-shaped result plus the
+    // attempt's metered usage and whether the failure class is retryable.
+    const attempt = async (timeoutMs) => {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort('timeout'), timeoutMs)
       try {
-        res = await fetch(config.url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${config.key}`,
-          },
-          body: JSON.stringify(buildRequestBody({
-            imageBytes: prepared.imageBytes,
-            mediaType: prepared.mediaType,
-            model: config.model,
-            // Coding-plan deployments keep thinking pinned; the general API
-            // omits the key (code 1210 otherwise).
-            thinking: config.url.includes('/api/coding/') ? 'disabled' : null,
-          })),
-          signal: controller.signal,
-        })
-      } catch (error) {
-        return fail(502, null, bodyFailureCode(error, controller.signal))
-      }
-
-      if (res.status !== 200) {
-        let errorBody = ''
+        // Once fetch is invoked, conservatively account for a paid provider
+        // attempt: a transport timeout cannot prove Z.AI did not accept it.
+        providerStarted = true
+        let res
         try {
-          errorBody = await res.text()
-        } catch { /* The HTTP status still supplies the closed provider code. */ }
-        const failureCode = businessFailureCode(res.status, errorBody)
-        return fail(res.status, errorBody.slice(0, 500), failureCode)
-      }
+          res = await fetch(config.url, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              authorization: `Bearer ${config.key}`,
+            },
+            body: JSON.stringify(buildRequestBody({
+              imageBytes: prepared.imageBytes,
+              mediaType: prepared.mediaType,
+              model: config.model,
+              // Coding-plan deployments keep thinking pinned; the general API
+              // omits the key (code 1210 otherwise).
+              thinking: config.url.includes('/api/coding/') ? 'disabled' : null,
+            })),
+            signal: controller.signal,
+          })
+        } catch (error) {
+          return { result: fail(502, null, bodyFailureCode(error, controller.signal)), usage: null, malformed: false }
+        }
 
-      let body
-      try {
-        body = await res.json()
-      } catch (error) {
-        return fail(502, null, bodyFailureCode(error, controller.signal))
+        if (res.status !== 200) {
+          let errorBody = ''
+          try {
+            errorBody = await res.text()
+          } catch { /* The HTTP status still supplies the closed provider code. */ }
+          const failureCode = businessFailureCode(res.status, errorBody)
+          return { result: fail(res.status, errorBody.slice(0, 500), failureCode), usage: null, malformed: false }
+        }
+
+        let body
+        try {
+          body = await res.json()
+        } catch (error) {
+          return { result: fail(502, null, bodyFailureCode(error, controller.signal)), usage: null, malformed: false }
+        }
+        const usage = safeUsage(body.usage)
+        const choice = Array.isArray(body?.choices) ? body.choices[0] : null
+        // A length stop means the JSON was cut mid-object: never return a partial
+        // that happens to parse (a truncated lineItems array looks whole).
+        if (choice?.finish_reason === 'length') {
+          return { result: fail(502, 'llm_truncated', 'malformed_output'), usage, malformed: true }
+        }
+        const rawOutput = messageText(choice?.message).trim()
+        let scanned
+        try { scanned = JSON.parse(rawOutput) } catch {
+          return { result: fail(502, 'llm_invalid_json', 'malformed_output'), usage, malformed: true }
+        }
+        const violation = receiptShapeViolation(scanned)
+        if (violation) {
+          return { result: fail(502, `llm_schema_violation:${violation}`, 'malformed_output'), usage, malformed: true }
+        }
+        return {
+          result: {
+            ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model,
+            errorBody: null, failureCode: null, providerStarted, inputPx,
+            serviceTierRequested: 'not_applicable', serviceTierServed: null,
+            structuredOutputValid: true, usage,
+            servedModel: typeof body.model === 'string' ? body.model : null,
+          },
+          usage, malformed: false,
+        }
+      } finally {
+        clearTimeout(timeout)
       }
-      const choice = Array.isArray(body?.choices) ? body.choices[0] : null
-      // A length stop means the JSON was cut mid-object: never return a partial
-      // that happens to parse (a truncated lineItems array looks whole).
-      if (choice?.finish_reason === 'length') return fail(502, 'llm_truncated', 'malformed_output')
-      const rawOutput = messageText(choice?.message).trim()
-      let scanned
-      try { scanned = JSON.parse(rawOutput) } catch { return fail(502, 'llm_invalid_json', 'malformed_output') }
-      const violation = receiptShapeViolation(scanned)
-      if (violation) return fail(502, `llm_schema_violation:${violation}`, 'malformed_output')
-      return {
-        ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model,
-        errorBody: null, failureCode: null, providerStarted, inputPx,
-        serviceTierRequested: 'not_applicable', serviceTierServed: null,
-        structuredOutputValid: true, usage: safeUsage(body.usage),
-        servedModel: typeof body.model === 'string' ? body.model : null,
-      }
-    } finally {
-      clearTimeout(timeout)
     }
+
+    const first = await attempt(LLM_FETCH_TIMEOUT_MS)
+    if (!first.malformed) return first.result
+
+    // Retry at most once, only on malformed output, only while the deadline
+    // math keeps the whole leg inside the client's 90 s budget. latencies stay
+    // whole-leg: Date.now() - start includes both attempts by construction.
+    const retryDeadlineMs = CLIENT_SCAN_BUDGET_MS - (Date.now() - start) - RETRY_SAFETY_MARGIN_MS
+    if (!malformedRetryEnabled(env) || retryDeadlineMs < RETRY_MIN_DEADLINE_MS) return first.result
+
+    const second = await attempt(Math.min(LLM_FETCH_TIMEOUT_MS, retryDeadlineMs))
+    if (!second.result.ok) return second.result
+    return { ...second.result, usage: addUsage(first.usage, second.result.usage) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return fail(error instanceof ZaiConfigError ? 503 : 502, message.slice(0, 500))
