@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -179,6 +180,75 @@ func TestPublishLatest(t *testing.T) {
 				if !equalStrings(result.Sources, tt.wantSources) {
 					t.Fatalf("result.Sources = %v, want %v", result.Sources, tt.wantSources)
 				}
+			}
+		})
+	}
+}
+
+// TestPublishLatest_ReportsFetchedSourcesWhenGatesFail pins the telemetry
+// contract for a partial outage: when one upstream dies and the coverage gate
+// refuses to publish, the healthy provider must still be named in the result so
+// the caller can keep fx_source_available truthful per source.
+func TestPublishLatest_ReportsFetchedSourcesWhenGatesFail(t *testing.T) {
+	const today = "2026-05-30"
+
+	tests := []struct {
+		name    string
+		sources []Source
+		cfg     PublishConfig
+		want    []string
+		wantErr string // substring the error must carry, when set
+	}{
+		{
+			name: "coverage gate keeps the surviving provider",
+			sources: []Source{
+				fakeSource{err: errors.New("upstream 503")},
+				fakeSource{snap: eurBaseSnap("frankfurter", today, 1.0853, 0.8548, 168.30)},
+			},
+			cfg:  PublishConfig{MinAgree: 2, Now: fixedNow(today)},
+			want: []string{"frankfurter"},
+		},
+		{
+			// The freshness gate excludes every snapshot, so no provider is
+			// contributing: naming them here would report a stale-data outage as
+			// two healthy sources.
+			name: "freshness gate names no provider",
+			sources: []Source{
+				fakeSource{snap: eurBaseSnap("er-api", "2026-01-01", 1.0850, 0.8550, 168.20)},
+				fakeSource{snap: eurBaseSnap("frankfurter", "2026-01-01", 1.0853, 0.8548, 168.30)},
+			},
+			cfg:     PublishConfig{MinAgree: 2, MaxRateAge: 96 * time.Hour, Now: fixedNow(today)},
+			want:    nil,
+			wantErr: "fetched: er-api,frankfurter",
+		},
+		{
+			name: "empty reconcile keeps both providers",
+			sources: []Source{
+				fakeSource{snap: SourceSnapshot{Source: "er-api", Date: today, Rates: map[string]float64{"USD": 1.08}}},
+				fakeSource{snap: SourceSnapshot{Source: "frankfurter", Date: today, Rates: map[string]float64{"USD": 2.50}}},
+			},
+			cfg:  PublishConfig{MinAgree: 2, Now: fixedNow(today)},
+			want: []string{"er-api", "frankfurter"},
+		},
+		{
+			name:    "total outage names no provider",
+			sources: []Source{fakeSource{err: errors.New("upstream 503")}},
+			cfg:     PublishConfig{MinAgree: 2, Now: fixedNow(today)},
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := PublishLatest(context.Background(), tt.sources, newFakeWriter(), tt.cfg)
+			if err == nil {
+				t.Fatal("expected the publish to fail a gate")
+			}
+			if !equalStrings(result.Sources, tt.want) {
+				t.Fatalf("result.Sources = %v, want %v", result.Sources, tt.want)
+			}
+			if tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
 	}
