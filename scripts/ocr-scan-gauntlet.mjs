@@ -799,6 +799,14 @@ export async function runProviderMatrix({
         const credential = credentialName && typeof env?.[credentialName] === 'string'
           ? { [credentialName]: env[credentialName] }
           : {}
+        // A named credential_env also aliases into the provider's built-in key
+        // name, so one matrix can pair cases from different aggregators (each
+        // with its own key var) against the selected provider's transports.
+        // Values stay inside the case env; reports never carry them.
+        if (credentialName && credential[credentialName] !== undefined) {
+          const builtin = BUILT_IN_CREDENTIAL_ENV[String(providerCase.env.LLM_SCAN_PROVIDER || '').trim().toLowerCase()]
+          if (builtin && builtin !== credentialName) credential[builtin] = credential[credentialName]
+        }
         const caseEnv = { ...credential, ...providerCase.env }
         const replay = await runProviderReplay({
           set: [entry.receipt], sourceFormat, root, env: caseEnv, concurrency: 1, scan,
@@ -821,6 +829,10 @@ export async function runProviderMatrix({
     const credential = credentialName && typeof env?.[credentialName] === 'string'
       ? { [credentialName]: env[credentialName] }
       : {}
+    if (credentialName && credential[credentialName] !== undefined) {
+      const builtin = BUILT_IN_CREDENTIAL_ENV[String(providerCase.env.LLM_SCAN_PROVIDER || '').trim().toLowerCase()]
+      if (builtin && builtin !== credentialName) credential[builtin] = credential[credentialName]
+    }
     const caseEnv = { ...credential, ...providerCase.env }
     const report = summarizeProviderReplay(caseRows.get(providerCase.name), inventory, caseEnv)
     return {
