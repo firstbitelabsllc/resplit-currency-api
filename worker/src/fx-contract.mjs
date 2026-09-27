@@ -454,7 +454,7 @@ function computeCrossRate(rates, from, to) {
   const toRate = rates[toKey]
   if (typeof fromRate !== 'number' || !Number.isFinite(fromRate) || fromRate <= 0) return null
   if (typeof toRate !== 'number' || !Number.isFinite(toRate) || toRate <= 0) return null
-  return toRate / fromRate
+  return fromRate / toRate
 }
 
 /**
