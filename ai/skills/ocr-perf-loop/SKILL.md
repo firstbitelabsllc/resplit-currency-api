@@ -78,3 +78,20 @@ gauntlet; Grafana is the production truth; the client contract is untouchable.
   "Model leg" row must track latency, billed tokens, and drift by
   `llm_model` before any model flip goes out; after deploy, import/read back
   the live dashboard rather than trusting the JSON alone.
+
+## Lessons from ~ro21 (2026-09-26, OpenRouter pool bench)
+- **Aggregator transport**: the worker's `openai` transport is Responses-API with a fixed
+  endpoint — it cannot serve OpenRouter (chat-completions only). The `zai` transport is
+  plain chat-completions with configurable `LLM_SCAN_BASE_URL`, so OpenRouter rides it
+  with zero worker code change.
+- **One matrix, many credentials**: per-case `credential_env` sits at the CASE level,
+  never inside `env` (the validator refuses). The runner aliases it into the provider's
+  key env var so a single matrix can pair an incumbent and an aggregator.
+- **In-run control arm**: when baselines drift between runs (observed 5.5 → 6.1 s), put
+  the incumbent IN the matrix as a control case instead of comparing across runs.
+- **Live-catalog selection**: pick contenders from `GET /api/v1/models` at run time;
+  the vision field is `architecture.input_modalities` (plural — the singular name parses
+  as zero vision models and looks like a parser bug, not an empty pool).
+- **Served-model disclosure**: aggregators may not echo the served model (drift guard
+  reads null-not-false in telemetry). Disclose it in the pre-registration; it is not a
+  failure by itself.
