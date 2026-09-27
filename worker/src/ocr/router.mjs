@@ -1197,6 +1197,8 @@ async function runLlmLeg({
       diagnostic: gate.diagnostic ?? null,
       inputPx: null,
       accountingUnits: 0,
+      usage: null,
+      servedModel: null,
     }
   }
 
@@ -1213,6 +1215,8 @@ async function runLlmLeg({
       diagnostic: 'llm_daily_cap',
       inputPx: null,
       accountingUnits: 0,
+      usage: null,
+      servedModel: null,
     }
   }
 
@@ -1232,6 +1236,8 @@ async function runLlmLeg({
       diagnostic: result.failureCode ?? null,
       inputPx: result.inputPx ?? null,
       accountingUnits: result.providerStarted === true ? 1 : 0,
+      usage: result.usage ?? null,
+      servedModel: result.servedModel ?? null,
     }
   } catch {
     return {
@@ -1245,6 +1251,8 @@ async function runLlmLeg({
       diagnostic: null,
       inputPx: null,
       accountingUnits: 0,
+      usage: null,
+      servedModel: null,
     }
   }
 }
@@ -1808,6 +1816,15 @@ function logDualScanMonitoring(env, { result, route, requestId, clientVersion, a
     llm_diagnostic: result.llm?.diagnostic ?? null,
     llm_provider: result.llm?.provider ?? LLM_PROVIDER,
     llm_model: result.llm?.model,
+    llm_served_model: result.llm?.servedModel ?? null,
+    // Drift guard: null until the provider echoes a served model; false means
+    // production called for one model and the provider served another.
+    llm_served_model_matches: result.llm?.servedModel == null
+      ? null
+      : result.llm.servedModel === result.llm?.model,
+    llm_input_tokens: result.llm?.usage?.inputTokens ?? null,
+    llm_cached_input_tokens: result.llm?.usage?.cachedInputTokens ?? null,
+    llm_output_tokens: result.llm?.usage?.outputTokens ?? null,
     llm_input_px: result.llm?.inputPx ?? null,
     llm_reasoning: result.llm?.status === 'succeeded',
     attest,
