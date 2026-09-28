@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -48,6 +49,16 @@ func (s *fakeStore) GetKey(_ context.Context, keyID string) ([]byte, uint32, err
 func (s *fakeStore) PutKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.records[keyID] = fakeRecord{spki: pubSPKI, signCount: signCount}
+	return nil
+}
+
+func (s *fakeStore) CreateKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.records[keyID]; ok {
+		return ErrAlreadyExists
+	}
 	s.records[keyID] = fakeRecord{spki: pubSPKI, signCount: signCount}
 	return nil
 }
@@ -307,5 +318,88 @@ func TestAppleRootEmbedded(t *testing.T) {
 	}
 	if cert.PublicKeyAlgorithm != x509.ECDSA {
 		t.Fatalf("expected ECDSA public key, got %v", cert.PublicKeyAlgorithm)
+	}
+}
+
+// TestRegisterAttestedKeyBlocksSignCountReset pins the Go Cloud Run gap vs the
+// Worker: challenges are stateless, so a captured /ocr/attest body could be
+// replayed. Unconditional PutKey(0) would reset an advanced counter and
+// re-admit old assertions. Create-only registration must leave signCount alone.
+func TestRegisterAttestedKeyBlocksSignCountReset(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	const keyID = "attest-replay-kid"
+
+	if err := registerAttestedKey(ctx, store, keyID, spki); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if err := store.PutKey(ctx, keyID, spki, 50); err != nil {
+		t.Fatalf("advance signCount: %v", err)
+	}
+
+	// Captured attest replay: same keyId + SPKI must succeed idempotently…
+	if err := registerAttestedKey(ctx, store, keyID, spki); err != nil {
+		t.Fatalf("idempotent re-register: %v", err)
+	}
+	// …without resetting the counter.
+	_, sc, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if sc != 50 {
+		t.Fatalf("signCount after re-attest = %d, want 50 (must not reset to 0)", sc)
+	}
+
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey other: %v", err)
+	}
+	otherSPKI, err := x509.MarshalPKIXPublicKey(&other.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey other: %v", err)
+	}
+	err = registerAttestedKey(ctx, store, keyID, otherSPKI)
+	var ae *Error
+	if !errors.As(err, &ae) || ae.Code != "ALREADY" {
+		t.Fatalf("expected ALREADY for foreign SPKI, got %v", err)
+	}
+	_, sc, err = store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey after foreign attempt: %v", err)
+	}
+	if sc != 50 {
+		t.Fatalf("signCount after foreign re-attest = %d, want 50", sc)
+	}
+}
+
+func TestMemStoreCreateKeyIsAtomic(t *testing.T) {
+	store := NewMemStore()
+	const keyID = "race-kid"
+	spki := []byte{0x30, 0x01}
+
+	var wins atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := store.CreateKey(context.Background(), keyID, spki, 0); err == nil {
+				wins.Add(1)
+			} else if !errors.Is(err, ErrAlreadyExists) {
+				t.Errorf("unexpected CreateKey error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if wins.Load() != 1 {
+		t.Fatalf("CreateKey winners = %d, want exactly 1", wins.Load())
 	}
 }

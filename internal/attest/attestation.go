@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -177,8 +178,26 @@ func VerifyAttestation(ctx context.Context, in AttestationInput, store Store) er
 	if err != nil {
 		return attestErr("KEY", "SPKI marshal failed: %v", err)
 	}
-	if err := store.PutKey(ctx, in.KeyID, spki, 0); err != nil {
-		return attestErr("STORE", "store PutKey failed: %v", err)
+	return registerAttestedKey(ctx, store, in.KeyID, spki)
+}
+
+// registerAttestedKey creates the once-per-install attest_keys row. Create-only:
+// a captured /ocr/attest replay must not PutKey(signCount=0) over an advanced
+// counter (that would re-admit previously consumed assertions). Matching-SPKI
+// AlreadyExists is treated as success so legitimate client retries stay green.
+func registerAttestedKey(ctx context.Context, store Store, keyID string, spki []byte) error {
+	if err := store.CreateKey(ctx, keyID, spki, 0); err != nil {
+		if errors.Is(err, ErrAlreadyExists) {
+			existing, _, getErr := store.GetKey(ctx, keyID)
+			if getErr != nil {
+				return attestErr("STORE", "store GetKey after CreateKey conflict failed: %v", getErr)
+			}
+			if subtle.ConstantTimeCompare(existing, spki) == 1 {
+				return nil
+			}
+			return attestErr("ALREADY", "keyId already registered to a different public key")
+		}
+		return attestErr("STORE", "store CreateKey failed: %v", err)
 	}
 	return nil
 }
