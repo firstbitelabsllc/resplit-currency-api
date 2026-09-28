@@ -71,6 +71,17 @@ func (f *fakeDocs) Create(_ context.Context, coll, id string, fields map[string]
 	return nil
 }
 
+func (f *fakeDocs) Delete(_ context.Context, coll, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c := f.coll(coll)
+	if _, ok := c[id]; !ok {
+		return ErrNotFound
+	}
+	delete(c, id)
+	return nil
+}
+
 func (f *fakeDocs) Increment(_ context.Context, coll, id, field string, delta int64) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -198,6 +209,37 @@ func TestReserveOCR_Idempotency(t *testing.T) {
 	}
 	if !exp.Equal(fixed.Add(ttl)) {
 		t.Errorf("expiresAt: got %v want %v", exp, fixed.Add(ttl))
+	}
+}
+
+func TestReleaseOCR_AllowsRereserve(t *testing.T) {
+	ctx := context.Background()
+	docs := newFakeDocs()
+	fixed := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	store := NewStore(docs)
+	store.now = func() time.Time { return fixed }
+
+	const (
+		device = "dev-release"
+		hash   = "deadbeef"
+		ttl    = time.Hour
+	)
+
+	if fresh, err := store.ReserveOCR(ctx, device, hash, ttl); err != nil || !fresh {
+		t.Fatalf("ReserveOCR #1: fresh=%v err=%v", fresh, err)
+	}
+	if err := store.ReleaseOCR(ctx, device, hash); err != nil {
+		t.Fatalf("ReleaseOCR: %v", err)
+	}
+	if err := store.ReleaseOCR(ctx, device, hash); err != nil {
+		t.Fatalf("ReleaseOCR missing: %v (want nil)", err)
+	}
+	fresh, err := store.ReserveOCR(ctx, device, hash, ttl)
+	if err != nil {
+		t.Fatalf("ReserveOCR after release: %v", err)
+	}
+	if !fresh {
+		t.Fatal("ReserveOCR after release: want fresh=true")
 	}
 }
 
