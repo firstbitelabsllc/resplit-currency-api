@@ -471,7 +471,7 @@ test('provider matrix configuration rejects credential injection and unsafe pric
   ]), /safe name and configuration object/)
 })
 
-test('a named credential_env aliases into the provider key so mixed-aggregator matrices run in one pass', async () => {
+test('a named credential_env stays in its own key slot across a mixed-provider matrix', async () => {
   const { root, set } = await fixtureReplaySet()
   try {
     const seen = []
@@ -510,10 +510,10 @@ test('a named credential_env aliases into the provider key so mixed-aggregator m
     // The native case sees only its own provider key.
     assert.equal(native.zai, 'secret-zai')
     assert.equal(native.or, undefined)
-    // The named credential rides AND aliases into the transport's built-in key
-    // slot, so the zai transport authenticates against OpenRouter unchanged.
+    // The OpenRouter key must never occupy the Z.AI key slot. If this matrix
+    // case is later pointed at Z.AI, it must fail closed instead of crossing keys.
     assert.equal(orCase.or, 'secret-or')
-    assert.equal(orCase.zai, 'secret-or')
+    assert.equal(orCase.zai, undefined)
     // Secrets never reach the report.
     assert.equal(JSON.stringify(report).includes('secret-or'), false)
     assert.equal(JSON.stringify(report).includes('secret-zai'), false)
