@@ -96,12 +96,11 @@ function messageText(message) {
   return ''
 }
 
-function buildRequestBody({ imageBytes, mediaType, model }) {
-  return {
+function buildRequestBody({ imageBytes, mediaType, model, thinking }) {
+  const body = {
     model,
     temperature: 0,
     max_tokens: LLM_MAX_TOKENS,
-    thinking: { type: 'disabled' },
     response_format: { type: 'json_object' },
     messages: [
       { role: 'system', content: ZAI_RECEIPT_SYSTEM_PROMPT },
@@ -114,6 +113,13 @@ function buildRequestBody({ imageBytes, mediaType, model }) {
       },
     ],
   }
+  // The coding-plan endpoint pins thinking 'disabled' (deterministic JSON, the
+  // deployed production behavior). The general usage-billed API rejects that
+  // thinking syntax with code 1210 on BOTH glm-5.3-flash and glm-5.3-flashx
+  // (observed on the wire 2026-09-24); omitting the key there lets each model
+  // apply its default reasoning behavior.
+  if (thinking) body.thinking = { type: thinking }
+  return body
 }
 
 function safeUsage(value) {
@@ -169,6 +175,9 @@ export async function scanReceiptWithZai(imageBytes, contentType, env) {
             imageBytes: prepared.imageBytes,
             mediaType: prepared.mediaType,
             model: config.model,
+            // Coding-plan deployments keep thinking pinned; the general API
+            // omits the key (code 1210 otherwise).
+            thinking: config.url.includes('/api/coding/') ? 'disabled' : null,
           })),
           signal: controller.signal,
         })

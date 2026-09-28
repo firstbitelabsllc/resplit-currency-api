@@ -470,3 +470,54 @@ test('provider matrix configuration rejects credential injection and unsafe pric
     { name: 'bad', env: { LLM_SCAN_PROVIDER: 'vendor' }, credential_env: 'VENDOR_SECRET' },
   ]), /safe name and configuration object/)
 })
+
+test('a named credential_env aliases into the provider key so mixed-aggregator matrices run in one pass', async () => {
+  const { root, set } = await fixtureReplaySet()
+  try {
+    const seen = []
+    const report = await runProviderMatrix({
+      set: set.slice(0, 1),
+      root,
+      env: {
+        ZAI_API_KEY: 'secret-zai',
+        OPENROUTER_API_KEY: 'secret-or',
+      },
+      cases: [
+        { name: 'zai_native', env: { LLM_SCAN_PROVIDER: 'zai' } },
+        {
+          name: 'or_via_zai_transport',
+          env: {
+            LLM_SCAN_PROVIDER: 'zai',
+            LLM_SCAN_MODEL: 'google/gemini-2.5-flash-lite',
+            LLM_SCAN_BASE_URL: 'https://openrouter.ai/api/v1',
+          },
+          credential_env: 'OPENROUTER_API_KEY',
+        },
+      ],
+      concurrency: 1,
+      readImage: async () => new Uint8Array([1]),
+      scan: async (_bytes, _contentType, env) => {
+        seen.push({ model: env.LLM_SCAN_MODEL || 'glm-default', zai: env.ZAI_API_KEY, or: env.OPENROUTER_API_KEY })
+        return {
+          ok: true, httpStatus: 200, latencyMs: 5, providerStarted: true,
+          structuredOutputValid: true, scanned: { total: 20.5, lineItems: [{}] },
+        }
+      },
+    })
+    const native = seen.find((s) => s.model === 'glm-default')
+    const orCase = seen.find((s) => s.model !== 'glm-default')
+    assert.ok(native && orCase)
+    // The native case sees only its own provider key.
+    assert.equal(native.zai, 'secret-zai')
+    assert.equal(native.or, undefined)
+    // The named credential rides AND aliases into the transport's built-in key
+    // slot, so the zai transport authenticates against OpenRouter unchanged.
+    assert.equal(orCase.or, 'secret-or')
+    assert.equal(orCase.zai, 'secret-or')
+    // Secrets never reach the report.
+    assert.equal(JSON.stringify(report).includes('secret-or'), false)
+    assert.equal(JSON.stringify(report).includes('secret-zai'), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
