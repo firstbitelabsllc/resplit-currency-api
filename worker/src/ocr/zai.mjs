@@ -17,6 +17,8 @@ import {
 
 export const ZAI_PROVIDER = 'zai'
 export const DEFAULT_ZAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
+const ZAI_USAGE_BASE_URL = 'https://api.z.ai/api/paas/v4'
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 export const DEFAULT_ZAI_MODEL = 'glm-5.3-flash'
 // Without an operator LLM_SCAN_MAX_EDGE the Z.AI leg keeps the same 1568px long
 // edge the Anthropic leg has always used, so a provider flip alone changes no bytes.
@@ -33,13 +35,24 @@ export function zaiModel(env) {
   return (env.LLM_SCAN_MODEL || DEFAULT_ZAI_MODEL).trim() || DEFAULT_ZAI_MODEL
 }
 
+function routeConfig(env) {
+  const baseUrl = String(env?.LLM_SCAN_BASE_URL || DEFAULT_ZAI_BASE_URL).trim().replace(/\/+$/, '') || DEFAULT_ZAI_BASE_URL
+  if (baseUrl === OPENROUTER_BASE_URL) return { baseUrl, keyName: 'OPENROUTER_API_KEY' }
+  if (baseUrl === DEFAULT_ZAI_BASE_URL || baseUrl === ZAI_USAGE_BASE_URL) return { baseUrl, keyName: 'ZAI_API_KEY' }
+  return null
+}
+
+export function zaiCredentialConfigured(env) {
+  const route = routeConfig(env)
+  return Boolean(route && env?.[route.keyName])
+}
+
 function readConfig(env) {
-  const key = env.ZAI_API_KEY || ''
-  if (!key) {
-    throw new ZaiConfigError('ZAI_API_KEY must be configured (wrangler secret)')
-  }
-  const baseUrl = String(env.LLM_SCAN_BASE_URL || DEFAULT_ZAI_BASE_URL).trim().replace(/\/+$/, '') || DEFAULT_ZAI_BASE_URL
-  return { key, model: zaiModel(env), url: `${baseUrl}/chat/completions` }
+  const route = routeConfig(env)
+  if (!route) throw new ZaiConfigError('LLM_SCAN_BASE_URL must target an approved provider endpoint')
+  const key = env[route.keyName] || ''
+  if (!key) throw new ZaiConfigError(`${route.keyName} must be configured (wrangler secret)`)
+  return { key, model: zaiModel(env), url: `${route.baseUrl}/chat/completions` }
 }
 
 function zaiTargetMaxEdge(env) {
@@ -136,7 +149,7 @@ function safeUsage(value) {
 /**
  * @param {ArrayBuffer | Uint8Array} imageBytes
  * @param {string} contentType
- * @param {{ ZAI_API_KEY?: string, LLM_SCAN_MODEL?: string, LLM_SCAN_BASE_URL?: string, LLM_SCAN_MAX_EDGE?: string }} env
+ * @param {{ ZAI_API_KEY?: string, OPENROUTER_API_KEY?: string, LLM_SCAN_MODEL?: string, LLM_SCAN_BASE_URL?: string, LLM_SCAN_MAX_EDGE?: string }} env
  * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, providerStarted: boolean, inputPx: number | null }>}
  */
 export async function scanReceiptWithZai(imageBytes, contentType, env) {

@@ -159,6 +159,53 @@ test('LLM_SCAN_BASE_URL overrides the endpoint and a trailing slash is tolerated
   assert.equal(lastUrl, 'https://api.z.ai/api/paas/v4/chat/completions')
 })
 
+test('OpenRouter receives only its own bearer, never the Z.AI bearer', async () => {
+  stubZai(chatCompletion(JSON.stringify(scannedReceipt()), { model: 'google/gemini-2.5-flash-lite' }))
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env({
+    OPENROUTER_API_KEY: 'openrouter-test-key',
+    LLM_SCAN_BASE_URL: 'https://openrouter.ai/api/v1',
+    LLM_SCAN_MODEL: 'google/gemini-2.5-flash-lite',
+  }))
+  assert.equal(res.ok, true)
+  assert.equal(lastUrl, 'https://openrouter.ai/api/v1/chat/completions')
+  assert.equal(lastInit.headers.authorization, 'Bearer openrouter-test-key')
+  assert.equal(JSON.stringify(lastInit).includes('zai-key-must-not-leak'), false)
+})
+
+test('OpenRouter missing its own key refuses before fetch even when Z.AI key exists', async () => {
+  let fetches = 0
+  globalThis.fetch = async () => { fetches++; throw new Error('should not fetch') }
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env({
+    LLM_SCAN_BASE_URL: 'https://openrouter.ai/api/v1',
+    LLM_SCAN_MODEL: 'google/gemini-2.5-flash-lite',
+  }))
+  assert.equal(res.ok, false)
+  assert.equal(res.httpStatus, 503)
+  assert.equal(res.providerStarted, false)
+  assert.match(res.errorBody, /OPENROUTER_API_KEY/)
+  assert.equal(fetches, 0)
+})
+
+test('Z.AI route keeps its own bearer when an OpenRouter key also exists', async () => {
+  stubZai(chatCompletion(JSON.stringify(scannedReceipt())))
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env({ OPENROUTER_API_KEY: 'other-key' }))
+  assert.equal(res.ok, true)
+  assert.equal(lastUrl, `${DEFAULT_ZAI_BASE_URL}/chat/completions`)
+  assert.equal(lastInit.headers.authorization, 'Bearer zai-key-must-not-leak')
+})
+
+test('unapproved base URL refuses to send either credential', async () => {
+  let fetches = 0
+  globalThis.fetch = async () => { fetches++; throw new Error('should not fetch') }
+  const res = await scanReceiptWithZai(image, 'image/jpeg', env({
+    OPENROUTER_API_KEY: 'other-key',
+    LLM_SCAN_BASE_URL: 'https://not-openrouter.invalid/api/v1',
+  }))
+  assert.equal(res.ok, false)
+  assert.equal(res.providerStarted, false)
+  assert.equal(fetches, 0)
+})
+
 test('a schema-invalid JSON object is a data-shaped provider_error, never a throw', async () => {
   stubZai(chatCompletion(JSON.stringify(scannedReceipt({ total: '10.00' }))))
   const res = await scanReceiptWithZai(image, 'image/jpeg', env())
