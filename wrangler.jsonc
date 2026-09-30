@@ -40,16 +40,15 @@
     // (router.mjs keyValueExtrasEnabled). 2x cost/scan — APPROVED by Leo 2026-06-22 (low
     // traffic). Revertible: set "false" + redeploy.
     "AZURE_OCR_KV_EXTRAS": "true",
-    // /ocr/dual-scan Anthropic leg. ANTHROPIC_API_KEY is a wrangler secret; empty allowlist
+    // /ocr/dual-scan LLM leg. OPENROUTER_API_KEY is a wrangler secret; empty allowlist
     // ships the endpoint dark until specific App Attest keyIds are admitted.
-    "LLM_SCAN_MODEL": "glm-5.3-flash",
-    // Z.AI GLM provider for the LLM leg (worker/src/ocr/llm-provider.mjs).
-    // ZAI_API_KEY is required and must precede this rollout. Keep these four
-    // values together: a Claude model id sent to Z.AI fails every scan.
-    // Rollback: restore claude-sonnet-5 and provider "anthropic"; remove
-    // LLM_SCAN_BASE_URL/MAX_EDGE only after the provider is reverted.
+    "LLM_SCAN_MODEL": "google/gemini-2.5-flash-lite",
+    // Internal "zai" selects the reused chat-completions transport; OpenRouter
+    // is the billing provider and requires OPENROUTER_API_KEY before rollout.
+    // Rollback together: glm-5.3-flash + https://api.z.ai/api/coding/paas/v4;
+    // retain provider "zai", max edge 1280, and the ZAI_API_KEY rollback secret.
     "LLM_SCAN_PROVIDER": "zai",
-    "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+    "LLM_SCAN_BASE_URL": "https://openrouter.ai/api/v1",
     "LLM_SCAN_MAX_EDGE": "1280",
     "LLM_SCAN_ALLOWED_KEY_IDS": "",
     "LLM_SCAN_DAILY_CAP": "3000",
@@ -75,8 +74,8 @@
   "secrets": {
     // LLM_SCAN_KILL_SWITCH is an optional operator secret (unset = off), not a
     // source var. This keeps a live emergency stop intact across routine deploys.
-    // Keep the selected Z.AI provider credential required and continuity-checked.
-    "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "ZAI_API_KEY"]
+    // Require the selected OpenRouter credential and retain provider rollback keys.
+    "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "ZAI_API_KEY", "OPENROUTER_API_KEY"]
   },
   "durable_objects": {
     "bindings": [
@@ -138,10 +137,10 @@
         "AZURE_OCR_FETCH_TIMEOUT_MS": "15000",
         // Discount/credit/fee capture (2x cost/scan) — APPROVED Leo 2026-06-22. Revert: "false".
         "AZURE_OCR_KV_EXTRAS": "true",
-        "LLM_SCAN_MODEL": "glm-5.3-flash",
-        // Mirror the root Z.AI rollout block; keep all four values aligned.
+        "LLM_SCAN_MODEL": "google/gemini-2.5-flash-lite",
+        // Mirror the root OpenRouter rollout block; keep all four values aligned.
         "LLM_SCAN_PROVIDER": "zai",
-        "LLM_SCAN_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+        "LLM_SCAN_BASE_URL": "https://openrouter.ai/api/v1",
         "LLM_SCAN_MAX_EDGE": "1280",
         "LLM_SCAN_ALLOWED_KEY_IDS": "",
         "LLM_SCAN_DAILY_CAP": "3000",
@@ -160,7 +159,7 @@
       // Environments do not inherit this local-dev/type-generation metadata.
       "secrets": {
         // Optional operator secret: LLM_SCAN_KILL_SWITCH (unset = off).
-        "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "ZAI_API_KEY"]
+        "required": ["AZURE_OCR_KEY", "ANTHROPIC_API_KEY", "ZAI_API_KEY", "OPENROUTER_API_KEY"]
       },
       "durable_objects": {
         "bindings": [

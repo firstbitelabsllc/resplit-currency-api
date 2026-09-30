@@ -9,7 +9,7 @@
 // caps, not provider-specific dollar costs; provider identity is carried above.
 
 import { scanReceiptWithAnthropic, LLM_PROVIDER as ANTHROPIC_PROVIDER, llmMaxEdge, RECEIPT_PROMPT_REVISION } from './anthropic.mjs'
-import { scanReceiptWithZai, ZAI_PROVIDER, zaiModel } from './zai.mjs'
+import { scanReceiptWithZai, ZAI_PROVIDER, zaiModel, zaiCredentialConfigured } from './zai.mjs'
 import { scanReceiptWithOpenAI, OPENAI_PROVIDER, openaiModel } from './openai.mjs'
 
 export const DEFAULT_LLM_SCAN_PROVIDER = ANTHROPIC_PROVIDER
@@ -27,7 +27,7 @@ export function llmProvider(env) {
 export function llmProviderConfigured(env) {
   switch (llmProvider(env)) {
     case ANTHROPIC_PROVIDER: return Boolean(env.ANTHROPIC_API_KEY)
-    case ZAI_PROVIDER: return Boolean(env.ZAI_API_KEY)
+    case ZAI_PROVIDER: return zaiCredentialConfigured(env)
     case OPENAI_PROVIDER: return Boolean(env.OPENAI_API_KEY)
     default: return false
   }

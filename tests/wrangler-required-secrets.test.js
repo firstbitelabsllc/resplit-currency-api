@@ -8,9 +8,9 @@ const { stripJsonComments } = require('../scripts/reliability-cockpit.js')
 const wranglerPath = path.join(__dirname, '..', 'wrangler.jsonc')
 const wrangler = JSON.parse(stripJsonComments(fs.readFileSync(wranglerPath, 'utf8')))
 const runbook = fs.readFileSync(path.join(__dirname, '..', 'RUNBOOK.md'), 'utf8')
-const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY']
+const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY', 'OPENROUTER_API_KEY']
 const selectedReceiptProvider = 'zai'
-const selectedReceiptModel = 'glm-5.3-flash'
+const selectedReceiptModel = 'google/gemini-2.5-flash-lite'
 
 function assertExactRequiredSecrets(config, scope) {
   const required = config?.secrets?.required
@@ -43,16 +43,30 @@ test('root and named production retain the selected receipt provider and model',
   }
 })
 
+test('root and named production use the exact OpenRouter receipt endpoint and image ceiling', () => {
+  for (const [scope, config] of [
+    ['root Worker', wrangler],
+    ['production Worker', wrangler.env?.production],
+  ]) {
+    assert.equal(config?.vars?.LLM_SCAN_BASE_URL, 'https://openrouter.ai/api/v1', `${scope} base URL`)
+    assert.equal(config?.vars?.LLM_SCAN_MAX_EDGE, '1280', `${scope} image ceiling`)
+  }
+})
+
 test('required-secret declaration rejects omission, substitution, or extras', () => {
   for (const invalid of [
+    ...requiredOcrSecrets.map((omitted) => requiredOcrSecrets.filter((name) => name !== omitted)),
     ['AZURE_OCR_KEY'],
     ['ANTHROPIC_API_KEY'],
     ['AZURE_OCR_KEY', 'ANTHROPIC_API_TOKEN'],
     ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'UNRELATED_SECRET'],
+    [...requiredOcrSecrets, 'UNRELATED_SECRET'],
+    [...requiredOcrSecrets.slice(0, -1), 'OPENROUTER_API_TOKEN'],
+    [...requiredOcrSecrets].reverse(),
   ]) {
     assert.throws(
       () => assertExactRequiredSecrets({ secrets: { required: invalid } }, 'mutated Worker'),
-    /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY/
+      /must declare exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY, OPENROUTER_API_KEY/
     )
   }
 })
