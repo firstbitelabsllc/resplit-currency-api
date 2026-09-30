@@ -11,7 +11,7 @@ const publishGuard =
   `(${continueGuard}) && steps.publish_needed.outputs.publish_required == 'true'`
 const workerReleaseGuard =
   `(${continueGuard}) && steps.worker_release_needed.outputs.worker_release_required == 'true'`
-const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY']
+const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY', 'OPENROUTER_API_KEY']
 const rootWorkerSecretWrites = [
   'printf "%s" "$SENTRY_DSN" | npx wrangler secret put SENTRY_DSN --config wrangler.jsonc --env=""',
   'printf "%s" "$CRON_SECRET" | npx wrangler secret put CRON_SECRET --config wrangler.jsonc --env=""',
@@ -44,15 +44,18 @@ function assertRequiredOcrSecretGate(source) {
   const inventoryCommand = 'npx wrangler secret list --config wrangler.jsonc --env=""'
   const verificationCommand =
     `node scripts/worker-secret-continuity.js ${requiredOcrSecrets.join(' ')}`
+  const verificationLines = sync.split('\n')
+    .filter((line) => line.includes('node scripts/worker-secret-continuity.js'))
+    .map((line) => line.trim())
 
   assert.equal(
     occurrences(source, inventoryCommand),
     1,
     'workflow must read exactly one name/type-only Worker secret inventory'
   )
-  assert.equal(
-    occurrences(sync, verificationCommand),
-    1,
+  assert.deepEqual(
+    verificationLines,
+    [`printf "%s" "$deployed_worker_secrets" | ${verificationCommand}`],
     `workflow must verify exactly ${requiredOcrSecrets.join(', ')} in that order`
   )
 
@@ -126,13 +129,12 @@ test('workflow records whether a stale rerun can safely continue deploy steps', 
 })
 
 test('workflow syncs Azure and then verifies all OCR provider secrets before a Worker release', () => {
-  const sync = stepBlock(workflow, 'Sync FX Worker runtime secrets')
   assert.match(workflow, /AZURE_OCR_KEY: \$\{\{ secrets\.AZURE_OCR_KEY \}\}/)
   assert.match(workflow, /printf "%s" "\$AZURE_OCR_KEY" \| npx wrangler secret put AZURE_OCR_KEY --config wrangler\.jsonc/)
   assert.doesNotMatch(
-    sync,
-    /ANTHROPIC_API_KEY:\s*\$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/,
-    'ANTHROPIC_API_KEY is Cloudflare-managed; this workflow verifies continuity but does not overwrite it'
+    workflow,
+    /(?:ANTHROPIC|ZAI|OPENROUTER)_API_KEY:\s*\$\{\{ secrets\./,
+    'Anthropic, Z.AI, and OpenRouter keys are Cloudflare-managed; this workflow verifies names without importing values'
   )
   assertRequiredOcrSecretGate(workflow)
   assert.doesNotMatch(workflow, /::warning::Missing AZURE_OCR_KEY for FX Worker OCR proxy\./)
@@ -187,10 +189,15 @@ test('required OCR secret gate rejects omission, substitution, and order mutatio
   const exactCommand =
     `node scripts/worker-secret-continuity.js ${requiredOcrSecrets.join(' ')}`
   const mutations = [
+    exactCommand.replace(' AZURE_OCR_KEY', ''),
     exactCommand.replace(' ANTHROPIC_API_KEY', ''),
     exactCommand.replace(' ZAI_API_KEY', ''),
+    exactCommand.replace(' OPENROUTER_API_KEY', ''),
     exactCommand.replace('ANTHROPIC_API_KEY', 'ANTHROPIC_API_TOKEN'),
-    'node scripts/worker-secret-continuity.js ANTHROPIC_API_KEY AZURE_OCR_KEY',
+    exactCommand.replace('OPENROUTER_API_KEY', 'OPENROUTER_API_TOKEN'),
+    exactCommand.replace('AZURE_OCR_KEY ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY AZURE_OCR_KEY'),
+    `${exactCommand} EXTRA_SECRET`,
+    `${exactCommand} OPENROUTER_API_KEY`,
   ]
 
   for (const mutatedCommand of mutations) {
@@ -198,7 +205,7 @@ test('required OCR secret gate rejects omission, substitution, and order mutatio
     assert.notEqual(mutatedWorkflow, workflow, 'mutation must alter the workflow fixture')
     assert.throws(
       () => assertRequiredOcrSecretGate(mutatedWorkflow),
-      /must verify exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY in that order/
+      /must verify exactly AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY, OPENROUTER_API_KEY in that order/
     )
   }
 })

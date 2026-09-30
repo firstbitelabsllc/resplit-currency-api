@@ -5,7 +5,7 @@ const path = require('node:path')
 
 const scriptPath = path.join(__dirname, '..', 'scripts', 'worker-secret-continuity.js')
 
-const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY']
+const requiredOcrSecrets = ['AZURE_OCR_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY', 'OPENROUTER_API_KEY']
 
 test('continuity check accepts all required deployed Worker secrets by exact name and type', () => {
   const result = spawnSync(process.execPath, [scriptPath, ...requiredOcrSecrets], {
@@ -14,6 +14,7 @@ test('continuity check accepts all required deployed Worker secrets by exact nam
       { name: 'AZURE_OCR_KEY', type: 'secret_text' },
       { name: 'ANTHROPIC_API_KEY', type: 'secret_text', value: 'must-not-be-logged' },
       { name: 'ZAI_API_KEY', type: 'secret_text', value: 'must-not-be-logged' },
+      { name: 'OPENROUTER_API_KEY', type: 'secret_text', value: 'openrouter-must-not-be-logged' },
     ]),
     encoding: 'utf8',
   })
@@ -21,43 +22,37 @@ test('continuity check accepts all required deployed Worker secrets by exact nam
   assert.equal(result.status, 0)
   assert.match(
     result.stdout,
-    /continuity preserved: AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY exist on the deployed Worker/
+    /continuity preserved: AZURE_OCR_KEY, ANTHROPIC_API_KEY, ZAI_API_KEY, OPENROUTER_API_KEY exist on the deployed Worker/
   )
   assert.doesNotMatch(result.stdout, /secret_text/)
   assert.doesNotMatch(result.stdout, /SENTRY_DSN|must-not-be-logged/)
+  assert.equal(result.stderr, '')
 })
 
 test('continuity check fails closed when any required deployed secret is absent or mistyped', () => {
   for (const { entries, missing } of [
+    ...requiredOcrSecrets.flatMap((missing) => [
+      {
+        entries: requiredOcrSecrets.filter((name) => name !== missing)
+          .map((name) => ({ name, type: 'secret_text', value: 'must-not-be-logged' })),
+        missing,
+      },
+      {
+        entries: requiredOcrSecrets.map((name) => ({
+          name,
+          type: name === missing ? 'plain_text' : 'secret_text',
+          value: 'must-not-be-logged',
+        })),
+        missing,
+      },
+    ]),
     {
-      entries: [
-        { name: 'AZURE_OCR_KEY', type: 'secret_text' },
-        { name: 'ANTHROPIC_API_KEY', type: 'secret_text' },
-      ],
-      missing: 'ZAI_API_KEY',
-    },
-    {
-      entries: [{ name: 'ANTHROPIC_API_KEY', type: 'secret_text' }],
-      missing: 'AZURE_OCR_KEY',
-    },
-    {
-      entries: [{ name: 'AZURE_OCR_KEY', type: 'secret_text' }],
-      missing: 'ANTHROPIC_API_KEY',
-    },
-    {
-      entries: [
-        { name: 'AZURE_OCR_KEY', type: 'secret_text' },
-        { name: 'ANTHROPIC_API_KEY', type: 'plain_text' },
-      ],
-      missing: 'ANTHROPIC_API_KEY',
-    },
-    {
-      entries: [
-        { name: 'AZURE_OCR_KEY', type: 'secret_text' },
-        { name: 'ANTHROPIC_API_KEY', type: 'secret_text' },
-        { name: 'ZAI_API_KEY', type: 'plain_text' },
-      ],
-      missing: 'ZAI_API_KEY',
+      entries: requiredOcrSecrets.map((name) => ({
+        name: name === 'OPENROUTER_API_KEY' ? 'OPENROUTER_API_TOKEN' : name,
+        type: 'secret_text',
+        value: 'must-not-be-logged',
+      })),
+      missing: 'OPENROUTER_API_KEY',
     },
   ]) {
     const result = spawnSync(process.execPath, [scriptPath, ...requiredOcrSecrets], {
@@ -68,6 +63,8 @@ test('continuity check fails closed when any required deployed secret is absent 
     assert.equal(result.status, 1)
     assert.match(result.stderr, new RegExp(`required Worker secret is absent: ${missing}`))
     assert.doesNotMatch(result.stderr, /secret_text|plain_text/)
+    assert.doesNotMatch(result.stdout + result.stderr, /must-not-be-logged/)
+    assert.equal(result.stdout, '')
   }
 })
 
