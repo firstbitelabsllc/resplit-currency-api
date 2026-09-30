@@ -1222,7 +1222,7 @@
       "description": "Scan-leg latency per model from dual_scan telemetry; the gauntlet winner must hold p50 under 5 s.",
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "ms",
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
@@ -1288,7 +1288,7 @@
       "description": "sc03 goal metric: total_ms p95 under 10 s, split by model.",
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "ms",
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
@@ -1340,7 +1340,7 @@
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
-      "description": "Usage-based-billing readback: provider-metered tokens summed per model per hour.",
+      "description": "Usage-based-billing readback: provider-metered tokens from successful cache-miss scans summed per model per hour; cache replays do not incur another provider call.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1381,7 +1381,7 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | unwrap llm_input_tokens [1h]))",
+          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | cache=\"miss\" | unwrap llm_input_tokens [1h]))",
           "legendFormat": "input tok/h {{llm_model}}",
           "queryType": "range",
           "refId": "A"
@@ -1392,7 +1392,7 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | unwrap llm_output_tokens [1h]))",
+          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | cache=\"miss\" | unwrap llm_output_tokens [1h]))",
           "legendFormat": "output tok/h {{llm_model}}",
           "queryType": "range",
           "refId": "B"
@@ -1472,7 +1472,7 @@
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
-      "description": "Provider-error and malformed-output rates per model; latency wins are void if error rates climb.",
+      "description": "LLM-leg outcome counts by model, status, and diagnostic, including provider errors and malformed output when Azure succeeds and the composite scan is partial.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1513,13 +1513,13 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum by (llm_model, status) (count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | __error__=\"\" [10m]))",
-          "legendFormat": "{{llm_model}} {{status}}",
+          "expr": "sum by (llm_model, llm_status, llm_diagnostic) (count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | __error__=\"\" [10m]))",
+          "legendFormat": "{{llm_model}} {{llm_status}} {{llm_diagnostic}}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Scan outcomes by model",
+      "title": "LLM outcomes by model",
       "type": "timeseries"
     }
   ]
