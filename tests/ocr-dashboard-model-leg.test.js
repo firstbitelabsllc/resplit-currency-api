@@ -6,36 +6,105 @@ import { handleOcr } from '../worker/src/ocr/router.mjs'
 const dashboard = JSON.parse(readFileSync(new URL('../grafana/dashboards/resplit-ocr.json', import.meta.url)))
 const panel = (id) => dashboard.panels.find((entry) => entry.id === id)
 
-test('raw LLM and total millisecond quantiles use Grafana milliseconds', () => {
-  for (const id of [901, 902]) {
-    assert.equal(panel(id).fieldConfig.defaults.unit, 'ms', `panel ${id}: 5000 ms must represent five seconds`)
-    for (const target of panel(id).targets) assert.match(target.expr, /unwrap (?:llm|total)_ms/)
+// Evaluate the configured JSON-label population against real producer rows.
+// This checks population semantics locally; it is not a Loki execution proof.
+function queriedRows({ expr }, rows) {
+  const filters = [...expr.matchAll(/\|\s+(\w+)(!?=)"([^"]*)"/g)]
+    .filter(([, key]) => key !== '__error__')
+  const field = expr.match(/\| unwrap (\w+)/)?.[1]
+  return rows.filter((row) => filters.every(([, key, op, value]) => {
+    const label = row[key] == null ? '' : String(row[key])
+    return op === '=' ? label === value : label !== value
+  }) && (!field || (row[field] != null && Number.isFinite(Number(row[field])))))
+}
+
+test('every model-leg target extracts the prefixed monitoring payload and filters parse/unwrap errors', async () => {
+  const { lines } = await scanFixture()
+  assert.equal(lines.length, 1)
+  assert.throws(() => JSON.parse(lines[0]), SyntaxError, 'the live producer is not a bare JSON line')
+  for (const id of [901, 902, 903, 904, 905]) {
+    for (const { expr } of panel(id).targets) {
+      assert.ok(expr.includes('| regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=""'), `panel ${id}: extract before JSON parsing`)
+      const pattern = expr.match(/\| regexp `([^`]+)`/)[1].replace('(?P<payload>', '(?<payload>')
+      const payload = new RegExp(pattern).exec(lines[0]).groups.payload
+      assert.equal(JSON.parse(payload).signal, 'dual_scan')
+      if (expr.includes('| unwrap ')) assert.match(expr, /\| unwrap \w+ \| __error__="" \[/, `panel ${id}: filter numeric conversion errors`)
+    }
   }
 })
 
-test('both billed-token queries exclude shared-cache replays', () => {
+test('millisecond quantiles select fresh analyze attempts including partial failures with known timing', async () => {
+  const success = await scanFixture({ replay: true })
+  const failure = await scanFixture({ llmStatus: 500 })
+  const malformed = await scanFixture({ content: 'invalid JSON' })
+  const legacy = await scanFixture({ routes: ['dual-scan'] })
+  const rows = [...success.rows, ...failure.rows, ...malformed.rows, ...legacy.rows]
+  for (const id of [901, 902]) {
+    assert.equal(panel(id).fieldConfig.defaults.unit, 'ms', `panel ${id}: 5000 ms must represent five seconds`)
+    for (const target of panel(id).targets) {
+      assert.match(target.expr, /unwrap (?:llm|total)_ms/)
+      assert.match(target.expr, /route="analyze" \| cache="miss"/)
+      assert.doesNotMatch(target.expr, /\| status="succeeded"/)
+      assert.deepEqual(queriedRows(target, rows), [success.rows[0], failure.rows[0], malformed.rows[0]])
+      const field = id === 901 ? 'llm_ms' : 'total_ms'
+      const unknown = { ...success.rows[0], [field]: null }
+      const zero = { ...success.rows[0], [field]: 0 }
+      assert.deepEqual(queriedRows(target, [unknown, zero]), [zero])
+    }
+  }
+})
+
+test('known provider-metered token queries exclude replays and unknown usage but keep partial metered failures and zero', async () => {
+  const success = await scanFixture({ replay: true })
+  const malformed = await scanFixture({ content: 'invalid JSON' })
+  const partial = await scanFixture({ azureFailed: true })
+  const legacy = await scanFixture({ routes: ['dual-scan'] })
+  assert.equal(partial.rows[0].status, 'partial')
+  assert.equal(partial.rows[0].llm_input_tokens, 1000)
+  assert.equal(malformed.rows[0].llm_input_tokens, null, 'the producer discards malformed-output usage')
   assert.equal(panel(903).targets.length, 2)
+  assert.match(panel(903).title, /KNOWN provider-metered/)
+  assert.match(panel(903).description, /Unknown usage is excluded/)
+  assert.match(panel(903).description, /not total billing/)
   for (const target of panel(903).targets) {
     assert.match(target.expr, /\| json\s*\|[^\n]*\bcache="miss"\s*\|/)
     assert.match(target.expr, /unwrap llm_(?:input|output)_tokens/)
+    assert.match(target.expr, /route="analyze"/)
+    assert.doesNotMatch(target.expr, /\| status="succeeded"/)
+    const field = target.expr.match(/unwrap (\w+)/)[1]
+    const unknown = { ...success.rows[0], [field]: null }
+    const zero = { ...success.rows[0], [field]: 0 }
+    const rows = [...success.rows, ...malformed.rows, ...partial.rows, ...legacy.rows, unknown, zero]
+    assert.deepEqual(queriedRows(target, rows), [success.rows[0], partial.rows[0], zero])
   }
 })
 
-test('model outcomes preserve LLM failure status and malformed-output diagnostic', () => {
+test('fresh analyze outcomes preserve LLM failures without replay duplicates; drift labels all observations', async () => {
+  const success = await scanFixture({ replay: true })
+  const failure = await scanFixture({ llmStatus: 500 })
+  const malformed = await scanFixture({ content: 'invalid JSON' })
+  const legacy = await scanFixture({ routes: ['dual-scan'] })
   const target = panel(905).targets[0]
   assert.match(target.expr, /sum by \(llm_model, llm_status, llm_diagnostic\)/)
   assert.match(target.legendFormat, /\{\{llm_status\}\}/)
   assert.match(target.legendFormat, /\{\{llm_diagnostic\}\}/)
   assert.doesNotMatch(target.legendFormat, /\{\{status\}\}/)
+  assert.match(target.expr, /route="analyze" \| cache="miss"/)
+  assert.doesNotMatch(target.expr, /\| status="succeeded"/)
+  assert.deepEqual(queriedRows(target, [...success.rows, ...failure.rows, ...malformed.rows, ...legacy.rows]),
+    [success.rows[0], failure.rows[0], malformed.rows[0]])
+  assert.match(panel(904).title, /all routes, including cache replays/)
+  assert.match(panel(904).targets[1].legendFormat, /composite succeeded observations/)
 })
 
 // Exercise the actual log producer with local-only provider fixtures. This binds
 // the dashboard filters to cache and LLM fields, independently of query spelling.
-async function scanFixture({ llmStatus = 200, content, replay = false } = {}) {
+async function scanFixture({ llmStatus = 200, content, replay = false, routes, azureFailed = false } = {}) {
   const originalFetch = globalThis.fetch
   const originalLog = console.log
   const originalWarn = console.warn
   const rows = []
+  const lines = []
   let providerCalls = 0
   const store = new Map()
   const env = {
@@ -52,7 +121,7 @@ async function scanFixture({ llmStatus = 200, content, replay = false } = {}) {
   const capture = (line) => {
     if (typeof line !== 'string' || !line.startsWith('[OCR_MONITORING] ')) return
     const row = JSON.parse(line.slice('[OCR_MONITORING] '.length))
-    if (row.signal === 'dual_scan') rows.push(row)
+    if (row.signal === 'dual_scan') { rows.push(row); lines.push(line) }
   }
   console.log = console.warn = capture
   globalThis.fetch = async (url, init = {}) => {
@@ -70,6 +139,7 @@ async function scanFixture({ llmStatus = 200, content, replay = false } = {}) {
       } })
     }
     if (address.includes('/analyzeResults/')) {
+      if (azureFailed) return Response.json({ status: 'failed' })
       return Response.json({ status: 'succeeded', analyzeResult: { documents: [{ fields: {
         Total: { type: 'currency', valueCurrency: { amount: 10, currencyCode: 'USD' } },
       } }] } })
@@ -81,14 +151,14 @@ async function scanFixture({ llmStatus = 200, content, replay = false } = {}) {
     1, 34, 0, 2, 17, 1, 3, 17, 1,
   ])
   try {
-    for (const route of replay ? ['analyze', 'dual-scan', 'analyze'] : ['analyze']) {
+    for (const route of routes ?? (replay ? ['analyze', 'dual-scan', 'analyze'] : ['analyze'])) {
       const response = await handleOcr(new Request(`https://fx.resplit.app/ocr/${route}`, {
         method: 'POST', headers: { 'content-type': 'image/jpeg', 'x-resplit-attest-soft-fail': 'true' }, body: image,
       }), env)
       assert.equal(response.status, 200)
       await response.json()
     }
-    return { rows, providerCalls }
+    return { rows, lines, providerCalls }
   } finally {
     globalThis.fetch = originalFetch
     console.log = originalLog

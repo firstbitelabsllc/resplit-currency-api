@@ -1211,7 +1211,7 @@
       },
       "id": 900,
       "panels": [],
-      "title": "Model leg \u2014 latency & billed usage by model",
+      "title": "Model leg \u2014 fresh analyze latency & known usage by model",
       "type": "row"
     },
     {
@@ -1219,7 +1219,7 @@
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
-      "description": "Scan-leg latency per model from dual_scan telemetry; the gauntlet winner must hold p50 under 5 s.",
+      "description": "LLM-leg latency for fresh /ocr/analyze cache-miss attempts with known timings, including partial and provider failures. Unknown timings are excluded; p50 goal is under 5 s.",
       "fieldConfig": {
         "defaults": {
           "unit": "ms",
@@ -1260,7 +1260,7 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.50, {service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | unwrap llm_ms [10m]) by (llm_model)",
+          "expr": "quantile_over_time(0.50, {service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | route=\"analyze\" | cache=\"miss\" | llm_ms!=\"\" | unwrap llm_ms | __error__=\"\" [10m]) by (llm_model)",
           "legendFormat": "p50 {{llm_model}}",
           "queryType": "range",
           "refId": "A"
@@ -1271,7 +1271,7 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.95, {service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | unwrap llm_ms [10m]) by (llm_model)",
+          "expr": "quantile_over_time(0.95, {service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | route=\"analyze\" | cache=\"miss\" | llm_ms!=\"\" | unwrap llm_ms | __error__=\"\" [10m]) by (llm_model)",
           "legendFormat": "p95 {{llm_model}}",
           "queryType": "range",
           "refId": "B"
@@ -1285,7 +1285,7 @@
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
-      "description": "sc03 goal metric: total_ms p95 under 10 s, split by model.",
+      "description": "Total latency for fresh /ocr/analyze cache-miss attempts with known timings, including partial and provider failures. Unknown timings are excluded; sc03 p95 goal is under 10 s.",
       "fieldConfig": {
         "defaults": {
           "unit": "ms",
@@ -1326,7 +1326,7 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.95, {service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | unwrap total_ms [10m]) by (llm_model)",
+          "expr": "quantile_over_time(0.95, {service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | route=\"analyze\" | cache=\"miss\" | total_ms!=\"\" | unwrap total_ms | __error__=\"\" [10m]) by (llm_model)",
           "legendFormat": "p95 {{llm_model}}",
           "queryType": "range",
           "refId": "A"
@@ -1340,7 +1340,7 @@
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
-      "description": "Usage-based-billing readback: provider-metered tokens from successful cache-miss scans summed per model per hour; cache replays do not incur another provider call.",
+      "description": "KNOWN provider-metered input/output tokens from fresh /ocr/analyze cache-miss attempts, including partial and provider failures with reported usage. Unknown usage is excluded. These sums are not total billing; cache replays are excluded.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1381,8 +1381,8 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | cache=\"miss\" | unwrap llm_input_tokens [1h]))",
-          "legendFormat": "input tok/h {{llm_model}}",
+          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | route=\"analyze\" | cache=\"miss\" | llm_input_tokens!=\"\" | unwrap llm_input_tokens | __error__=\"\" [1h]))",
+          "legendFormat": "known input tok/h {{llm_model}}",
           "queryType": "range",
           "refId": "A"
         },
@@ -1392,13 +1392,13 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | cache=\"miss\" | unwrap llm_output_tokens [1h]))",
-          "legendFormat": "output tok/h {{llm_model}}",
+          "expr": "sum by (llm_model) (sum_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | route=\"analyze\" | cache=\"miss\" | llm_output_tokens!=\"\" | unwrap llm_output_tokens | __error__=\"\" [1h]))",
+          "legendFormat": "known output tok/h {{llm_model}}",
           "queryType": "range",
           "refId": "B"
         }
       ],
-      "title": "Billed token usage by model (per hour)",
+      "title": "KNOWN provider-metered token usage by model (per hour)",
       "type": "timeseries"
     },
     {
@@ -1406,7 +1406,7 @@
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
-      "description": "Any nonzero drift count means production called for one model and the provider served another.",
+      "description": "Drift observations across all dual_scan routes, including cache replays; these are not unique provider calls. Nonzero drift means a reported served model differs from the requested model. The companion series counts composite succeeded observations in that same population.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1447,8 +1447,8 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | llm_served_model_matches=\"false\" | __error__=\"\" [1h]))",
-          "legendFormat": "served != requested (1h)",
+          "expr": "sum(count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | llm_served_model_matches=\"false\" | __error__=\"\" [1h]))",
+          "legendFormat": "drift observations, incl. replays (1h)",
           "queryType": "range",
           "refId": "A"
         },
@@ -1458,13 +1458,13 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum by (llm_model) (count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | status=\"succeeded\" | __error__=\"\" [1h]))",
-          "legendFormat": "succeeded {{llm_model}}",
+          "expr": "sum by (llm_model) (count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | status=\"succeeded\" | __error__=\"\" [1h]))",
+          "legendFormat": "composite succeeded observations, incl. replays {{llm_model}}",
           "queryType": "range",
           "refId": "B"
         }
       ],
-      "title": "Model identity drift guard",
+      "title": "Model identity drift guard (all routes, including cache replays)",
       "type": "timeseries"
     },
     {
@@ -1472,7 +1472,7 @@
         "type": "loki",
         "uid": "grafanacloud-logs"
       },
-      "description": "LLM-leg outcome counts by model, status, and diagnostic, including provider errors and malformed output when Azure succeeds and the composite scan is partial.",
+      "description": "LLM-leg outcomes for fresh /ocr/analyze cache-miss attempts by model, status, and diagnostic, including provider errors and malformed output when Azure succeeds and the composite scan is partial. Cache replays and legacy dual-scan requests are excluded.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1513,13 +1513,13 @@
             "uid": "grafanacloud-logs"
           },
           "editorMode": "code",
-          "expr": "sum by (llm_model, llm_status, llm_diagnostic) (count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | json | __error__=\"\" [10m]))",
+          "expr": "sum by (llm_model, llm_status, llm_diagnostic) (count_over_time({service_name=~\".*resplit.*\"} |= \"OCR_MONITORING\" |= \"dual_scan\" | regexp `(?P<payload>\\{.*\\})` | line_format `{{.payload}}` | json | __error__=\"\" | route=\"analyze\" | cache=\"miss\" [10m]))",
           "legendFormat": "{{llm_model}} {{llm_status}} {{llm_diagnostic}}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "LLM outcomes by model",
+      "title": "Fresh analyze LLM outcomes by model",
       "type": "timeseries"
     }
   ]
