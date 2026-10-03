@@ -205,10 +205,16 @@ function assertCanonicalFxUpdate(source) {
   assert.match(source, /\[\[ ! "\$TARGET_DIGEST" =~ \^\[0-9a-f\]\{64\}\$ \]\]/)
   assert.match(source, /select\(\.type == "Completed"\)/, 'rollback must come from a completed execution')
   assert.equal(
-    occurrences(source, ".spec.template.spec | del(.template.spec.containers[0].image)"),
+    occurrences(source, '.spec.template.spec | del(.template.spec.containers[0].image)'),
     1,
     'one normalizer must compare the complete job contract except image'
   )
+  assert.match(
+    source,
+    /jq -Sc '\s*\.spec\.template\.spec\s*\|\s*del\(\.template\.spec\.containers\[0\]\.image\)/,
+    'the normalizer must start from the whole job spec, not a hand-picked field'
+  )
+  assertFxTelemetryContract(source)
   assert.equal(
     occurrences(source, '"$GCLOUD" run jobs update "$JOB"'),
     2,
@@ -229,6 +235,64 @@ function assertCanonicalFxUpdate(source) {
   assert.match(source, /rollback readback failed/)
   assert.match(source, /latestCreatedExecution\.name/)
   assert.doesNotMatch(source, /run jobs execute/, 'image update must never execute the dormant job')
+}
+
+// assertFxTelemetryContract pins the Grafana OTLP runtime contract the publisher
+// job update writes: the three plaintext variables plus the Secret Manager
+// header binding must be applied additively, verified on readback, and excluded
+// from the drift normalizer (otherwise the first telemetry rollout would look
+// like contract drift and roll itself back).
+function assertFxTelemetryContract(source) {
+  const telemetryNames = [
+    'OTEL_EXPORTER_OTLP_ENDPOINT',
+    'OTEL_EXPORTER_OTLP_HEADERS',
+    'OTEL_EXPORTER_OTLP_PROTOCOL',
+    'OTEL_SERVICE_NAME',
+  ]
+  assert.match(
+    source,
+    /--update-env-vars="OTEL_EXPORTER_OTLP_ENDPOINT=\$\{OTLP_ENDPOINT\},OTEL_SERVICE_NAME=\$\{OTEL_SERVICE_NAME\},OTEL_EXPORTER_OTLP_PROTOCOL=http\/protobuf"/,
+    'publisher must apply the reviewed OTLP endpoint, service name, and protocol'
+  )
+  assert.match(
+    source,
+    /--update-secrets="OTEL_EXPORTER_OTLP_HEADERS=\$\{OTEL_HEADERS_SECRET\}:latest"/,
+    'the OTLP auth header must bind Secret Manager, never a literal credential'
+  )
+  assert.doesNotMatch(source, /--set-env-vars=/, 'publisher must not replace incident-time config')
+  assert.doesNotMatch(source, /--set-secrets=/, 'publisher must not replace existing secret bindings')
+  for (const name of telemetryNames) {
+    assert.equal(
+      occurrences(source, `.name != "${name}"`),
+      1,
+      `${name} must be excluded from the drift normalizer exactly once`
+    )
+  }
+  assert.match(
+    source,
+    /test "\$telemetry_env_names" = "OTEL_EXPORTER_OTLP_ENDPOINT,OTEL_EXPORTER_OTLP_HEADERS,OTEL_EXPORTER_OTLP_PROTOCOL,OTEL_SERVICE_NAME"/,
+    'readback must prove all four telemetry variables landed on the job'
+  )
+  assert.match(
+    source,
+    /select\(\.name == "OTEL_EXPORTER_OTLP_ENDPOINT"\) \| \.value'\)" = "\$OTLP_ENDPOINT"/,
+    'readback must prove the OTLP endpoint value'
+  )
+  assert.match(
+    source,
+    /select\(\.name == "OTEL_SERVICE_NAME"\) \| \.value'\)" = "\$OTEL_SERVICE_NAME"/,
+    'readback must prove the OTLP service name value'
+  )
+  assert.match(
+    source,
+    /select\(\.name == "OTEL_EXPORTER_OTLP_PROTOCOL"\) \| \.value'\)" = "http\/protobuf"/,
+    'readback must prove the OTLP protocol value'
+  )
+  assert.match(
+    source,
+    /select\(\.name == "OTEL_EXPORTER_OTLP_HEADERS"\) \| \.valueFrom\.secretKeyRef\.name'\)" = "\$OTEL_HEADERS_SECRET"/,
+    'readback must prove the OTLP header resolves through the reviewed secret'
+  )
 }
 
 function assertCanonicalOcrDeploy(source) {
@@ -481,6 +545,24 @@ test('manual GCP deploy follows the real topology and immutable path, including 
     ['rollback trap', fxScript.replace('trap rollback_fx_image EXIT', '# rollback removed')],
     ['runtime child pin', fxScript.replace('--image="$EXPECTED_RUNTIME_IMAGE"', '--image="$IMAGE"')],
     ['execution safety', `${fxScript}\n"$GCLOUD" run jobs execute "$JOB"\n`],
+    ['telemetry config replacement', fxScript.replace('--update-env-vars=', '--set-env-vars=')],
+    ['telemetry secret replacement', fxScript.replace('--update-secrets=', '--set-secrets=')],
+    ['inlined OTLP header', fxScript.replace(
+      '--update-secrets="OTEL_EXPORTER_OTLP_HEADERS=${OTEL_HEADERS_SECRET}:latest"',
+      '--update-env-vars="OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic ${OTEL_HEADERS_TOKEN}"'
+    )],
+    ['telemetry readback', fxScript.replace(
+      'test "$telemetry_env_names" = "OTEL_EXPORTER_OTLP_ENDPOINT,OTEL_EXPORTER_OTLP_HEADERS,OTEL_EXPORTER_OTLP_PROTOCOL,OTEL_SERVICE_NAME"',
+      'test -n "$telemetry_env_names"'
+    )],
+    ['telemetry drift exclusion', fxScript.replace(
+      '.name != "OTEL_EXPORTER_OTLP_HEADERS"',
+      '.name != "SAFE"'
+    )],
+    ['secret-backed header readback', fxScript.replace(
+      'select(.name == "OTEL_EXPORTER_OTLP_HEADERS") | .valueFrom.secretKeyRef.name',
+      'select(.name == "OTEL_EXPORTER_OTLP_HEADERS") | .value'
+    )],
   ]) {
     assert.notEqual(mutation, fxScript, `${label} mutation must alter the FX fixture`)
     assert.throws(() => assertCanonicalFxUpdate(mutation), `${label} mutation must fail closed`)
