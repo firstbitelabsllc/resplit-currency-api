@@ -357,6 +357,7 @@ paths:
         - $ref: "#/components/parameters/OcrAttestAssertion"
         - $ref: "#/components/parameters/OcrAttestSoftFail"
         - $ref: "#/components/parameters/OcrClientVersion"
+        - $ref: "#/components/parameters/OcrModel"
       requestBody:
         $ref: "#/components/requestBodies/OcrImage"
       responses:
@@ -412,6 +413,7 @@ paths:
         - $ref: "#/components/parameters/OcrAttestAssertion"
         - $ref: "#/components/parameters/OcrAttestSoftFail"
         - $ref: "#/components/parameters/OcrClientVersion"
+        - $ref: "#/components/parameters/OcrModel"
       requestBody:
         $ref: "#/components/requestBodies/OcrImage"
       responses:
@@ -543,6 +545,17 @@ components:
       required: false
       description: Numeric client version and optional build suffix used for bounded monitoring classification.
       schema: { type: string }
+    OcrModel:
+      name: X-Resplit-OCR-Model
+      in: header
+      required: false
+      description: |
+        Optional OpenRouter model slug the client prefers for the vision-LLM leg.
+        Honored only when the deployment routes that leg through OpenRouter and
+        the slug is on the operator allowlist; otherwise it is ignored and the
+        deployment default is used. It never produces an error and never changes
+        the Azure leg, the response shape, or any cap. Omit it to get the default.
+      schema: { type: string, maxLength: 128 }
 
   requestBodies:
     OcrImage:

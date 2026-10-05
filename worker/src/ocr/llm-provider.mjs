@@ -9,7 +9,7 @@
 // caps, not provider-specific dollar costs; provider identity is carried above.
 
 import { scanReceiptWithAnthropic, LLM_PROVIDER as ANTHROPIC_PROVIDER, llmMaxEdge, RECEIPT_PROMPT_REVISION } from './anthropic.mjs'
-import { scanReceiptWithZai, ZAI_PROVIDER, zaiModel, zaiCredentialConfigured } from './zai.mjs'
+import { scanReceiptWithZai, ZAI_PROVIDER, zaiModel, zaiCredentialConfigured, zaiUsesOpenRouter } from './zai.mjs'
 import { scanReceiptWithOpenAI, OPENAI_PROVIDER, openaiModel } from './openai.mjs'
 
 export const DEFAULT_LLM_SCAN_PROVIDER = ANTHROPIC_PROVIDER
@@ -37,6 +37,24 @@ export function llmModel(env) {
   if (llmProvider(env) === ZAI_PROVIDER) return zaiModel(env)
   if (llmProvider(env) === OPENAI_PROVIDER) return openaiModel(env)
   return (env.LLM_SCAN_MODEL || DEFAULT_ANTHROPIC_MODEL).trim() || DEFAULT_ANTHROPIC_MODEL
+}
+
+const CLIENT_MODEL_MAX_LENGTH = 128
+const CLIENT_MODEL_SLUG = /^[a-z0-9][a-z0-9._~-]*\/[a-z0-9][a-z0-9._:-]*$/i
+
+// The model a request scans with. A client may name its preferred OpenRouter slug
+// in x-resplit-ocr-model, honored only on the zai-over-OpenRouter route and only
+// when the slug is an exact member of the LLM_SCAN_CLIENT_MODELS allowlist (empty
+// by default, so older clients and unconfigured deploys keep llmModel(env)). Any
+// other header value is ignored silently: it never changes the provider, base
+// URL, credential, edge or caps, and never produces an error.
+export function resolveClientLlmModel(env, requested) {
+  const fallback = llmModel(env)
+  if (llmProvider(env) !== ZAI_PROVIDER || !zaiUsesOpenRouter(env)) return fallback
+  const slug = String(requested ?? '').trim()
+  if (!slug || slug.length > CLIENT_MODEL_MAX_LENGTH || !CLIENT_MODEL_SLUG.test(slug)) return fallback
+  const allowed = String(env?.LLM_SCAN_CLIENT_MODELS || '').split(',').map((entry) => entry.trim()).filter(Boolean)
+  return allowed.includes(slug) ? slug : fallback
 }
 
 // The router already keys by model. This suffix also separates prompt versions

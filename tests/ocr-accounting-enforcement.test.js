@@ -175,13 +175,14 @@ function dualScanRequest(imageBytes) {
   })
 }
 
-function analyzeRequest(imageBytes) {
+function analyzeRequest(imageBytes, headers = {}) {
   return new Request('https://fx.resplit.app/ocr/analyze', {
     method: 'POST',
     headers: {
       'content-type': 'image/jpeg',
       'x-resplit-attest-soft-fail': 'true',
       'cf-connecting-ip': '198.51.100.42',
+      ...headers,
     },
     body: imageBytes,
   })
@@ -500,4 +501,35 @@ test('settlement outage keeps the admitted provider result and leaves the reserv
   assert.equal(response.status, 200)
   assert.equal(calls.submit, 1)
   assert.equal(accounting.records.reservations.length, 1)
+})
+
+test('a client-requested model is what pre-provider accounting refusals report', async () => {
+  const requested = 'z-ai/glm-5.3-flashx'
+  const openRouter = {
+    LLM_SCAN_PROVIDER: 'zai',
+    LLM_SCAN_BASE_URL: 'https://openrouter.ai/api/v1',
+    OPENROUTER_API_KEY: 'or-key',
+    LLM_SCAN_MODEL: 'google/gemini-2.5-flash-lite',
+    LLM_SCAN_CLIENT_MODELS: requested,
+  }
+  const llmOf = async (response) => (await response.json()).engines.find((e) => e.id === 'llm')
+
+  // respondRateLimited: the global Azure cap of one refuses the second unique scan.
+  stubAzure()
+  const capped = makeAccountingBinding({ azureGlobalCap: 1 })
+  const cappedEnv = makeEnv({ accounting: capped, ...openRouter })
+  await handleOcr(analyzeRequest(new Uint8Array([9, 8, 7])), cappedEnv)
+  const limited = await handleOcr(analyzeRequest(new Uint8Array([9, 8, 6]), { 'x-resplit-ocr-model': requested }), cappedEnv)
+  assert.equal(limited.status, 429)
+  assert.equal((await llmOf(limited)).model, requested)
+
+  // accountingUnavailableMulti: the reservation store is down.
+  const down = makeEnv({ accounting: makeAccountingBinding({ reserveError: new Error('do down') }), ...openRouter })
+  const unavailable = await handleOcr(analyzeRequest(new Uint8Array([5, 5, 5]), { 'x-resplit-ocr-model': requested }), down)
+  assert.equal(unavailable.status, 502)
+  assert.equal((await llmOf(unavailable)).model, requested)
+
+  // And without the header both refusals still report the configured default.
+  const plain = await handleOcr(analyzeRequest(new Uint8Array([5, 5, 4])), down)
+  assert.equal((await llmOf(plain)).model, 'google/gemini-2.5-flash-lite')
 })

@@ -42,6 +42,10 @@ function routeConfig(env) {
   return null
 }
 
+export function zaiUsesOpenRouter(env) {
+  return routeConfig(env)?.baseUrl === OPENROUTER_BASE_URL
+}
+
 export function zaiCredentialConfigured(env) {
   const route = routeConfig(env)
   return Boolean(route && env?.[route.keyName])
