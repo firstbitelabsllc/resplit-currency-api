@@ -46,6 +46,25 @@ func (m *MemStore) PutKey(_ context.Context, keyID string, pubSPKI []byte, signC
 	return nil
 }
 
+// AdvanceSignCount atomically moves signCount to next when the stored value is
+// strictly less than next. Concurrent callers racing the same next value see
+// exactly one success; a lower next after a higher advance is rejected so the
+// counter never regresses.
+func (m *MemStore) AdvanceSignCount(_ context.Context, keyID string, next uint32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[keyID]
+	if !ok {
+		return ErrUnknownKey
+	}
+	if next <= r.signCount {
+		return attestErr("REPLAY", "signCount %d does not advance stored %d", next, r.signCount)
+	}
+	r.signCount = next
+	m.records[keyID] = r
+	return nil
+}
+
 // StubOCRProvider is a placeholder OCR backend that echoes a fixed shape so the
 // service builds and the scan route is wired end to end.
 //
