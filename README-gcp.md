@@ -1,5 +1,14 @@
 # Resplit Currency API — GCP/Go Rewrite
 
+> **⚠️ REFERENCE-ONLY for FX (2026-07-03).** Cloudflare/JS is the **canonical** FX
+> read + publish stack; this Go/GCP rewrite is a **design/reference artifact** and
+> is **not deployed for FX**. Its quorum math was ported to
+> `scripts/lib/sources.js`. Do not extend `internal/fx/*` — change the JS port
+> instead. See [docs/decisions/0001-fx-cloudflare-js-canonical.md](docs/decisions/0001-fx-cloudflare-js-canonical.md).
+> (The manual, `workflow_dispatch`-only OCR/sideload Cloud Run deploy in
+> `.github/workflows/deploy.yml` is a separate concern and out of scope for that
+> FX decision.)
+
 Clean-slate Go rewrite of `resplit-currency-api`, targeting Google Cloud. This
 replaces the Cloudflare Worker + Pages topology with a **static-first spine plus
 a blast-radius split**: the high-volume FX read path serves precomputed JSON
