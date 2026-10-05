@@ -35,6 +35,7 @@ import {
   llmProvider,
   llmProviderConfigured,
   llmModel,
+  resolveClientLlmModel,
   llmCacheVariant,
 } from './llm-provider.mjs'
 import {
@@ -389,7 +390,10 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
 
   const imageHash = await sha256Hex(imageBytes)
   const llmGate = readLlmGate(env, keyId, attest)
-  const model = llmModel(env)
+  // Resolved once: the cache key, the provider call, telemetry and the response all
+  // read this one value, so they cannot disagree. Absent or ineligible header = llmModel(env).
+  const model = resolveClientLlmModel(env, request.headers.get('x-resplit-ocr-model'))
+  const llmEnv = model === llmModel(env) ? env : { ...env, LLM_SCAN_MODEL: model }
   // The cached value is the shape-neutral internal result, NOT a v1/v2 envelope, so
   // the key is route-agnostic: dual-scan and analyze share one scan for the same
   // image+gate+model (the Azure+Anthropic work is byte-identical; only presentation
@@ -413,10 +417,10 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     anthropicUnits: llmGate.status === 'allowed' ? 1 : 0,
   })
   if (admission.status === 'rate_limited') {
-    return respondRateLimited(env, { route, shapeEnvelope, scanId, attest, requestId, clientVersion, start })
+    return respondRateLimited(llmEnv, { route, shapeEnvelope, scanId, attest, requestId, clientVersion, start })
   }
   if (admission.status === 'unavailable') {
-    return accountingUnavailableMulti(env, {
+    return accountingUnavailableMulti(llmEnv, {
       route, shapeEnvelope, scanId, attest, requestId, clientVersion, start,
     })
   }
@@ -428,7 +432,7 @@ async function runOcrScan(request, env, requestId, ctx, { route, shapeEnvelope }
     accountingEnforced: admission.enforced,
   })
   const llmPromise = runLlmLeg({
-    imageBytes, contentType, env, gate: llmGate, model,
+    imageBytes, contentType, env: llmEnv, gate: llmGate, model,
     accountingEnforced: admission.enforced,
     accountingAllowed: admission.anthropicAllowed,
   })

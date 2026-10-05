@@ -238,3 +238,22 @@ test('dark accounting preserves the legacy settled fallback for an unexpected Az
   assert.equal(azure.status, 'provider_error')
   assert.ok(Number.isFinite(azure.latencyMs) && azure.latencyMs >= 0)
 })
+
+test('Azure analyze stays pinned to prebuilt-receipt at api-version 2024-11-30', async (t) => {
+  // 2024-11-30 is the latest GA Document Intelligence version (Microsoft Learn,
+  // azure-rest-api-specs stable/ has no newer folder). Older iOS clients parse the raw
+  // AnalyzeResultV4 bytes this call returns, so a bump must be a deliberate decision.
+  let analyzeUrl
+  installFetch(t, async (url) => {
+    analyzeUrl = new URL(String(url))
+    return new Response('', {
+      status: 202,
+      headers: { 'operation-location': `${BASE_ENV.AZURE_OCR_ENDPOINT}/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-1?api-version=2024-11-30` },
+    })
+  })
+
+  await submitReceiptAnalyze(new Uint8Array([1, 2, 3]), 'image/jpeg', BASE_ENV)
+
+  assert.equal(analyzeUrl.pathname, '/documentintelligence/documentModels/prebuilt-receipt:analyze')
+  assert.equal(analyzeUrl.searchParams.get('api-version'), '2024-11-30')
+})

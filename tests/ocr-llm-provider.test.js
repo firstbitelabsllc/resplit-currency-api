@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { handleOcr } from '../worker/src/ocr/router.mjs'
 import { scanReceiptWithAnthropic } from '../worker/src/ocr/anthropic.mjs'
 import { scanReceiptWithZai } from '../worker/src/ocr/zai.mjs'
-import { llmProvider, llmProviderConfigured, llmModel, llmMaxEdge } from '../worker/src/ocr/llm-provider.mjs'
+import { llmProvider, llmProviderConfigured, llmModel, llmMaxEdge, resolveClientLlmModel } from '../worker/src/ocr/llm-provider.mjs'
 import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/src/ocr/monitoring.mjs'
 
 // The env-gated LLM provider seam. Defaults must reproduce today's Anthropic path
@@ -12,6 +12,7 @@ import { setOcrSentrySdkForTests, resetOcrSentrySdkForTests } from '../worker/sr
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ZAI_URL = 'https://api.z.ai/api/coding/paas/v4/chat/completions'
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
 function makeKV() {
   const store = new Map()
@@ -38,13 +39,21 @@ function makeEnv(extra = {}) {
 
 let calls
 const realFetch = globalThis.fetch
-beforeEach(() => { calls = { azureSubmit: 0, azurePoll: 0, anthropic: 0, zai: 0, azureBody: null, zaiBody: null, anthropicBody: null } })
+beforeEach(() => { calls = { azureSubmit: 0, azurePoll: 0, anthropic: 0, zai: 0, openrouter: 0, azureBody: null, zaiBody: null, openrouterBody: null, anthropicBody: null } })
 afterEach(() => { globalThis.fetch = realFetch })
 
-function analyzeRequest(imageBytes) {
+function analyzeRequest(imageBytes, headers = {}) {
   return new Request('https://fx.resplit.app/ocr/analyze', {
     method: 'POST',
-    headers: { 'content-type': 'image/jpeg', 'x-resplit-attest-soft-fail': 'true' },
+    headers: { 'content-type': 'image/jpeg', 'x-resplit-attest-soft-fail': 'true', ...headers },
+    body: imageBytes,
+  })
+}
+
+function dualScanRequest(imageBytes, headers = {}) {
+  return new Request('https://fx.resplit.app/ocr/dual-scan', {
+    method: 'POST',
+    headers: { 'content-type': 'image/jpeg', 'x-resplit-attest-soft-fail': 'true', ...headers },
     body: imageBytes,
   })
 }
@@ -107,6 +116,15 @@ function stubProviders({ azure = azureRaw(), scanned = scannedReceipt() } = {}) 
       calls.zaiBody = JSON.parse(init.body)
       return Response.json({
         id: 'chatcmpl-test', model: 'glm-5.3-flash',
+        choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(scanned) }, finish_reason: 'stop' }],
+      }, { status: 200 })
+    }
+    if (u === OPENROUTER_URL) {
+      calls.openrouter++
+      calls.openrouterBody = JSON.parse(init.body)
+      calls.openrouterAuth = init.headers.authorization
+      return Response.json({
+        id: 'gen-test', model: calls.openrouterBody.model,
         choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(scanned) }, finish_reason: 'stop' }],
       }, { status: 200 })
     }
@@ -412,4 +430,196 @@ test('a receipt cached under the old prompt cannot satisfy a new-prompt scan', a
   if (key !== legacyKey) env.ATTEST_KV.store.delete(key)
   await handleOcr(analyzeRequest(image), env)
   assert.equal(calls.zai, 2, 'old prompt receipt must not mask the new inference')
+})
+
+// Client-requested scan model (x-resplit-ocr-model). The header only ever swaps the
+// model slug inside the already-configured OpenRouter route; every other path is
+// byte-for-byte the pre-header behavior.
+const DEFAULT_OR_MODEL = 'google/gemini-2.5-flash-lite'
+const REQUESTED_MODEL = 'z-ai/glm-5.3-flashx'
+const OPENROUTER_BASE = 'https://openrouter.ai/api/v1'
+const CLIENT_ROUTES = [
+  ['/ocr/analyze', analyzeRequest],
+  ['/ocr/dual-scan', dualScanRequest],
+]
+
+function openRouterEnv(extra = {}) {
+  return makeEnv({
+    LLM_SCAN_PROVIDER: 'zai',
+    LLM_SCAN_BASE_URL: OPENROUTER_BASE,
+    OPENROUTER_API_KEY: 'or-key-must-not-leak',
+    LLM_SCAN_MODEL: DEFAULT_OR_MODEL,
+    LLM_SCAN_MAX_EDGE: '1280',
+    LLM_SCAN_CLIENT_MODELS: `${REQUESTED_MODEL}, openai/gpt-5-mini`,
+    ...extra,
+  })
+}
+
+const cacheKeys = (env) => [...env.ATTEST_KV.store.keys()].filter((k) => k.startsWith('cache:dualScan:v2core:'))
+
+function llmView(route, body) {
+  return route === '/ocr/analyze'
+    ? body.engines.find((e) => e.id === 'llm')
+    : body.llm
+}
+
+// Drop only the per-request id and wall-clock timings; everything else must match.
+function normalizedEnvelope(body) {
+  return JSON.parse(JSON.stringify(body), (key, value) => (key === 'scanId' || key === 'latencyMs' ? undefined : value))
+}
+
+for (const [route, buildRequest] of CLIENT_ROUTES) {
+  test(`client model (a) ${route}: no header keeps the default model in the call, cache key and envelope`, async () => {
+    stubProviders()
+    const image = jpegWithDimensions(800, 600, 11)
+    const env = openRouterEnv()
+    const res = await handleOcr(buildRequest(image), env)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+
+    assert.equal(calls.openrouter, 1)
+    assert.equal(calls.openrouterBody.model, DEFAULT_OR_MODEL)
+    const keys = cacheKeys(env)
+    assert.equal(keys.length, 1)
+    assert.match(keys[0], /^cache:dualScan:v2core:[0-9a-f]{64}:allowed:soft_fail:google\/gemini-2\.5-flash-lite:zai:1280:item-groups-v2$/)
+    assert.equal(llmView(route, body).model, DEFAULT_OR_MODEL)
+    assert.deepEqual(body.aiModels, ['azure-di-v4', DEFAULT_OR_MODEL])
+
+    // A configured allowlist with no header is indistinguishable from an
+    // unconfigured one: same envelope, same key, same outbound request.
+    const baseline = openRouterEnv({ LLM_SCAN_CLIENT_MODELS: undefined })
+    const baselineBody = await (await handleOcr(buildRequest(image), baseline)).json()
+    assert.deepEqual(normalizedEnvelope(body), normalizedEnvelope(baselineBody))
+    assert.deepEqual(cacheKeys(baseline), keys)
+  })
+
+  test(`client model (b) ${route}: an allowlisted header drives the call, cache key and reported models`, async () => {
+    stubProviders()
+    const image = jpegWithDimensions(800, 600, 12)
+    const env = openRouterEnv()
+    const { value: res, events } = await captureMonitoring(
+      () => handleOcr(buildRequest(image, { 'x-resplit-ocr-model': ` ${REQUESTED_MODEL} ` }), env),
+    )
+    assert.equal(res.status, 200)
+    const body = await res.json()
+
+    assert.equal(calls.openrouter, 1)
+    assert.equal(calls.openrouterBody.model, REQUESTED_MODEL)
+    assert.equal(calls.openrouterAuth, 'Bearer or-key-must-not-leak')
+    assert.equal(calls.zai, 0)
+    const [key] = cacheKeys(env)
+    assert.ok(key.includes(`:${REQUESTED_MODEL}:zai:1280:`), key)
+    assert.equal(llmView(route, body).model, REQUESTED_MODEL)
+    assert.deepEqual(body.aiModels, ['azure-di-v4', REQUESTED_MODEL])
+    const scan = events.find((e) => e.signal === 'dual_scan')
+    assert.equal(scan.llm_model, REQUESTED_MODEL)
+    assert.equal(scan.llm_served_model_matches, true)
+
+    const baseline = openRouterEnv()
+    await handleOcr(buildRequest(image), baseline)
+    assert.notEqual(cacheKeys(baseline)[0], key)
+    // The cached receipt under the requested model is replayed for the same model only.
+    await handleOcr(buildRequest(image, { 'x-resplit-ocr-model': REQUESTED_MODEL }), env)
+    assert.equal(calls.openrouter, 2, 'one call for the baseline default-model scan, none for the cache replay')
+  })
+
+  test(`client model (c) ${route}: unlisted, malformed, overlong or allowlist-less headers fall back silently`, async () => {
+    const image = jpegWithDimensions(800, 600, 13)
+    const cases = [
+      ['not in the allowlist', 'anthropic/claude-sonnet-5', {}],
+      ['no slash', 'glm-5.3-flashx', { LLM_SCAN_CLIENT_MODELS: 'glm-5.3-flashx' }],
+      ['whitespace inside', 'z-ai/glm 5', { LLM_SCAN_CLIENT_MODELS: 'z-ai/glm 5' }],
+      ['control characters', 'z-ai/glm\u0001x', { LLM_SCAN_CLIENT_MODELS: 'z-ai/glm\u0001x' }],
+      ['leading slash', '/glm', { LLM_SCAN_CLIENT_MODELS: '/glm' }],
+      ['overlong', `z-ai/${'a'.repeat(124)}`, { LLM_SCAN_CLIENT_MODELS: `z-ai/${'a'.repeat(124)}` }],
+      ['empty value', '   ', {}],
+      ['case mismatch of an allowlisted slug', 'Z-AI/GLM-5.3-FLASHX', {}],
+      ['empty allowlist', REQUESTED_MODEL, { LLM_SCAN_CLIENT_MODELS: '' }],
+      ['unset allowlist', REQUESTED_MODEL, { LLM_SCAN_CLIENT_MODELS: undefined }],
+    ]
+    for (const [label, header, envExtra] of cases) {
+      stubProviders()
+      calls.openrouter = 0
+      const env = openRouterEnv(envExtra)
+      const res = await handleOcr(buildRequest(image, { 'x-resplit-ocr-model': header }), env)
+      assert.equal(res.status, 200, label)
+      const body = await res.json()
+      assert.equal(calls.openrouter, 1, label)
+      assert.equal(calls.openrouterBody.model, DEFAULT_OR_MODEL, label)
+      assert.equal(llmView(route, body).model, DEFAULT_OR_MODEL, label)
+      assert.ok(cacheKeys(env)[0].includes(`:${DEFAULT_OR_MODEL}:zai:`), label)
+    }
+  })
+
+  test(`client model (d) ${route}: the header is ignored for other providers and non-OpenRouter routes`, async () => {
+    const image = jpegWithDimensions(800, 600, 14)
+    stubProviders()
+    const anthropic = makeEnv({
+      ANTHROPIC_API_KEY: 'a', LLM_SCAN_MODEL: 'claude-sonnet-5', LLM_SCAN_CLIENT_MODELS: REQUESTED_MODEL,
+    })
+    let body = await (await handleOcr(buildRequest(image, { 'x-resplit-ocr-model': REQUESTED_MODEL }), anthropic)).json()
+    assert.equal(calls.anthropicBody.model, 'claude-sonnet-5')
+    assert.equal(llmView(route, body).model, 'claude-sonnet-5')
+
+    const openai = makeEnv({ LLM_SCAN_PROVIDER: 'openai', OPENAI_API_KEY: 'o', LLM_SCAN_CLIENT_MODELS: REQUESTED_MODEL })
+    body = await (await handleOcr(buildRequest(image, { 'x-resplit-ocr-model': REQUESTED_MODEL }), openai)).json()
+    assert.equal(llmView(route, body).model, 'gpt-6-astra')
+
+    for (const base of [undefined, 'https://api.z.ai/api/coding/paas/v4', 'https://api.z.ai/api/paas/v4']) {
+      calls.zai = 0
+      const zai = makeEnv({
+        LLM_SCAN_PROVIDER: 'zai', ZAI_API_KEY: 'z', LLM_SCAN_MODEL: 'glm-5.3-flash',
+        LLM_SCAN_BASE_URL: base, LLM_SCAN_CLIENT_MODELS: REQUESTED_MODEL,
+      })
+      body = await (await handleOcr(buildRequest(image, { 'x-resplit-ocr-model': REQUESTED_MODEL }), zai)).json()
+      assert.equal(llmView(route, body).model, 'glm-5.3-flash', String(base))
+      assert.equal(calls.openrouter, 0)
+    }
+  })
+}
+
+test('client model: a trailing slash on the OpenRouter base still honors an allowlisted header', async () => {
+  stubProviders()
+  const env = openRouterEnv({ LLM_SCAN_BASE_URL: `${OPENROUTER_BASE}/` })
+  const res = await handleOcr(analyzeRequest(jpegWithDimensions(800, 600, 15), { 'x-resplit-ocr-model': REQUESTED_MODEL }), env)
+  assert.equal(res.status, 200)
+  assert.equal(calls.openrouterBody.model, REQUESTED_MODEL)
+})
+
+test('client model: the header never changes the provider route, credential, edge or caps', async () => {
+  stubProviders()
+  const env = openRouterEnv({ LLM_SCAN_MAX_EDGE: '1600' })
+  await handleOcr(analyzeRequest(jpegWithDimensions(800, 600, 16), { 'x-resplit-ocr-model': REQUESTED_MODEL }), env)
+  const baseline = openRouterEnv({ LLM_SCAN_MAX_EDGE: '1600' })
+  const baselineCalls = { ...calls }
+  await handleOcr(analyzeRequest(jpegWithDimensions(800, 600, 16)), baseline)
+  assert.equal(calls.openrouterAuth, 'Bearer or-key-must-not-leak')
+  const { model: _a, ...requested } = baselineCalls.openrouterBody
+  const { model: _b, ...defaulted } = calls.openrouterBody
+  assert.deepEqual(requested, defaulted, 'only the model slug differs in the outbound body')
+  assert.match(cacheKeys(env)[0], /:zai:1600:/)
+})
+
+test('client model: a rate-limited scan reports the resolved model, not the default', async () => {
+  stubProviders()
+  const env = openRouterEnv({ LLM_SCAN_DAILY_CAP: '0' })
+  const body = await (await handleOcr(
+    analyzeRequest(jpegWithDimensions(800, 600, 17), { 'x-resplit-ocr-model': REQUESTED_MODEL }), env,
+  )).json()
+  const llm = body.engines.find((e) => e.id === 'llm')
+  assert.equal(llm.status, 'rate_limited')
+  assert.equal(llm.model, REQUESTED_MODEL)
+  assert.equal(calls.openrouter, 0)
+})
+
+test('resolveClientLlmModel enforces provider, base URL, shape, length and allowlist membership', () => {
+  const env = { LLM_SCAN_PROVIDER: 'zai', LLM_SCAN_BASE_URL: OPENROUTER_BASE, LLM_SCAN_MODEL: DEFAULT_OR_MODEL, LLM_SCAN_CLIENT_MODELS: ` ${REQUESTED_MODEL} ,, openai/gpt-5-mini ` }
+  assert.equal(resolveClientLlmModel(env, REQUESTED_MODEL), REQUESTED_MODEL)
+  assert.equal(resolveClientLlmModel(env, 'openai/gpt-5-mini'), 'openai/gpt-5-mini')
+  assert.equal(resolveClientLlmModel(env, 'x-ai/grok'), DEFAULT_OR_MODEL)
+  assert.equal(resolveClientLlmModel(env, null), DEFAULT_OR_MODEL)
+  assert.equal(resolveClientLlmModel(env, ''), DEFAULT_OR_MODEL)
+  assert.equal(resolveClientLlmModel({ ...env, LLM_SCAN_CLIENT_MODELS: '' }, REQUESTED_MODEL), DEFAULT_OR_MODEL)
+  assert.equal(resolveClientLlmModel({ ...env, LLM_SCAN_PROVIDER: 'anthropic' }, REQUESTED_MODEL), 'google/gemini-2.5-flash-lite')
+  assert.equal(resolveClientLlmModel({ ...env, LLM_SCAN_BASE_URL: undefined }, REQUESTED_MODEL), DEFAULT_OR_MODEL)
 })
