@@ -15,6 +15,8 @@ package attest
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
@@ -98,7 +100,8 @@ type attestationStatement struct {
 //  3. nonce = SHA256(authData || SHA256(challenge)) equals the credCert nonce
 //     extension (OID 1.2.840.113635.100.8.2; nonce = trailing 32 bytes).
 //  4. authData: rpIdHash == SHA256(appID), signCount == 0, attested key present.
-//  5. Extract the COSE EC2 P-256 key, store as SPKI with signCount 0.
+//  5. keyId binding: keyId == SHA256(credCert raw P-256 key) == credentialId.
+//  6. Persist the Apple-certified credCert SPKI with signCount 0.
 func VerifyAttestation(ctx context.Context, in AttestationInput, store Store) error {
 	raw, err := decodeBase64(in.AttestationObjectB64)
 	if err != nil {
@@ -164,21 +167,51 @@ func VerifyAttestation(ctx context.Context, in AttestationInput, store Store) er
 	if ad.signCount != 0 {
 		return attestErr("COUNT", "initial signCount must be 0 (got %d)", ad.signCount)
 	}
-	if !ad.hasCredential || len(ad.publicKeyCOSE) == 0 {
+	if !ad.hasCredential || len(ad.credentialID) == 0 {
 		return attestErr("NOKEY", "attested credential data missing")
 	}
 
-	// 4. Extract the COSE EC2 P-256 key and store its SPKI encoding.
-	pub, err := publicKeyFromCOSE(ad.publicKeyCOSE)
-	if err != nil {
+	// 4. keyId binding (Apple steps 5 and 9). Mirror worker/src/ocr/attestation.mjs:
+	// without this check a valid attestationObject can be registered under any
+	// client-supplied keyId, minting independent rate-limit identities that all
+	// verify against the same device key.
+	if err := bindAttestKeyID(in.KeyID, credCert, ad.credentialID); err != nil {
 		return err
 	}
-	spki, err := x509.MarshalPKIXPublicKey(pub)
+
+	// 5. Store the key Apple certified (credCert), not the client-encoded COSE copy.
+	spki, err := x509.MarshalPKIXPublicKey(credCert.PublicKey)
 	if err != nil {
 		return attestErr("KEY", "SPKI marshal failed: %v", err)
 	}
 	if err := store.PutKey(ctx, in.KeyID, spki, 0); err != nil {
 		return attestErr("STORE", "store PutKey failed: %v", err)
+	}
+	return nil
+}
+
+// bindAttestKeyID enforces that the client-supplied keyId equals both
+// SHA256(credCert uncompressed P-256 public key) and authData.credentialId.
+func bindAttestKeyID(keyID string, credCert *x509.Certificate, credentialID []byte) error {
+	keyIDBytes, err := decodeBase64(keyID)
+	if err != nil {
+		return attestErr("KEYID", "keyId not valid base64: %v", err)
+	}
+	pub, ok := credCert.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return attestErr("KEYID", "credCert public key is not ECDSA P-256")
+	}
+	// Uncompressed EC point 0x04||X||Y — same bytes WebCrypto exportKey("raw") yields.
+	ecdhPub, err := pub.ECDH()
+	if err != nil {
+		return attestErr("KEYID", "credCert ECDH export failed: %v", err)
+	}
+	sum := sha256.Sum256(ecdhPub.Bytes())
+	if subtle.ConstantTimeCompare(sum[:], keyIDBytes) != 1 {
+		return attestErr("KEYID", "sha256(credCert public key) != keyId")
+	}
+	if subtle.ConstantTimeCompare(credentialID, keyIDBytes) != 1 {
+		return attestErr("KEYID", "credentialId != keyId")
 	}
 	return nil
 }
