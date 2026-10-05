@@ -119,6 +119,25 @@ func (s *FirestoreStore) PutKey(ctx context.Context, keyID string, pubSPKI []byt
 	return nil
 }
 
+// CreateKey registers attest_keys/{keyID} only when absent. Maps the docStore
+// already-exists sentinel onto attest.ErrAlreadyExists so VerifyAttestation can
+// refuse to reset an advanced signCount on a captured /ocr/attest replay.
+func (s *FirestoreStore) CreateKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
+	fields := map[string]any{
+		fieldPubSPKI:   pubSPKI,
+		fieldSignCount: int64(signCount),
+	}
+	err := s.docs.Create(ctx, collAttestKeys, keyID, fields)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrAlreadyExists):
+		return attest.ErrAlreadyExists
+	default:
+		return fmt.Errorf("firestore create key %q: %w", keyID, err)
+	}
+}
+
 // ---- idempotency -------------------------------------------------------------
 
 // idempotencyID is the ocr_idempotency document id: deviceID:hash. hash is the
