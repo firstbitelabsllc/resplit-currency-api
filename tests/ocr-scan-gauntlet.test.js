@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  defaultComparisonCases, inventoryReceiptSet, loadReceiptSet, runProviderMatrix,
+  createPromotionalReservation, defaultComparisonCases, inventoryReceiptSet, loadReceiptSet, runProviderMatrix,
   runProviderReplay, percentile, validateProviderCases,
 } from '../scripts/ocr-scan-gauntlet.mjs'
 
@@ -520,4 +520,77 @@ test('a named credential_env stays in its own key slot across a mixed-provider m
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+function promoReservation(overrides = {}) {
+  return createPromotionalReservation({
+    account: 'synthetic-linked-org', apiKey: 'synthetic-promo-key', model: 'claude-haiku-5-5',
+    promotionalMicrousd: 10_000_000, capMicrousd: 100_000, requestMicrousd: 100_000,
+    expiresAtMs: 2000, now: () => 1000, ...overrides,
+  })
+}
+
+const promoEnv = {
+  LLM_SCAN_PROVIDER: 'anthropic', LLM_SCAN_MODEL: 'claude-haiku-5-5',
+  ANTHROPIC_API_KEY: 'synthetic-promo-key', OPENROUTER_API_KEY: 'synthetic-paid-openrouter',
+  ZAI_API_KEY: 'synthetic-paid-openrouter', OPENAI_API_KEY: 'synthetic-other-account',
+  PURCHASED_CREDIT_USD: '46.54',
+}
+
+test('promotional-only missing or exhausted reservation refuses before transport despite purchased funds', async () => {
+  const { root, set } = await fixtureReplaySet()
+  try {
+    for (const reservation of [undefined, () => null, promoReservation({ promotionalMicrousd: 0, capMicrousd: 0 })]) {
+      let calls = 0
+      const report = await runProviderReplay({set, root, env: promoEnv, promotionalOnly: true,
+        promotionalReservation: reservation, scan: async () => { calls++; return fakeResults.a }})
+      assert.equal(calls, 0)
+      assert.equal(report.rows.every(row => row.provider_started === false), true)
+      assert.equal(report.rows.every(row => row.failure_code?.startsWith('promotional_')), true)
+    }
+  } finally { await rm(root, {recursive:true, force:true}) }
+})
+
+test('finite promotional reservation is debited before concurrent attempts and never refunded on provider failure', async () => {
+  const { root, set } = await fixtureReplaySet()
+  try {
+    let calls = 0
+    const report = await runProviderReplay({set, root, env: promoEnv, concurrency: 3,
+      promotionalOnly: true, promotionalReservation: promoReservation(),
+      scan: async () => { calls++; return {ok:false, providerStarted:true, httpStatus:400, failureCode:'upstream_balance_exhausted'} }})
+    assert.equal(calls, 1)
+    assert.equal(report.rows.filter(row => row.failure_code==='promotional_budget_exhausted').length, 2)
+    assert.equal(report.rows.filter(row => row.provider_started).length, 1)
+  } finally { await rm(root, {recursive:true, force:true}) }
+})
+
+test('promotional matrix cannot fall back to OpenRouter or another account', async () => {
+  const { root, set } = await fixtureReplaySet()
+  try {
+    const seen = []
+    const cases = [
+      {name:'candidate', env:{LLM_SCAN_PROVIDER:'anthropic', LLM_SCAN_MODEL:'claude-haiku-5-5'}},
+      {name:'paid_router', env:{LLM_SCAN_PROVIDER:'zai', LLM_SCAN_MODEL:'google/gemini-2.5-flash-lite', LLM_SCAN_BASE_URL:'https://openrouter.ai/api/v1'}},
+      {name:'other_account', env:{LLM_SCAN_PROVIDER:'anthropic', LLM_SCAN_MODEL:'claude-haiku-5-5'}, credential_env:'OTHER_API_KEY'},
+    ]
+    const report = await runProviderMatrix({set:set.slice(0,1), root, cases,
+      env:{...promoEnv, OTHER_API_KEY:'synthetic-other-account'},
+      promotionalOnly:true, promotionalReservation:promoReservation(),
+      scan:async (_bytes,_type,env) => { seen.push(env.ANTHROPIC_API_KEY); return {ok:false, providerStarted:true, httpStatus:400, failureCode:'upstream_balance_exhausted'} }})
+    assert.deepEqual(seen, ['synthetic-promo-key'])
+    assert.equal(report.cases.slice(1).every(c => c.report.rows[0].provider_started===false), true)
+    assert.equal(report.cases.slice(1).every(c => c.report.rows[0].failure_code==='promotional_route_mismatch'), true)
+  } finally { await rm(root, {recursive:true, force:true}) }
+})
+
+test('promotional reservation refuses expired, invalid and overly broad limits', () => {
+  for (const overrides of [{capMicrousd:NaN},{requestMicrousd:0},{capMicrousd:100001},{promotionalMicrousd:Infinity},{account:''},{apiKey:''},{model:''}]) {
+    assert.throws(() => promoReservation(overrides), /promotional reservation/)
+  }
+  const expired = promoReservation({expiresAtMs:1000})
+  assert.equal(expired(promoEnv), 'promotional_grant_expired')
+  const reserve = promoReservation()
+  assert.equal(reserve({...promoEnv, LLM_SCAN_MODEL:'claude-sonnet-5'}), 'promotional_route_mismatch')
+  assert.equal(reserve({...promoEnv, ANTHROPIC_API_KEY:'synthetic-other-account'}), 'promotional_route_mismatch')
+  assert.equal(reserve(promoEnv), null)
 })

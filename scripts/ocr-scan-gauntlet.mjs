@@ -602,6 +602,8 @@ function safeFailureCode(result) {
     'upstream_unknown_model', 'upstream_model_method_unsupported', 'upstream_api_permission_denied',
     'upstream_request_invalid',
     'llm_daily_cap', 'scan_rate_limited', 'operator_disabled',
+    'promotional_budget_unverified', 'promotional_budget_exhausted',
+    'promotional_route_mismatch', 'promotional_grant_expired',
     'unknown', 'runner_error', 'provider_unavailable',
   ])
   if (!result?.providerStarted && result?.httpStatus === 413) {
@@ -621,6 +623,38 @@ function mimeTypeFor(path) {
   }
 }
 
+const promotionalReservations = new WeakSet()
+
+// Offline-prepared client reservation. Account/grant/pricing attribution must
+// be verified separately; this never treats an aggregate balance as promotion.
+export function createPromotionalReservation({ account, apiKey, model,
+  promotionalMicrousd, capMicrousd, requestMicrousd, expiresAtMs, now = Date.now }) {
+  if (![account, apiKey, model].every(v => typeof v === 'string' && v.trim())
+    || !Number.isSafeInteger(promotionalMicrousd) || promotionalMicrousd < 0
+    || !Number.isSafeInteger(capMicrousd) || capMicrousd < 0
+    || capMicrousd > Math.floor(promotionalMicrousd / 100)
+    || !Number.isSafeInteger(requestMicrousd) || requestMicrousd <= 0
+    || !Number.isSafeInteger(expiresAtMs) || expiresAtMs < 0 || typeof now !== 'function') {
+    throw new TypeError('invalid promotional reservation')
+  }
+  let remaining = capMicrousd
+  const reserve = env => {
+    if (llmProvider(env) !== 'anthropic' || llmModel(env) !== model
+      || env?.ANTHROPIC_API_KEY !== apiKey || env?.LLM_SCAN_BASE_URL) {
+      return 'promotional_route_mismatch'
+    }
+    const clock = now()
+    if (!Number.isSafeInteger(clock) || clock >= expiresAtMs) return 'promotional_grant_expired'
+    if (remaining < requestMicrousd) return 'promotional_budget_exhausted'
+    // Debit synchronously before transport and do not refund an uncertain/failed
+    // request: the provider may already have charged it. Shared by all workers.
+    remaining -= requestMicrousd
+    return null
+  }
+  promotionalReservations.add(reserve)
+  return reserve
+}
+
 // `scan` and `readImage` are injectable so inventory/scoring can be tested
 // without provider credentials or network access.
 export async function runProviderReplay({
@@ -632,6 +666,8 @@ export async function runProviderReplay({
   scan = scanReceiptWithLlm,
   readImage = async (entry) => new Uint8Array(await readFile(entry.imagePath)),
   preloadedFixtureReadMs = null,
+  promotionalOnly = false,
+  promotionalReservation = null,
   onRow = null,
 } = {}) {
   let receipts = set
@@ -658,7 +694,14 @@ export async function runProviderReplay({
           ? preloadedFixtureReadMs
           : Math.max(0, performance.now() - readStarted)
         const scanStarted = performance.now()
-        result = await scan(bytes, mimeTypeFor(entry.imagePath), env)
+        const refusal = promotionalOnly
+          ? (promotionalReservations.has(promotionalReservation)
+            ? promotionalReservation(env) : 'promotional_budget_unverified')
+          : null
+        result = refusal
+          ? { ok: false, httpStatus: 403, scanned: null, providerStarted: false,
+            failureCode: refusal, inputPx: null, latencyMs: 0 }
+          : await scan(bytes, mimeTypeFor(entry.imagePath), env)
         postReadWallMs = Math.max(0, performance.now() - scanStarted)
         scanLatency = Number.isFinite(result?.latencyMs) ? result.latencyMs : null
       } catch {
@@ -750,6 +793,8 @@ export async function runProviderMatrix({
   scan = scanReceiptWithLlm,
   readImage = async (entry) => new Uint8Array(await readFile(entry.imagePath)),
   onAttempt = null,
+  promotionalOnly = false,
+  promotionalReservation = null,
 } = {}) {
   const providerCases = validateProviderCases(cases)
   const caseOrder = String(env?.OCR_GAUNTLET_CASE_ORDER || 'configured').trim().toLowerCase()
@@ -802,6 +847,7 @@ export async function runProviderMatrix({
         const caseEnv = { ...credential, ...providerCase.env }
         const replay = await runProviderReplay({
           set: [entry.receipt], sourceFormat, root, env: caseEnv, concurrency: 1, scan,
+          promotionalOnly, promotionalReservation,
           preloadedFixtureReadMs: fixtureReadMs,
           readImage: async () => {
             if (imageReadError) throw imageReadError
