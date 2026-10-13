@@ -77,6 +77,11 @@ const (
 
 	shutdownGracePeri  = 10 * time.Second
 	serverWriteTimeout = 90 * time.Second
+	// Within Cloud Run's single ten-second termination window, reserve one
+	// second to finish HTTP responses after cancelling work and one to flush
+	// telemetry. These phases share an absolute deadline, never fresh windows.
+	shutdownResponseBudget = time.Second
+	shutdownFlushBudget    = time.Second
 	// Reserve+provider work has a finite budget even after client disconnect.
 	// Measured from handler entry, it includes upload/admission time and leaves
 	// the existing shutdown-grace margin below the write budget;
@@ -113,6 +118,7 @@ func main() {
 func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	var shutdownDeadline time.Time
 
 	// OpenTelemetry: when OTEL_EXPORTER_OTLP_ENDPOINT is set (Cloud Run / Grafana
 	// Cloud), stand up OTLP/HTTP trace + metric providers reading the standard
@@ -137,7 +143,10 @@ func run(logger *slog.Logger) error {
 	}
 	// Flush trace + metric providers on shutdown (SIGINT/SIGTERM). nil-safe.
 	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeri)
+		if shutdownDeadline.IsZero() {
+			shutdownDeadline = time.Now().Add(shutdownGracePeri)
+		}
+		flushCtx, cancel := context.WithDeadline(context.Background(), shutdownDeadline)
 		defer cancel()
 		if err := tel.Shutdown(flushCtx); err != nil {
 			logger.Warn("otel shutdown error", slog.Any("error", err))
@@ -179,7 +188,9 @@ func run(logger *slog.Logger) error {
 	}
 
 	srv := newServer(store, provider, logger, scanCounter)
-	srv.workContext = ctx
+	workCtx, cancelWork := context.WithCancel(context.Background())
+	defer cancelWork()
+	srv.workContext = workCtx
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -207,10 +218,24 @@ func run(logger *slog.Logger) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
+		shutdownDeadline = time.Now().Add(shutdownGracePeri)
 		logger.Info("shutdown signal received, draining")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeri)
+		// SIGTERM stops new HTTP admission first. Accepted scans may finish
+		// until the work cutoff; stalled polling is then cancelled in time to
+		// write its terminal response and flush telemetry before platform kill.
+		drainCtx, cancelDrain := context.WithDeadline(context.Background(), shutdownDeadline.Add(-shutdownResponseBudget-shutdownFlushBudget))
+		defer cancelDrain()
+		stopCancel := context.AfterFunc(drainCtx, cancelWork)
+		defer stopCancel()
+		shutdownCtx, cancel := context.WithDeadline(context.Background(), shutdownDeadline.Add(-shutdownFlushBudget))
 		defer cancel()
-		return httpSrv.Shutdown(shutdownCtx)
+		err := httpSrv.Shutdown(shutdownCtx)
+		cancelWork()
+		if err != nil {
+			// Shutdown's deadline does not close active connections itself.
+			return errors.Join(err, httpSrv.Close())
+		}
+		return nil
 	}
 }
 
@@ -444,7 +469,7 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// reservation; identical images may still share the inner provider execution.
 	result, _, err := s.coalescer.Do(r.Context(), "identity:"+identity+":"+imageKey, func() ([]byte, error) {
 		workCtx, cancelWork := context.WithDeadline(context.WithoutCancel(r.Context()), requestStarted.Add(s.workTimeout))
-		// SIGTERM/SIGINT still cancels all work before the ten-second drain. A
+		// The server cancels stalled work near the end of graceful drain. A
 		// client disconnect cannot cancel the shared accepted Azure operation.
 		stopShutdown := context.AfterFunc(s.workContext, cancelWork)
 		defer stopShutdown()

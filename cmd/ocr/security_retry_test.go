@@ -6,13 +6,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -236,7 +241,7 @@ func TestScanInitiatorDisconnectKeepsAcceptedWorkForJoinerAndRetry(t *testing.T)
 }
 
 func TestScanServerWorkHasDeadlineAndShutdown(t *testing.T) {
-	for _, mode := range []string{"deadline", "shutdown"} {
+	for _, mode := range []string{"deadline", "work-cutoff"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
 			p := &contextProvider{entered: make(chan struct{})}
@@ -249,7 +254,7 @@ func TestScanServerWorkHasDeadlineAndShutdown(t *testing.T) {
 			finished := make(chan *httptest.ResponseRecorder, 1)
 			go func() { finished <- retryRequest(srv.routes(), context.Background()) }()
 			<-p.entered
-			if mode == "shutdown" {
+			if mode == "work-cutoff" {
 				cancel()
 			}
 			select {
@@ -264,6 +269,145 @@ func TestScanServerWorkHasDeadlineAndShutdown(t *testing.T) {
 			if err != nil || fresh {
 				t.Fatalf("ambiguous timeout released reservation: %v/%v", fresh, err)
 			}
+		})
+	}
+}
+
+// Exercise run's real signal wiring, HTTP drain, Azure HTTP polling and final
+// OTLP export in an owned subprocess. No cloud credentials or provider calls.
+func TestScanSIGTERMDrainsAcceptedWork(t *testing.T) {
+	if os.Getenv("RESPLIT_TEST_SIGNAL_CHILD") == "1" {
+		if err := run(slog.New(slog.NewJSONHandler(os.Stdout, nil))); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	for _, mode := range []string{"completes", "stalled"} {
+		t.Run(mode, func(t *testing.T) {
+			var posts atomic.Int64
+			accepted, finish, pollingCancelled := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts.Add(1)
+					w.Header().Set("Operation-Location", "http://"+r.Host+"/poll")
+					w.WriteHeader(202)
+					return
+				}
+				once.Do(func() { close(accepted) })
+				select {
+				case <-finish:
+					io.WriteString(w, `{"status":"succeeded","analyzeResult":{}}`)
+				case <-r.Context().Done():
+					close(pollingCancelled)
+				}
+			}))
+			defer upstream.Close()
+			metrics := make(chan []byte, 1)
+			otlp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				if r.URL.Path == "/v1/metrics" {
+					metrics <- body
+				}
+				// Force the runtime to reserve actual time for final telemetry.
+				time.Sleep(500 * time.Millisecond)
+				w.Header().Set("Content-Type", "application/x-protobuf")
+			}))
+			defer otlp.Close()
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			port := listener.Addr().(*net.TCPAddr).Port
+			listener.Close()
+			childCtx, cancelChild := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancelChild()
+			cmd := exec.CommandContext(childCtx, os.Args[0], "-test.run=^TestScanSIGTERMDrainsAcceptedWork$")
+			for _, e := range os.Environ() {
+				key, _, _ := strings.Cut(e, "=")
+				if strings.HasPrefix(key, "OTEL_") || strings.HasPrefix(key, "OCR_") || strings.HasPrefix(key, "AZURE_") || key == "GCP_PROJECT_ID" || key == "K_SERVICE" || key == "FIRESTORE_EMULATOR_HOST" || key == "PORT" || key == "GORACE" {
+					continue
+				}
+				cmd.Env = append(cmd.Env, e)
+			}
+			cmd.Env = append(cmd.Env, "RESPLIT_TEST_SIGNAL_CHILD=1", "OCR_ALLOW_SOFT_FAIL=true", "PORT="+fmt.Sprint(port), "AZURE_OCR_ENDPOINT="+upstream.URL, "AZURE_OCR_KEY=local-fixture", "OTEL_EXPORTER_OTLP_ENDPOINT="+otlp.URL, "GORACE=atexit_sleep_ms=0")
+			var output bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &output
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			exited := make(chan error, 1)
+			go func() { exited <- cmd.Wait() }()
+			defer func() {
+				cmd.Process.Kill() // only this test's owned child, already exited on success
+			}()
+			client := &http.Client{Timeout: 15 * time.Second}
+			url := fmt.Sprintf("http://127.0.0.1:%d", port)
+			until := time.Now().Add(5 * time.Second)
+			for {
+				resp, err := client.Get(url + "/health")
+				if err == nil {
+					resp.Body.Close()
+					break
+				}
+				if time.Now().After(until) {
+					t.Fatal("child did not listen")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			result := make(chan int, 1)
+			go func() {
+				r, _ := http.NewRequest(http.MethodPost, url+"/ocr/scan", strings.NewReader("signal-receipt"))
+				r.Header.Set(headerSoftFail, "true")
+				resp, err := client.Do(r)
+				if err != nil {
+					result <- 0
+					return
+				}
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				result <- resp.StatusCode
+			}()
+			select {
+			case <-accepted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("provider never accepted/polled")
+			}
+			started := time.Now()
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatal(err)
+			}
+			want := 502
+			if mode == "completes" {
+				want = 200
+				time.Sleep(100 * time.Millisecond)
+				close(finish)
+			}
+			if got := <-result; got != want {
+				t.Errorf("accepted scan status=%d, want%d", got, want)
+			}
+			if err := <-exited; err != nil {
+				t.Fatalf("child exit=%v: %s", err, output.String())
+			}
+			elapsed := time.Since(started)
+			if mode == "stalled" {
+				<-pollingCancelled
+				if elapsed < shutdownGracePeri-2500*time.Millisecond || elapsed >= shutdownGracePeri {
+					t.Errorf("stalled work + final flush elapsed=%v, want within final platform grace after work drain", elapsed)
+				}
+			}
+			select {
+			case body := <-metrics:
+				if !bytes.Contains(body, []byte("ocr_scans_total")) {
+					t.Error("final telemetry lacks scan outcome")
+				}
+			default:
+				t.Error("no final telemetry export before exit")
+			}
+			if posts.Load() != 1 {
+				t.Errorf("provider submissions=%d", posts.Load())
+			}
+			t.Logf("SIGTERM mode=%s drain+flush=%v submits=%d", mode, elapsed, posts.Load())
 		})
 	}
 }
