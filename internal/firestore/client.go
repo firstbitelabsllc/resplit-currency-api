@@ -16,9 +16,9 @@ import (
 //
 // The returned store holds the *firestore.Client for the lifetime of the
 // process; Cloud Run tears the instance down on scale-to-zero, so no explicit
-// Close is wired. A failure here is surfaced to the caller, which falls back to
-// the in-memory store with a warning (see cmd/ocr/main.go) — telemetry and the
-// scan path keep working; only cross-instance attest replay durability is lost.
+// Close is wired. A failure here is surfaced to the caller. cmd/ocr fails closed
+// when GCP_PROJECT_ID is set: a MemStore fallback would silently disable
+// cross-instance App Attest replay durability and the spend gate.
 func NewFirestoreStore(ctx context.Context, projectID string) (*FirestoreStore, error) {
 	cli, err := gfs.NewClient(ctx, projectID)
 	if err != nil {

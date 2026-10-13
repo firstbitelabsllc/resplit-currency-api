@@ -156,9 +156,9 @@ GET https://resplit-currency-api.pages.dev/latest/aed.json
 
 ## Observability
 
-The [Resplit FX — Observability dashboard](https://firstbitelabs.grafana.net/d/resplit-fx-observability/resplit-fx-e28094-observability) is the canonical Grafana Cloud view for this repo's metrics, logs, traces, uptime, and alerting. The cross-repo migration is tracked in the [Grafana consolidation plan](https://github.com/leojkwan/ai-leo/blob/main/plans/grafana-consolidation/PLAN.md).
+The [Resplit FX — Observability dashboard](https://firstbitelabs.grafana.net/d/resplit-fx-observability/resplit-fx-e28094-observability) is both the canonical Grafana Cloud view for this repo's metrics, logs, traces, uptime, and alerting and the operator entrypoint for Resplit. Its header links open the iOS PostHog product views, iOS Sentry issues/releases/logs, the Worker fleet view, and the Grafana index.
 
-This repo also includes Sentry-based publisher and Worker observability while the Grafana alerting and delivery gates are being closed.
+The boundary matters: the panels on that dashboard are **FX Worker telemetry only**. iOS product behavior remains in PostHog, while iOS crashes, errors, releases, and logs remain in Sentry. A quiet FX panel or a zero PostHog exception tile is not evidence that the iOS app is healthy. The live dashboard definition is checked in at `grafana/dashboards/resplit-fx-observability.json`; provider delivery and freshness still require a live readback.
 
 - `scripts/sentry-monitoring.js` initializes `@sentry/node` with surface, environment, and release metadata for the publisher workflow.
 - `scripts/sentry-checkin.js` emits cron monitor check-ins for the scheduled daily publish workflow only, so manual `workflow_dispatch` reruns do not create false missed/failure incidents on the daily monitor.

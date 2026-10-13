@@ -27,6 +27,7 @@ import {
 } from './monitoring.mjs'
 import { attachRequestCorrelationHeaders, resolveRequestId } from './request-id.mjs'
 import { handleOcr } from './ocr/router.mjs'
+import { llmModel } from './ocr/llm-provider.mjs'
 
 const ASSET_BASE_URL = 'https://resplit-currency-api.pages.dev'
 const QUOTE_HISTORY_CACHE_CONTROL = 'public, s-maxage=3600, stale-while-revalidate=86400'
@@ -142,6 +143,7 @@ function handleHealth(request, env) {
     service: 'resplit-currency-api',
     environment: env.SENTRY_ENVIRONMENT || 'unknown',
     release: env.SENTRY_RELEASE || 'resplit-fx',
+    ocr: { model: llmModel(env) },
     timestamp: new Date().toISOString(),
   }, {
     requestId,

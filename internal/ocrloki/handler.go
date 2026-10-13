@@ -36,7 +36,6 @@ var (
 		"[OCR_MONITORING] scan blocked":                  {},
 		"attestation rejected":                           {},
 		"azure provider unavailable, using stub":         {},
-		"firestore store unavailable, using in-memory":   {},
 		"ocr provider failed":                            {},
 		"ocr service listening":                          {},
 		"ocr spend gate failed closed":                   {},

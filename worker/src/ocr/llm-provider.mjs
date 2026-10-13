@@ -1,0 +1,88 @@
+// The env-gated seam between router.mjs and the paid vision-LLM transports.
+// LLM_SCAN_PROVIDER selects `anthropic` (default), `zai`, or `openai`.
+// Everything the router needs from a provider passes through here so a
+// flip changes one var, not the router: which key gates the leg, the default
+// model, the cache-key variant, and the scan call itself. Unknown values fail
+// closed (provider_unavailable) rather than silently falling back to Anthropic.
+// The persisted accounting contract calls its shared LLM attempt bucket
+// `anthropicUnits` / OCR_ANTHROPIC_* even for Z.AI and OpenAI. These are request
+// caps, not provider-specific dollar costs; provider identity is carried above.
+
+import { scanReceiptWithAnthropic, LLM_PROVIDER as ANTHROPIC_PROVIDER, llmMaxEdge, RECEIPT_PROMPT_REVISION } from './anthropic.mjs'
+import { scanReceiptWithZai, ZAI_PROVIDER, zaiModel, zaiCredentialConfigured, zaiUsesOpenRouter } from './zai.mjs'
+import { scanReceiptWithOpenAI, OPENAI_PROVIDER, openaiModel } from './openai.mjs'
+
+export const DEFAULT_LLM_SCAN_PROVIDER = ANTHROPIC_PROVIDER
+const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
+
+export { llmMaxEdge }
+
+export function llmProvider(env) {
+  return String(env?.LLM_SCAN_PROVIDER || '').trim().toLowerCase() || DEFAULT_LLM_SCAN_PROVIDER
+}
+
+// True only when the SELECTED provider's secret is present. The router reads
+// this ahead of caps, cache, and accounting so a missing key degrades the leg to
+// provider_unavailable before any paid call, exactly as ANTHROPIC_API_KEY does.
+export function llmProviderConfigured(env) {
+  switch (llmProvider(env)) {
+    case ANTHROPIC_PROVIDER: return Boolean(env.ANTHROPIC_API_KEY)
+    case ZAI_PROVIDER: return zaiCredentialConfigured(env)
+    case OPENAI_PROVIDER: return Boolean(env.OPENAI_API_KEY)
+    default: return false
+  }
+}
+
+export function llmModel(env) {
+  if (llmProvider(env) === ZAI_PROVIDER) return zaiModel(env)
+  if (llmProvider(env) === OPENAI_PROVIDER) return openaiModel(env)
+  return (env.LLM_SCAN_MODEL || DEFAULT_ANTHROPIC_MODEL).trim() || DEFAULT_ANTHROPIC_MODEL
+}
+
+const CLIENT_MODEL_MAX_LENGTH = 128
+const CLIENT_MODEL_SLUG = /^[a-z0-9][a-z0-9._~-]*\/[a-z0-9][a-z0-9._:-]*$/i
+
+// The model a request scans with. A client may name its preferred OpenRouter slug
+// in x-resplit-ocr-model, honored only on the zai-over-OpenRouter route and only
+// when the slug is an exact member of the LLM_SCAN_CLIENT_MODELS allowlist (empty
+// by default, so older clients and unconfigured deploys keep llmModel(env)). Any
+// other header value is ignored silently: it never changes the provider, base
+// URL, credential, edge or caps, and never produces an error.
+export function resolveClientLlmModel(env, requested) {
+  const fallback = llmModel(env)
+  if (llmProvider(env) !== ZAI_PROVIDER || !zaiUsesOpenRouter(env)) return fallback
+  const slug = String(requested ?? '').trim()
+  if (!slug || slug.length > CLIENT_MODEL_MAX_LENGTH || !CLIENT_MODEL_SLUG.test(slug)) return fallback
+  const allowed = String(env?.LLM_SCAN_CLIENT_MODELS || '').split(',').map((entry) => entry.trim()).filter(Boolean)
+  return allowed.includes(slug) ? slug : fallback
+}
+
+// The router already keys by model. This suffix also separates prompt versions
+// so a rollout cannot replay a receipt inferred under the old instructions.
+export function llmCacheVariant(env) {
+  const provider = llmProvider(env)
+  const maxEdge = llmMaxEdge(env)
+  return `:${provider}:${maxEdge}:${RECEIPT_PROMPT_REVISION}`
+}
+
+/**
+ * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, providerStarted: boolean, inputPx: number | null }>}
+ */
+export async function scanReceiptWithLlm(imageBytes, contentType, env) {
+  switch (llmProvider(env)) {
+    case ANTHROPIC_PROVIDER: return scanReceiptWithAnthropic(imageBytes, contentType, env)
+    case ZAI_PROVIDER: return scanReceiptWithZai(imageBytes, contentType, env)
+    case OPENAI_PROVIDER: return scanReceiptWithOpenAI(imageBytes, contentType, env)
+    default:
+      return {
+        ok: false,
+        httpStatus: 503,
+        scanned: null,
+        latencyMs: 0,
+        model: llmModel(env),
+        errorBody: `LLM_SCAN_PROVIDER must be ${ANTHROPIC_PROVIDER}, ${ZAI_PROVIDER} or ${OPENAI_PROVIDER}`,
+        providerStarted: false,
+        inputPx: null,
+      }
+  }
+}

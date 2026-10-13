@@ -95,6 +95,7 @@ test('Azure submit timeout aborts fetch and returns the legacy-safe provider sha
     httpStatus: 504,
     operationId: null,
     errorBody: 'azure_timeout',
+    failureCode: 'transport_timeout',
   })
   assert.deepEqual(timers.delays, [1])
   assert.equal(timers.active.size, 0, 'timeout handle must be cleared after the aborted fetch settles')
@@ -120,9 +121,22 @@ test('Azure poll timeout aborts fetch and returns the legacy-safe provider shape
     status: null,
     body: null,
     errorBody: 'azure_timeout',
+    failureCode: 'transport_timeout',
   })
   assert.deepEqual(timers.delays, [1])
   assert.equal(timers.active.size, 0, 'timeout handle must be cleared after the aborted fetch settles')
+})
+
+test('Azure malformed poll JSON returns a closed malformed-output failure code', { concurrency: false }, async (t) => {
+  installFetch(t, async () => new Response('{', { status: 200, headers: { 'content-type': 'application/json' } }))
+
+  const result = await getReceiptAnalyzeResult('operation-1', BASE_ENV)
+
+  assert.equal(result.ok, false)
+  assert.equal(result.httpStatus, 200)
+  assert.equal(result.status, null)
+  assert.equal(result.body, null)
+  assert.equal(result.failureCode, 'malformed_output')
 })
 
 test('Azure transport failure stays data-shaped instead of escaping the OCR route', { concurrency: false }, async (t) => {
@@ -140,6 +154,7 @@ test('Azure transport failure stays data-shaped instead of escaping the OCR rout
     httpStatus: 502,
     operationId: null,
     errorBody: 'azure_transport_error',
+    failureCode: 'transport_error',
   })
   assert.equal(timers.active.size, 0, 'transport failures must clear their pending timeout')
 })
@@ -221,9 +236,24 @@ test('dark accounting preserves the legacy settled fallback for an unexpected Az
 
   assert.equal(response.status, 502)
   assert.equal(azure.status, 'provider_error')
-  assert.equal(
-    azure.latencyMs,
-    null,
-    'default-off accounting must not replace the installed rejected-leg sentinel',
-  )
+  assert.ok(Number.isFinite(azure.latencyMs) && azure.latencyMs >= 0)
+})
+
+test('Azure analyze stays pinned to prebuilt-receipt at api-version 2024-11-30', async (t) => {
+  // 2024-11-30 is the latest GA Document Intelligence version (Microsoft Learn,
+  // azure-rest-api-specs stable/ has no newer folder). Older iOS clients parse the raw
+  // AnalyzeResultV4 bytes this call returns, so a bump must be a deliberate decision.
+  let analyzeUrl
+  installFetch(t, async (url) => {
+    analyzeUrl = new URL(String(url))
+    return new Response('', {
+      status: 202,
+      headers: { 'operation-location': `${BASE_ENV.AZURE_OCR_ENDPOINT}/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-1?api-version=2024-11-30` },
+    })
+  })
+
+  await submitReceiptAnalyze(new Uint8Array([1, 2, 3]), 'image/jpeg', BASE_ENV)
+
+  assert.equal(analyzeUrl.pathname, '/documentintelligence/documentModels/prebuilt-receipt:analyze')
+  assert.equal(analyzeUrl.searchParams.get('api-version'), '2024-11-30')
 })

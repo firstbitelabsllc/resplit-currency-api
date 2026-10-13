@@ -157,6 +157,45 @@ test('POST /ocr/scan preserves a successful paid result when structured logging 
   assert.equal(azureCalls.submit, 1)
 })
 
+test('POST /ocr/scan returns a closed malformed-output diagnostic and bounded support correlation', async () => {
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'POST' && String(url).includes(':analyze')) {
+      return new Response('PRIVATE_PROVIDER_OUTPUT', { status: 202 })
+    }
+    throw new Error('unexpected Azure request')
+  }
+  const requestId = 'trace-malformed-scan'
+  const response = await handleOcr(scanRequest(new Uint8Array([7, 7, 7]), {
+    'x-resplit-trace-id': requestId,
+  }), makeEnv())
+
+  assert.equal(response.status, 502)
+  assert.equal(response.headers.get('x-request-id'), requestId)
+  assert.equal(response.headers.get('x-resplit-trace-id'), requestId)
+  const body = await response.json()
+  assert.equal(body.status, 'provider_error')
+  assert.equal(body.diagnostic, 'malformed_output')
+  assert.ok(body.scanId)
+  assert.doesNotMatch(JSON.stringify(body), /PRIVATE_PROVIDER_OUTPUT/)
+})
+
+test('POST /ocr/scan returns a provider timeout diagnostic instead of a generic failure', async () => {
+  globalThis.fetch = async (_url, init = {}) => new Promise((_, reject) => {
+    init.signal.addEventListener('abort', () => reject(new Error('PRIVATE_TIMEOUT_DETAIL')), { once: true })
+  })
+  const requestId = 'trace-timeout-scan'
+  const response = await handleOcr(scanRequest(new Uint8Array([8, 8, 8]), {
+    'x-resplit-trace-id': requestId,
+  }), makeEnv({ AZURE_OCR_FETCH_TIMEOUT_MS: '1' }))
+
+  assert.equal(response.status, 502)
+  const body = await response.json()
+  assert.equal(body.diagnostic, 'transport_timeout')
+  assert.ok(body.scanId)
+  assert.equal(response.headers.get('x-request-id'), requestId)
+  assert.doesNotMatch(JSON.stringify(body), /PRIVATE_TIMEOUT_DETAIL/)
+})
+
 test('POST /ocr/scan merges opt-in Azure layout keyValuePairs into the raw receipt envelope', async () => {
   stubAzure()
   const env = makeEnv({ AZURE_OCR_KV_EXTRAS: 'enabled' })
@@ -422,6 +461,7 @@ test('per-device (soft-fail/IP) cap returns 429 with rate_limited envelope', asy
   assert.equal(res.status, 429)
   const body = await res.json()
   assert.equal(body.status, 'rate_limited')
+  assert.equal(body.diagnostic, 'scan_rate_limited')
   assert.equal(azureCalls.submit, 0, 'capped request must not reach Azure')
 })
 
@@ -434,6 +474,8 @@ test('kill switch returns 503 before billing Azure or touching the daily counter
   assert.equal(res.headers.get('retry-after'), '300')
   const body = await res.json()
   assert.equal(body.error, 'OCR_DISABLED')
+  assert.equal(body.diagnostic, 'operator_disabled')
+  assert.ok(body.scanId)
   assert.equal(azureCalls.submit, 0, 'disabled scans must not reach Azure')
   assert.equal(await env.ATTEST_KV.get(`count:ip:unknown:${day}`), null, 'disabled scans must not spend cap units')
 })

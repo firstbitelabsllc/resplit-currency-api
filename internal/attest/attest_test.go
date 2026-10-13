@@ -7,13 +7,17 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -49,16 +53,6 @@ func (s *fakeStore) GetKey(_ context.Context, keyID string) ([]byte, uint32, err
 func (s *fakeStore) PutKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.records[keyID] = fakeRecord{spki: pubSPKI, signCount: signCount}
-	return nil
-}
-
-func (s *fakeStore) CreateKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.records[keyID]; ok {
-		return ErrAlreadyExists
-	}
 	s.records[keyID] = fakeRecord{spki: pubSPKI, signCount: signCount}
 	return nil
 }
@@ -121,7 +115,7 @@ func genKey(t *testing.T) *ecdsa.PrivateKey {
 
 func TestVerifyAssertion(t *testing.T) {
 	ctx := context.Background()
-	const keyID = "device-key-1"
+	const keyID = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 	clientData := []byte("the raw image bytes for /ocr/scan")
 
 	t.Run("accepts genuine assertion", func(t *testing.T) {
@@ -235,7 +229,7 @@ func TestVerifyAssertion(t *testing.T) {
 		authData := buildAuthData(testAppID, 1)
 		assertion := signAssertion(t, key, authData, clientData)
 		in := AssertionInput{
-			KeyID:        "never-registered",
+			KeyID:        "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
 			AssertionB64: base64.StdEncoding.EncodeToString(assertion),
 			ClientData:   clientData,
 			AppID:        testAppID,
@@ -319,6 +313,234 @@ func TestAppleRootEmbedded(t *testing.T) {
 	if cert.PublicKeyAlgorithm != x509.ECDSA {
 		t.Fatalf("expected ECDSA public key, got %v", cert.PublicKeyAlgorithm)
 	}
+}
+
+func mustP256Cert(t *testing.T, key *ecdsa.PrivateKey) *x509.Certificate {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	return cert
+}
+
+func keyIDForPub(t *testing.T, pub *ecdsa.PublicKey) string {
+	t.Helper()
+	ecdhPub, err := pub.ECDH()
+	if err != nil {
+		t.Fatalf("ECDH: %v", err)
+	}
+	sum := sha256.Sum256(ecdhPub.Bytes())
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// TestBindAttestKeyID pins the Apple/Worker keyId binding that the Go Cloud Run
+// path previously omitted: without it, one real attestationObject can be stored
+// under arbitrary keyIds and each becomes an independent OCR spend identity.
+func TestBindAttestKeyID(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	cert := mustP256Cert(t, key)
+	goodKeyID := keyIDForPub(t, &key.PublicKey)
+	goodKeyIDBytes, err := base64.StdEncoding.DecodeString(goodKeyID)
+	if err != nil {
+		t.Fatalf("DecodeString: %v", err)
+	}
+
+	t.Run("accepts matching keyId and credentialId", func(t *testing.T) {
+		if err := bindAttestKeyID(goodKeyID, cert, goodKeyIDBytes); err != nil {
+			t.Fatalf("bindAttestKeyID: %v", err)
+		}
+	})
+
+	t.Run("rejects keyId that is not sha256(credCert public key)", func(t *testing.T) {
+		bogus := make([]byte, 32)
+		for i := range bogus {
+			bogus[i] = 7
+		}
+		bogusID := base64.StdEncoding.EncodeToString(bogus)
+		err := bindAttestKeyID(bogusID, cert, bogus)
+		var ae *Error
+		if !errors.As(err, &ae) || ae.Code != "KEYID" {
+			t.Fatalf("expected KEYID, got %v", err)
+		}
+	})
+
+	t.Run("rejects credentialId mismatch", func(t *testing.T) {
+		other := make([]byte, 32)
+		for i := range other {
+			other[i] = 9
+		}
+		err := bindAttestKeyID(goodKeyID, cert, other)
+		var ae *Error
+		if !errors.As(err, &ae) || ae.Code != "KEYID" {
+			t.Fatalf("expected KEYID, got %v", err)
+		}
+	})
+}
+
+// All accepted base64 spellings must use the same persisted replay counter.
+func TestVerifyAssertionEquivalentKeyID(t *testing.T) {
+	ctx := context.Background()
+	key := genKey(t)
+	canonical := keyIDForPub(t, &key.PublicKey)
+	decoded, err := base64.StdEncoding.DecodeString(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewMemStore()
+	registerKey(t, store, canonical, key, 7)
+	image := []byte("synthetic receipt, no provider")
+	aliases := []string{base64.RawStdEncoding.EncodeToString(decoded), base64.URLEncoding.EncodeToString(decoded), base64.RawURLEncoding.EncodeToString(decoded)}
+	for i, alias := range aliases {
+		counter := uint32(8 + i)
+		signed := signAssertion(t, key, buildAuthData(testAppID, counter), image)
+		input := AssertionInput{KeyID: alias, AssertionB64: base64.StdEncoding.EncodeToString(signed), ClientData: image, AppID: testAppID}
+		if err := VerifyAssertion(ctx, input, store); err != nil {
+			t.Fatalf("equivalent key encoding %q must use registered identity: %v", alias, err)
+		}
+		_, got, err := store.GetKey(ctx, canonical)
+		if err != nil || got != counter {
+			t.Fatalf("canonical counter = %d, error %v; want %d", got, err, counter)
+		}
+		input.KeyID = canonical
+		var replay *Error
+		if err := VerifyAssertion(ctx, input, store); !errors.As(err, &replay) || replay.Code != "REPLAY" {
+			t.Fatalf("encoding change must not replay counter %d: %v", counter, err)
+		}
+	}
+	if len(store.records) != 1 {
+		t.Fatalf("aliases minted %d stored keys; want one", len(store.records))
+	}
+}
+
+// A local X.509 chain supplies a faithful attestation fixture. This tests the
+// production verifier against synthetic certificates, not Apple/device use.
+func testAttestation(t *testing.T) (string, string, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, caKey := genKey(t), genKey(t)
+	now := time.Now()
+	ca := &x509.Certificate{SerialNumber: big.NewInt(2), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour)}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	oldPool := appleRootPool
+	appleRootPool = pool
+	t.Cleanup(func() { appleRootPool = oldPool })
+	keyID := keyIDForPub(t, &key.PublicKey)
+	credential, err := base64.StdEncoding.DecodeString(keyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := buildAuthData(testAppID, 0)
+	auth[32] = 0x40
+	auth = append(auth, []byte("appattest")...)
+	auth = append(auth, make([]byte, 7)...)
+	auth = append(auth, 0, byte(len(credential)))
+	auth = append(auth, credential...)
+	cose, err := cbor.Marshal(coseEC2Key{Kty: 2, Alg: -7, Crv: 1, X: key.X.FillBytes(make([]byte, 32)), Y: key.Y.FillBytes(make([]byte, 32))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth = append(auth, cose...)
+	challenge := sha256.Sum256([]byte("local challenge"))
+	nonce := sha256.Sum256(concat(auth, challenge[:]))
+	extension, err := asn1.Marshal(struct {
+		Nonce []byte `asn1:"tag:1,explicit"`
+	}{nonce[:]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(3), NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtraExtensions: []pkix.Extension{{Id: appAttestNonceOID, Value: extension}}}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := cbor.Marshal(attestationObject{Fmt: "apple-appattest", AuthData: auth, AttStmt: attestationStatement{X5C: [][]byte{leafDER, caDER}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keyID, base64.StdEncoding.EncodeToString(object), key
+}
+
+func TestVerifyAttestationEquivalentKeyID(t *testing.T) {
+	canonical, object, _ := testAttestation(t)
+	keyBytes, err := base64.StdEncoding.DecodeString(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliases := []string{base64.RawStdEncoding.EncodeToString(keyBytes), base64.URLEncoding.EncodeToString(keyBytes), base64.RawURLEncoding.EncodeToString(keyBytes)}
+	for _, alias := range aliases {
+		store := NewMemStore()
+		err := VerifyAttestation(context.Background(), AttestationInput{KeyID: alias, AttestationObjectB64: object, Challenge: "local challenge", AppID: testAppID}, store)
+		if err != nil {
+			t.Fatalf("register alias: %v", err)
+		}
+		if _, _, err := store.GetKey(context.Background(), canonical); err != nil {
+			t.Fatalf("canonical registration missing: %v", err)
+		}
+		if len(store.records) != 1 {
+			t.Fatalf("want one identity, got %d", len(store.records))
+		}
+	}
+}
+
+func TestAttestationReplayCannotResetAssertion(t *testing.T) {
+	canonical, object, key := testAttestation(t)
+	ctx := context.Background()
+	store := NewMemStore()
+	input := AttestationInput{KeyID: canonical, AttestationObjectB64: object, Challenge: "local challenge", AppID: testAppID}
+	if err := VerifyAttestation(ctx, input, store); err != nil {
+		t.Fatal(err)
+	}
+	image := []byte("synthetic image")
+	signed := signAssertion(t, key, buildAuthData(testAppID, 9), image)
+	assertion := AssertionInput{KeyID: canonical, AssertionB64: base64.StdEncoding.EncodeToString(signed), ClientData: image, AppID: testAppID}
+	if err := VerifyAssertion(ctx, assertion, store); err != nil {
+		t.Fatal(err)
+	}
+	decoded, _ := base64.StdEncoding.DecodeString(canonical)
+	input.KeyID = base64.RawURLEncoding.EncodeToString(decoded)
+	if err := VerifyAttestation(ctx, input, store); err != nil {
+		t.Fatal(err)
+	}
+	_, count, err := store.GetKey(ctx, canonical)
+	if err != nil || count != 9 {
+		t.Fatalf("registration reset counter: got %d err %v", count, err)
+	}
+	var replay *Error
+	if err := VerifyAssertion(ctx, assertion, store); !errors.As(err, &replay) || replay.Code != "REPLAY" {
+		t.Fatalf("consumed assertion replay admitted: %v", err)
+	}
+}
+
+func (s *fakeStore) CreateKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.records[keyID]; ok {
+		return ErrAlreadyExists
+	}
+	s.records[keyID] = fakeRecord{spki: pubSPKI, signCount: signCount}
+	return nil
 }
 
 // TestRegisterAttestedKeyBlocksSignCountReset pins the Go Cloud Run gap vs the

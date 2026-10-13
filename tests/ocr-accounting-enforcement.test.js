@@ -175,13 +175,14 @@ function dualScanRequest(imageBytes) {
   })
 }
 
-function analyzeRequest(imageBytes) {
+function analyzeRequest(imageBytes, headers = {}) {
   return new Request('https://fx.resplit.app/ocr/analyze', {
     method: 'POST',
     headers: {
       'content-type': 'image/jpeg',
       'x-resplit-attest-soft-fail': 'true',
       'cf-connecting-ip': '198.51.100.42',
+      ...headers,
     },
     body: imageBytes,
   })
@@ -394,6 +395,38 @@ test('enforced dual scan commits both provider units after both paid operations 
   })
 })
 
+test('OpenAI shares the existing LLM attempt cap, commits once and charges no cache replay', async () => {
+  const calls = stubAzure()
+  const previousFetch = globalThis.fetch
+  let openaiCalls = 0
+  globalThis.fetch = async (url, init) => {
+    if (url !== 'https://api.openai.com/v1/responses') return previousFetch(url, init)
+    openaiCalls++
+    return Response.json({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({
+      merchantName: 'Cafe', merchantAddress: null, transactionDate: null,
+      currencyCode: 'USD', currencySymbol: '$', lineItems: [{ name: 'Meal', amount: 9, quantity: 1 }],
+      subtotal: 9, total: 10, extras: [{ label: 'Tax', amount: 1, kind: 'tax' }],
+    }) }] }] })
+  }
+  const accounting = makeAccountingBinding({ azureGlobalCap: 2, anthropicGlobalCap: 1 })
+  const env = makeEnv({ accounting, LLM_SCAN_PROVIDER: 'openai', OPENAI_API_KEY: 'o', LLM_SCAN_AZURE_GRACE_MS: '0' })
+  const image = new Uint8Array([255,216,255,192,0,17,8,2,88,3,32,3,1,34,0,2,17,1,3,17,1,7])
+  const first = await (await handleOcr(analyzeRequest(image), env)).json()
+  assert.equal(first.engines.find(e=>e.id==='llm').provider, 'openai')
+  assert.equal(first.engines.find(e=>e.id==='llm').status, 'succeeded')
+  assert.equal(accounting.records.commits[0].anthropicUnits, 1, 'historical bucket is one selected LLM attempt')
+  await handleOcr(dualScanRequest(image), env)
+  assert.equal(openaiCalls, 1)
+  assert.equal(accounting.records.commits.length, 1)
+  assert.equal(accounting.records.reservations.length, 1)
+  image[image.length-1] = 8
+  const second = await (await handleOcr(analyzeRequest(image), env)).json()
+  assert.equal(second.engines.find(e=>e.id==='llm').status, 'rate_limited')
+  assert.equal(openaiCalls, 1, 'shared cap must prevent another paid OpenAI attempt')
+  assert.equal(calls.anthropic, 0)
+  assert.equal(accounting.records.commits[1].anthropicUnits, 0)
+})
+
 test('enforced analyze kill switch reserves and commits Azure only', async () => {
   const calls = stubAzure()
   const accounting = makeAccountingBinding({ azureGlobalCap: 1, anthropicGlobalCap: 0 })
@@ -468,4 +501,35 @@ test('settlement outage keeps the admitted provider result and leaves the reserv
   assert.equal(response.status, 200)
   assert.equal(calls.submit, 1)
   assert.equal(accounting.records.reservations.length, 1)
+})
+
+test('a client-requested model is what pre-provider accounting refusals report', async () => {
+  const requested = 'z-ai/glm-5.3-flashx'
+  const openRouter = {
+    LLM_SCAN_PROVIDER: 'zai',
+    LLM_SCAN_BASE_URL: 'https://openrouter.ai/api/v1',
+    OPENROUTER_API_KEY: 'or-key',
+    LLM_SCAN_MODEL: 'google/gemini-2.5-flash-lite',
+    LLM_SCAN_CLIENT_MODELS: requested,
+  }
+  const llmOf = async (response) => (await response.json()).engines.find((e) => e.id === 'llm')
+
+  // respondRateLimited: the global Azure cap of one refuses the second unique scan.
+  stubAzure()
+  const capped = makeAccountingBinding({ azureGlobalCap: 1 })
+  const cappedEnv = makeEnv({ accounting: capped, ...openRouter })
+  await handleOcr(analyzeRequest(new Uint8Array([9, 8, 7])), cappedEnv)
+  const limited = await handleOcr(analyzeRequest(new Uint8Array([9, 8, 6]), { 'x-resplit-ocr-model': requested }), cappedEnv)
+  assert.equal(limited.status, 429)
+  assert.equal((await llmOf(limited)).model, requested)
+
+  // accountingUnavailableMulti: the reservation store is down.
+  const down = makeEnv({ accounting: makeAccountingBinding({ reserveError: new Error('do down') }), ...openRouter })
+  const unavailable = await handleOcr(analyzeRequest(new Uint8Array([5, 5, 5]), { 'x-resplit-ocr-model': requested }), down)
+  assert.equal(unavailable.status, 502)
+  assert.equal((await llmOf(unavailable)).model, requested)
+
+  // And without the header both refusals still report the configured default.
+  const plain = await handleOcr(analyzeRequest(new Uint8Array([5, 5, 4])), down)
+  assert.equal((await llmOf(plain)).model, 'google/gemini-2.5-flash-lite')
 })
