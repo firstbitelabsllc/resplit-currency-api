@@ -15,7 +15,9 @@ const ocrPrefix = `${region}-docker.pkg.dev/${project}/${repo}/ocr@sha256:`
 const fxPrefix = `${region}-docker.pkg.dev/${project}/${repo}/fx-publish@sha256:`
 
 function writeExecutable(file, source) {
-  fs.writeFileSync(file, source, { mode: 0o755 })
+  // The fake CLI exits explicitly. Flush its pipe output synchronously so
+  // larger manifest/service JSON is not truncated by process.exit().
+  fs.writeFileSync(file, source.replaceAll('process.stdout.write(', 'fs.writeSync(1, '), { mode: 0o755 })
 }
 
 function makeHarness(mode, scenario) {
