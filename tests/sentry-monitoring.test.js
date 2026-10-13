@@ -4,16 +4,16 @@ const assert = require('node:assert/strict')
 const monitoringPath = require.resolve('../scripts/sentry-monitoring')
 const sentryPath = require.resolve('@sentry/node')
 
+function sentryMockRecord(mock, level, message, attributes) {
+  mock.loggerCalls[level].push({ message, attributes })
+}
+
 function createSentryMock() {
-  return {
+  const mock = {
     initCalls: [],
     captureCheckInCalls: [],
     flushCalls: [],
-    logger: {
-      info() {},
-      warn() {},
-      error() {},
-    },
+    loggerCalls: { info: [], warn: [], error: [] },
     init(options) {
       this.initCalls.push(options)
     },
@@ -38,6 +38,12 @@ function createSentryMock() {
     captureException() {},
     captureMessage() {},
   }
+  mock.logger = {
+    info(message, attributes) { sentryMockRecord(mock, 'info', message, attributes) },
+    warn(message, attributes) { sentryMockRecord(mock, 'warn', message, attributes) },
+    error(message, attributes) { sentryMockRecord(mock, 'error', message, attributes) },
+  }
+  return mock
 }
 
 async function withMonitoringModule(env, callback) {
@@ -192,5 +198,21 @@ test('finishWorkflowCheckIn skips monitor completion for workflow_dispatch runs'
     assert.equal(result, false)
     assert.equal(sentryMock.captureCheckInCalls.length, 0)
     assert.equal(sentryMock.flushCalls.length, 0)
+  })
+})
+
+test('Sentry init enables logs and the emit path actually calls logger.info', async () => {
+  await withMonitoringModule({
+    SENTRY_CURRENCY_API_DSN: 'https://currency@example.ingest.sentry.io/1',
+    SENTRY_DSN: undefined,
+    GITHUB_EVENT_NAME: 'schedule',
+  }, async ({ monitoring, sentryMock }) => {
+    await monitoring.runMonitoredScript('unit_log_emit', async () => ({ ok: true }))
+
+    assert.equal(sentryMock.initCalls.length, 1)
+    assert.equal(sentryMock.initCalls[0].enableLogs, true)
+    assert.ok(sentryMock.loggerCalls.info.length >= 2, 'start and success signals must emit Sentry logs')
+    assert.equal(sentryMock.loggerCalls.info[0].message, 'unit_log_emit_start')
+    assert.equal(sentryMock.loggerCalls.info[1].message, 'unit_log_emit_ok')
   })
 })

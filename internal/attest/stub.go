@@ -82,3 +82,13 @@ func (StubOCRProvider) Scan(_ context.Context, image []byte) ([]byte, error) {
 	return []byte(`{"provider":"stub","status":"not_implemented","bytes":` +
 		strconv.Itoa(len(image)) + `}`), nil
 }
+
+func (m *MemStore) CreateKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.records[keyID]; ok {
+		return ErrAlreadyExists
+	}
+	m.records[keyID] = memRecord{spki: pubSPKI, signCount: signCount}
+	return nil
+}

@@ -69,6 +69,19 @@ function assertPayloadAcceptedByAnalyzeContract(payload, candidate = openapi) {
   }
 }
 
+test('OpenAPI documents the optional client model header on both multi-engine routes without requiring it', () => {
+  for (const route of multiEngineRoutes) {
+    const parameters = openapi.paths[route].post.parameters.map((parameter) => (
+      parameter.$ref ? openapi.components.parameters[parameter.$ref.split('/').pop()] : parameter
+    ))
+    const header = parameters.find((parameter) => parameter.name === 'X-Resplit-OCR-Model')
+    assert.ok(header, `${route} documents X-Resplit-OCR-Model`)
+    assert.equal(header.in, 'header')
+    assert.equal(header.required, false, 'older clients send nothing')
+    assert.equal(header.schema.maxLength, 128)
+  }
+})
+
 test('OpenAPI documents every live multi-engine OCR route with its real method identity', () => {
   assert.deepEqual(multiEngineRoutes, ['/ocr/analyze', '/ocr/dual-scan'])
   assert.deepEqual(

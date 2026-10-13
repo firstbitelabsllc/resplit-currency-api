@@ -8,7 +8,9 @@ import { PhotonImage, SamplingFilter, fliph, flipv, resize } from '@cf-wasm/phot
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
 const DEFAULT_MODEL = 'claude-sonnet-5'
-const FETCH_TIMEOUT_MS = 60_000
+// Shared by every LLM transport (zai.mjs reuses it) so a provider flip never
+// changes how long a scan may wait on the paid leg.
+export const LLM_FETCH_TIMEOUT_MS = 60_000
 
 // Anthropic vision input limits — the exact ceilings the API enforces, sourced
 // from the production 400 bodies (Sentry RESPLIT-CURRENCY-API-G/-E/-B):
@@ -34,7 +36,16 @@ const IMAGE_TRANSFORM_ERROR = 'llm_image_transform_failed'
 // Dense receipts (many line items + extras) can exceed a small ceiling and get
 // truncated mid tool_use. 4096 gives headroom; a truncated response is still
 // caught below via stop_reason and rejected rather than returned as a partial.
-const MAX_TOKENS = 4096
+export const LLM_MAX_TOKENS = 4096
+
+function httpFailureCode(status) {
+  return status === 429 ? 'upstream_rate_limited' : 'upstream_rejected'
+}
+
+function bodyFailureCode(error, signal) {
+  if (signal?.aborted) return 'transport_timeout'
+  return error?.name === 'SyntaxError' ? 'malformed_output' : 'transport_error'
+}
 
 // Mirrors receiptSchema.required/enum so a returned tool input is validated
 // server-side before we trust it — strict:true guards the happy path, this guards
@@ -49,7 +60,15 @@ const REQUIRED_RECEIPT_KEYS = [
 
 export const LLM_PROVIDER = 'anthropic'
 
-export const RECEIPT_SYSTEM_PROMPT = 'You are a precise receipt-extraction engine. Read the receipt image and emit the receipt via the emit_receipt tool with EXACTLY its schema. All amounts are JSON numbers. Comma-decimal 12,50 means 12.50. Strip thousands separators (1.234,50 -> 1234.50 and 4,500 -> 4500). No-decimal currencies (JPY/KRW) stay integers. currencyCode is ISO-4217. Put every tax/tip/service-charge/mandate/discount line into extras with the correct kind (an included service charge is serviceCharge, not tip). Negative line items like coupons stay in lineItems with negative amounts. LINE-ITEM GRANULARITY: emit EXACTLY one lineItems entry per printed product line on the receipt — never merge two printed lines into one, and never split one printed line into several. A line printed as "N x unit_price" (or "N @ price") is ONE entry: quantity=N and amount = the line total for that row. Do not create extra entries for quantity multipliers, size/modifier sub-lines, or blank rows. Match the printed line count of purchased items.'
+export const RECEIPT_PROMPT_REVISION = 'item-groups-v2'
+export const RECEIPT_SYSTEM_PROMPT = `You are a precise receipt-extraction engine. Read the receipt image and emit the receipt via the emit_receipt tool with EXACTLY its schema.
+Extract only what the image supports. Preserve the printed language, spelling and diacritics; do not translate or replace unfamiliar product names. Printed bilingual descriptions belong together.
+LINE-ITEM GRANULARITY: return one entry per purchased item group, not per physical text line. A product description may wrap across lines and include a translation, size or modifier. Keep those details in that item's name. Do not make separate items for continuation text, quantity/unit-price lines, headings or blank lines. Keep distinct purchased items separate, including repeated items that the receipt lists separately.
+Use each item's printed line total as amount and its printed item count as quantity. For a grouped quantity such as N x unit_price, return one entry with quantity N and the printed line total, not N entries or the unit price as amount. Do not assume a leading product/menu number is a quantity.
+Amounts must be JSON numbers when readable, or null where the schema permits when missing or unreadable. A printed zero is 0; a missing price is never 0. If a purchased item is clearly present but its amount cannot be read, retain it with amount null. Do not invent amounts or items to make totals balance.
+Comma-decimal 12,50 means 12.50. Strip thousands separators (1.234,50 -> 1234.50 and 4,500 -> 4500). No-decimal currencies (JPY/KRW) stay integers. currencyCode is ISO-4217.
+Record each charge or discount exactly once. Receipt-level tax, tip, service charge, fees, mandates, rounding and discounts belong only in extras with the correct kind (an included service charge is serviceCharge, not tip). A separately itemized negative product or product-specific coupon may remain a negative line item; do not also repeat it in extras. A discount already reflected in a printed line total must not be subtracted from that line total again. Preserve genuine printed zero-price promotional items. Keep subtotal, total, tender and change separate from purchased items. Check the complete image once more for missed items, wrapped descriptions, quantities and amount-column alignment before returning the JSON.
+Read handwritten tips and final totals when legible. total is the final payable receipt amount after any explicitly printed rounding or clearly written tip, not an earlier pre-tip total or a tender/change amount. Keep the printed subtotal in subtotal. If a final amount or handwritten figure is unclear, return null for that field instead of guessing or inventing a balancing adjustment.`
 
 class AnthropicConfigError extends Error {
   constructor(message) {
@@ -67,7 +86,26 @@ function readConfig(env) {
   return { key, model }
 }
 
-const receiptSchema = {
+/**
+ * Operator ceiling for the long edge of the image the LLM leg receives, in px.
+ * 0 (the default, and every malformed value) means "no operator ceiling": the
+ * transport keeps its own bound. Parsed like resolveDailyCap so junk can never
+ * become NaN and silently lift the bound. Azure never sees this.
+ */
+export function llmMaxEdge(env) {
+  const parsed = parseInt(String(env?.LLM_SCAN_MAX_EDGE ?? ''), 10)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
+// Anthropic honors an operator ceiling only below its own 1568px recommendation.
+function anthropicTargetMaxEdge(env) {
+  const configured = llmMaxEdge(env)
+  return configured > 0
+    ? Math.min(ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION, configured)
+    : ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION
+}
+
+export const receiptSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -121,7 +159,23 @@ const receiptSchema = {
   ],
 }
 
-function bytesToBase64(imageBytes) {
+// JSON transports use the same schema and extraction instructions as the tool
+// transport. Keep the response contract in one place when adding a provider.
+export const RECEIPT_JSON_SYSTEM_PROMPT = RECEIPT_SYSTEM_PROMPT.replace(
+  'emit the receipt via the emit_receipt tool with EXACTLY its schema.',
+  `emit ONLY a JSON object with exactly the emit_receipt schema keys (${describeReceiptSchema(receiptSchema)}). Every key is required; use null where allowed. No prose, no code fence.`,
+)
+
+function describeReceiptSchema(schema) {
+  const field = (name, s) => {
+    if (s.enum) return `${name}: one of ${s.enum.join('|')}`
+    if (s.type === 'array') return `${name}: array of {${Object.entries(s.items.properties).map(([n, p]) => field(n, p)).join(', ')}}`
+    return `${name}: ${Array.isArray(s.type) ? s.type.join('|') : s.type}`
+  }
+  return Object.entries(schema.properties).map(([name, s]) => field(name, s)).join('; ')
+}
+
+export function bytesToBase64(imageBytes) {
   const bytes = imageBytes instanceof Uint8Array ? imageBytes : new Uint8Array(imageBytes)
   let binary = ''
   const chunkSize = 0x8000
@@ -338,10 +392,10 @@ function hasValidDimensions(dimensions) {
     Number.isFinite(dimensions?.height) && dimensions.height > 0
 }
 
-function boundedTargetDimensions(dimensions) {
+function boundedTargetDimensions(dimensions, targetMaxEdge) {
   const scale = Math.min(
     1,
-    ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION / Math.max(dimensions.width, dimensions.height),
+    targetMaxEdge / Math.max(dimensions.width, dimensions.height),
   )
   return {
     width: Math.max(1, Math.round(dimensions.width * scale)),
@@ -449,16 +503,27 @@ function resizeImageWithPhoton(imageBytes, options) {
 }
 
 /**
- * Bound only the Anthropic leg to a 1568px long edge. Dimensions come from the
- * JPEG/PNG/GIF/WebP container before any decode, so a small image passes
- * byte-identically and a compressed decompression bomb fails before Photon.
+ * Resolve, validate, and bound the image for the paid LLM leg (any provider).
+ * Combines resolveAnthropicImage (media-type sniff + hard input limits, rejected
+ * before any paid call) with the Photon scale-down to `targetMaxEdge` px on the
+ * long edge. Dimensions come from the JPEG/PNG/GIF/WebP container before any
+ * decode, so a small image passes byte-identically and a compressed decompression
+ * bomb fails before Photon.
  *
  * Photon runs as pinned Wasm inside the Worker and returns JPEG because receipt
- * photos are opaque and Anthropic needs one truthful media type after encoding.
+ * photos are opaque and the provider needs one truthful media type after encoding.
  * The output is independently sniffed and dimension-checked before it can reach
  * the paid provider; decode/resize failures stay a data-shaped LLM-leg failure.
+ *
+ * @returns {Promise<{ ok: true, imageBytes: Uint8Array, mediaType: string, longEdge: number | null }
+ *   | { ok: false, reason: string, httpStatus: number }>}
  */
-async function prepareAnthropicImage(imageBytes, mediaType, env) {
+export async function prepareLlmImage(imageBytes, contentType, env, targetMaxEdge) {
+  const image = resolveAnthropicImage(imageBytes, contentType)
+  if (!image.ok) {
+    return { ok: false, reason: image.reason, httpStatus: image.reason === 'llm_unsupported_media' ? 415 : 413 }
+  }
+  const mediaType = image.mediaType
   const bytes = imageBytes instanceof Uint8Array ? imageBytes : new Uint8Array(imageBytes)
   const dimensions = readImageDimensions(bytes, mediaType)
   const orientation = mediaType === 'image/jpeg' ? readJpegExifOrientation(bytes) : 1
@@ -466,18 +531,20 @@ async function prepareAnthropicImage(imageBytes, mediaType, env) {
   // optional LLM leg rather than trusting the logical-screen header while a
   // frame descriptor or cumulative animation payload can allocate more.
   if (mediaType === 'image/gif' || !hasValidDimensions(dimensions)) {
-    return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+    return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
   }
 
   const needsTransform = orientation !== 1 ||
-    Math.max(dimensions.width, dimensions.height) > ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION
-  if (!needsTransform) return { ok: true, imageBytes: bytes, mediaType }
+    Math.max(dimensions.width, dimensions.height) > targetMaxEdge
+  if (!needsTransform) {
+    return { ok: true, imageBytes: bytes, mediaType, longEdge: Math.max(dimensions.width, dimensions.height) }
+  }
   if (dimensions.width * dimensions.height > PHOTON_MAX_SOURCE_PIXELS) {
-    return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+    return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
   }
 
   try {
-    const target = boundedTargetDimensions(dimensions)
+    const target = boundedTargetDimensions(dimensions, targetMaxEdge)
     const imageResizer = typeof env.__TEST_LLM_IMAGE_RESIZER === 'function'
       ? env.__TEST_LLM_IMAGE_RESIZER
       : resizeImageWithPhoton
@@ -496,21 +563,26 @@ async function prepareAnthropicImage(imageBytes, mediaType, env) {
       transformed.byteLength === 0 ||
       transformed.byteLength > ANTHROPIC_MAX_IMAGE_BYTES ||
       !hasValidDimensions(transformedDimensions) ||
-      Math.max(transformedDimensions.width, transformedDimensions.height) > ANTHROPIC_TARGET_MAX_IMAGE_DIMENSION
+      Math.max(transformedDimensions.width, transformedDimensions.height) > targetMaxEdge
     ) {
-      return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+      return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
     }
 
-    return { ok: true, imageBytes: transformed, mediaType: 'image/jpeg' }
+    return {
+      ok: true,
+      imageBytes: transformed,
+      mediaType: 'image/jpeg',
+      longEdge: Math.max(transformedDimensions.width, transformedDimensions.height),
+    }
   } catch {
-    return { ok: false, reason: IMAGE_TRANSFORM_ERROR }
+    return { ok: false, reason: IMAGE_TRANSFORM_ERROR, httpStatus: 502 }
   }
 }
 
 function buildRequestBody({ imageBytes, mediaType, model }) {
   return {
     model,
-    max_tokens: MAX_TOKENS,
+    max_tokens: LLM_MAX_TOKENS,
     system: RECEIPT_SYSTEM_PROMPT,
     tools: [
       {
@@ -563,8 +635,9 @@ const isStringOrNull = (v) => v === null || typeof v === 'string'
 // kind, …), or null when the shape is sound. Never trust the LLM's shape blindly.
 export function receiptShapeViolation(scanned) {
   if (!scanned || typeof scanned !== 'object' || Array.isArray(scanned)) return 'not_object'
+  if (Object.keys(scanned).some((key) => !REQUIRED_RECEIPT_KEYS.includes(key))) return 'additional_property'
   for (const key of REQUIRED_RECEIPT_KEYS) {
-    if (!(key in scanned)) return `missing:${key}`
+    if (!Object.hasOwn(scanned, key)) return `missing:${key}`
   }
   if (!isStringOrNull(scanned.merchantName)) return 'merchantName'
   if (!isStringOrNull(scanned.merchantAddress)) return 'merchantAddress'
@@ -577,6 +650,9 @@ export function receiptShapeViolation(scanned) {
   if (!Array.isArray(scanned.lineItems)) return 'lineItems'
   for (const item of scanned.lineItems) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return 'lineItem'
+    if (Object.keys(item).some((key) => !['name', 'amount', 'quantity'].includes(key))) {
+      return 'lineItem.additional_property'
+    }
     if (typeof item.name !== 'string') return 'lineItem.name'
     if (!isNumberOrNull(item.amount)) return 'lineItem.amount'
     if (!isNumberOrNull(item.quantity)) return 'lineItem.quantity'
@@ -585,6 +661,9 @@ export function receiptShapeViolation(scanned) {
   if (!Array.isArray(scanned.extras)) return 'extras'
   for (const extra of scanned.extras) {
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return 'extra'
+    if (Object.keys(extra).some((key) => !['label', 'amount', 'kind'].includes(key))) {
+      return 'extra.additional_property'
+    }
     if (typeof extra.label !== 'string') return 'extra.label'
     if (!isNumber(extra.amount)) return 'extra.amount'
     if (!EXTRA_KINDS.has(extra.kind)) return 'extra.kind'
@@ -597,12 +676,24 @@ export function receiptShapeViolation(scanned) {
  * @param {ArrayBuffer | Uint8Array} imageBytes
  * @param {string} contentType
  * @param {{ ANTHROPIC_API_KEY?: string, LLM_SCAN_MODEL?: string }} env
- * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, providerStarted: boolean }>}
+ * @returns {Promise<{ ok: boolean, httpStatus: number, scanned: unknown, latencyMs: number, model: string, errorBody: string | null, failureCode?: string, providerStarted: boolean }>}
  */
 export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
   const start = Date.now()
   let model = (env.LLM_SCAN_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL
   let providerStarted = false
+  let inputPx = null
+  const fail = (httpStatus, errorBody, failureCode = null) => ({
+    ok: false,
+    httpStatus,
+    scanned: null,
+    latencyMs: Date.now() - start,
+    model,
+    errorBody,
+    failureCode,
+    providerStarted,
+    inputPx,
+  })
   try {
     const config = readConfig(env)
     model = config.model
@@ -612,74 +703,83 @@ export async function scanReceiptWithAnthropic(imageBytes, contentType, env) {
     // unsupported or oversize image is rejected here so we never fire a request
     // Anthropic is guaranteed to 400 (Sentry RESPLIT-CURRENCY-API-G/-E/-B). The
     // reason is machine-readable so the router's Sentry capture groups it cleanly.
-    const image = resolveAnthropicImage(imageBytes, contentType)
-    if (!image.ok) {
-      const httpStatus = image.reason === 'llm_unsupported_media' ? 415 : 413
-      return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: image.reason, providerStarted }
-    }
-
-    const prepared = await prepareAnthropicImage(imageBytes, image.mediaType, env)
+    const prepared = await prepareLlmImage(imageBytes, contentType, env, anthropicTargetMaxEdge(env))
     if (!prepared.ok) {
       return {
         ok: false,
-        httpStatus: 502,
+        httpStatus: prepared.httpStatus,
         scanned: null,
         latencyMs: Date.now() - start,
         model,
-        errorBody: IMAGE_TRANSFORM_ERROR,
+        errorBody: prepared.reason,
         providerStarted,
+        inputPx: null,
       }
     }
+    inputPx = prepared.longEdge
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS)
-    let res
+    const timeout = setTimeout(() => controller.abort('timeout'), LLM_FETCH_TIMEOUT_MS)
     try {
       // Once fetch is invoked, conservatively account for a paid provider attempt:
       // a transport timeout cannot prove Anthropic did not accept the request.
       providerStarted = true
-      res = await fetch(ANTHROPIC_MESSAGES_URL, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': config.key,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify(buildRequestBody({
-          imageBytes: prepared.imageBytes,
-          mediaType: prepared.mediaType,
-          model,
-        })),
-        signal: controller.signal,
-      })
+      let res
+      try {
+        res = await fetch(ANTHROPIC_MESSAGES_URL, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': config.key,
+            'anthropic-version': ANTHROPIC_VERSION,
+          },
+          body: JSON.stringify(buildRequestBody({
+            imageBytes: prepared.imageBytes,
+            mediaType: prepared.mediaType,
+            model,
+          })),
+          signal: controller.signal,
+        })
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+
+      if (res.status !== 200) {
+        let errorBody = ''
+        let failureCode = httpFailureCode(res.status)
+        try {
+          errorBody = await res.text()
+        } catch { /* The HTTP status still supplies the closed provider code. */ }
+        return fail(res.status, errorBody.slice(0, 500), failureCode)
+      }
+
+      let body
+      try {
+        body = await res.json()
+      } catch (error) {
+        return fail(502, null, bodyFailureCode(error, controller.signal))
+      }
+      // A max_tokens stop means the tool_use was truncated: the emitted receipt is a
+      // partial (missing line items, cut-off amounts). Never return it as a success —
+      // a partial that looks whole is worse than an explicit failure the caller retries.
+      if (body?.stop_reason === 'max_tokens') {
+        return fail(502, 'llm_truncated', 'malformed_output')
+      }
+      const scanned = toolInputFromMessagesBody(body)
+      if (!scanned) {
+        return fail(502, 'missing emit_receipt tool_use', 'malformed_output')
+      }
+      const violation = receiptShapeViolation(scanned)
+      if (violation) {
+        return fail(502, `llm_schema_violation:${violation}`, 'malformed_output')
+      }
+      return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, failureCode: null, providerStarted, inputPx }
     } finally {
       clearTimeout(timeout)
     }
-
-    if (res.status !== 200) {
-      const errorBody = await res.text().catch(() => '')
-      return { ok: false, httpStatus: res.status, scanned: null, latencyMs: Date.now() - start, model, errorBody: errorBody.slice(0, 500), providerStarted }
-    }
-
-    const body = await res.json().catch(() => null)
-    // A max_tokens stop means the tool_use was truncated: the emitted receipt is a
-    // partial (missing line items, cut-off amounts). Never return it as a success —
-    // a partial that looks whole is worse than an explicit failure the caller retries.
-    if (body?.stop_reason === 'max_tokens') {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'llm_truncated', providerStarted }
-    }
-    const scanned = toolInputFromMessagesBody(body)
-    if (!scanned) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: 'missing emit_receipt tool_use', providerStarted }
-    }
-    const violation = receiptShapeViolation(scanned)
-    if (violation) {
-      return { ok: false, httpStatus: 502, scanned: null, latencyMs: Date.now() - start, model, errorBody: `llm_schema_violation:${violation}`, providerStarted }
-    }
-    return { ok: true, httpStatus: 200, scanned, latencyMs: Date.now() - start, model, errorBody: null, providerStarted }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const httpStatus = error instanceof AnthropicConfigError ? 503 : 502
-    return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: message.slice(0, 500), providerStarted }
+    return { ok: false, httpStatus, scanned: null, latencyMs: Date.now() - start, model, errorBody: message.slice(0, 500), providerStarted, inputPx }
   }
 }

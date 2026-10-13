@@ -355,3 +355,27 @@ func TestWindowStartUnix(t *testing.T) {
 		t.Errorf("zero window: got %d want 960", got)
 	}
 }
+
+func TestFirestoreStore_CreateKeyDoesNotOverwrite(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(newFakeDocs())
+	const keyID = "create-once"
+	spki := []byte{0x30, 0x59, 0x01}
+
+	if err := store.CreateKey(ctx, keyID, spki, 0); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+	if err := store.PutKey(ctx, keyID, spki, 11); err != nil {
+		t.Fatalf("PutKey advance: %v", err)
+	}
+	if err := store.CreateKey(ctx, keyID, spki, 0); !errors.Is(err, attest.ErrAlreadyExists) {
+		t.Fatalf("second CreateKey: want attest.ErrAlreadyExists, got %v", err)
+	}
+	_, count, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if count != 11 {
+		t.Fatalf("signCount after failed CreateKey = %d, want 11", count)
+	}
+}

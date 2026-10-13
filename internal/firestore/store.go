@@ -268,3 +268,19 @@ func uint32Field(fields map[string]any, key string) (uint32, error) {
 	}
 	return uint32(n), nil
 }
+
+func (s *FirestoreStore) CreateKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
+	fields := map[string]any{
+		fieldPubSPKI:   pubSPKI,
+		fieldSignCount: int64(signCount),
+	}
+	err := s.docs.Create(ctx, collAttestKeys, keyID, fields)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrAlreadyExists):
+		return attest.ErrAlreadyExists
+	default:
+		return fmt.Errorf("firestore create key %q: %w", keyID, err)
+	}
+}

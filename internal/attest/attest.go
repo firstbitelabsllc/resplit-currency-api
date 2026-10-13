@@ -64,22 +64,24 @@ func attestErr(code, format string, args ...any) *Error {
 // Store implementations should return this (wrapped or bare) from GetKey.
 var ErrUnknownKey = &Error{Code: "UNKNOWN_KEY", Msg: "attested key not found"}
 
+// ErrAlreadyExists is returned by CreateKey when keyID is already registered.
+// VerifyAttestation treats a matching SPKI as an idempotent success so client
+// retries stay safe, but never resets an advanced signCount via PutKey.
+var ErrAlreadyExists = &Error{Code: "ALREADY", Msg: "attested key already registered"}
+
 // Store abstracts the Firestore-backed attest_keys state.
 //
 // GetKey loads an attested key's SPKI public key and current signCount; it must
 // surface ErrUnknownKey when the keyID is absent. PutKey persists (or replaces)
-// a key with the given SPKI and signCount. AdvanceSignCount is the assertion
-// hot-path primitive: it must atomically move signCount to next only when the
-// stored value is strictly less than next, returning a REPLAY *Error otherwise.
-// A plain GetKey→check→PutKey sequence is not safe under concurrent /ocr/scan
-// (two valid assertions can both pass the check; a lower PutKey can also
-// regress the counter and resurrect a higher assertion).
+// a key with the given SPKI and signCount. Production uses CreateKey
+// for registration and atomic AdvanceSignCount for assertion replay protection.
 //
 // TODO(gcp): provide a *firestore.Client-backed implementation in cmd/ocr.
 type Store interface {
 	GetKey(ctx context.Context, keyID string) (pubSPKI []byte, signCount uint32, err error)
 	PutKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error
 	AdvanceSignCount(ctx context.Context, keyID string, next uint32) error
+	CreateKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error
 }
 
 // AssertionInput is the per-request payload verified at /ocr/scan.
@@ -114,6 +116,11 @@ type assertion struct {
 //  4. verify ECDSA-SHA256(authData || SHA256(clientData)) against the stored key.
 //  5. persist the advanced signCount.
 func VerifyAssertion(ctx context.Context, in AssertionInput, store Store) error {
+	keyID, err := CanonicalKeyID(in.KeyID)
+	if err != nil {
+		return err
+	}
+	in.KeyID = keyID
 	raw, err := decodeBase64(in.AssertionB64)
 	if err != nil {
 		return attestErr("ASSERT_B64", "assertion not valid base64: %v", err)
@@ -293,6 +300,17 @@ func parseECDSAPublicKey(spki []byte) (*ecdsa.PublicKey, error) {
 
 // decodeBase64 accepts both standard and URL-safe base64, padded or unpadded —
 // mirroring the Worker's b64ToBytes which normalised -/_ before atob.
+// CanonicalKeyID preserves the standard-base64 identity emitted by iOS while
+// collapsing equivalent URL-safe, unpadded and ignored-newline encodings.
+// Every registration, assertion and accounting path uses this same identity.
+func CanonicalKeyID(keyID string) (string, error) {
+	decoded, err := decodeBase64(keyID)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", attestErr("KEYID", "keyId must encode a 32-byte App Attest key hash")
+	}
+	return base64.StdEncoding.EncodeToString(decoded), nil
+}
+
 func decodeBase64(s string) ([]byte, error) {
 	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
 		return b, nil

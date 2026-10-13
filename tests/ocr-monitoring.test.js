@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   logOcrMonitoringEvent,
+  emitOcrSentryLog,
   captureOcrCacheWriteFailure,
   captureOcrLlmFailure,
   captureOcrProviderFailure,
@@ -197,6 +198,24 @@ test('captureOcrCacheWriteFailure swallows Sentry scope, capture, and flush fail
   }
 })
 
+test('captureOcrLlmFailure closes unknown diagnostics before Sentry', async () => {
+  const { calls, sdk } = makeSentryMock()
+  const hostile = 'RAW_PROVIDER_ERROR_MUST_NOT_LEAK'
+  setOcrSentrySdkForTests(sdk)
+  try {
+    assert.equal(await captureOcrLlmFailure({
+      scanId: 'scan-hostile', requestId: 'req-hostile', httpStatus: 500,
+      diagnostic: hostile, reason: hostile,
+    }, { SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' }), true)
+    assert.equal(calls.scopes[0].tags['ocr.llm_reason'], 'unknown')
+    assert.equal(calls.scopes[0].contexts.ocrLlmScan.reason, 'unknown')
+    assert.equal(calls.captureMessage[0].includes(hostile), false)
+    assert.doesNotMatch(JSON.stringify(calls), new RegExp(hostile))
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
+})
+
 test('OCR outcome telemetry swallows Sentry scope, capture, and flush failures', async () => {
   const env = { SENTRY_DSN: 'https://ocr@example.ingest.sentry.io/1' }
   const captures = [
@@ -251,6 +270,40 @@ test('OCR outcome telemetry swallows Sentry scope, capture, and flush failures',
         )
       }
     }
+  } finally {
+    resetOcrSentrySdkForTests()
+  }
+})
+
+test('logOcrMonitoringEvent is red if Sentry logger.info is skipped', () => {
+  const loggerCalls = []
+  setOcrSentrySdkForTests({
+    logger: {
+      info(message, attributes) { loggerCalls.push({ message, attributes }) },
+      warn() {},
+      error() {},
+    },
+  })
+  const originalLog = console.log
+  console.log = () => {}
+  try {
+    logOcrMonitoringEvent('info', { signal: 'dual_scan', latency_ms: 10984, status: 'succeeded' }, {
+      SENTRY_DSN: 'https://worker@example.ingest.sentry.io/1',
+    })
+    assert.equal(loggerCalls.length, 1, 'Sentry logs stay silent if logger.info is never called')
+    assert.equal(loggerCalls[0].message, 'dual_scan')
+    assert.equal(loggerCalls[0].attributes.latency_ms, 10984)
+    assert.equal(emitOcrSentryLog('info', 'dual_scan', { latency_ms: 1 }), true)
+  } finally {
+    console.log = originalLog
+    resetOcrSentrySdkForTests()
+  }
+})
+
+test('emitOcrSentryLog returns false when the SDK logger is missing (no fake green)', () => {
+  setOcrSentrySdkForTests({})
+  try {
+    assert.equal(emitOcrSentryLog('info', 'dual_scan', { latency_ms: 1 }), false)
   } finally {
     resetOcrSentrySdkForTests()
   }

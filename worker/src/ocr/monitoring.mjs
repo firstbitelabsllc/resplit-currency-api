@@ -18,6 +18,24 @@ import * as Sentry from '@sentry/cloudflare'
 const SURFACE = 'resplit-currency-api'
 const DOMAIN = 'ocr'
 
+// Provider payloads and exception messages are deliberately excluded from OCR
+// failure telemetry. Keep this vocabulary closed at the Sentry boundary.
+export const OCR_FAILURE_DIAGNOSTICS = new Set([
+  'transport_timeout',
+  'transport_error',
+  'malformed_output',
+  'upstream_rate_limited',
+  'upstream_rejected',
+  'llm_daily_cap',
+  'scan_rate_limited',
+  'operator_disabled',
+  'unknown',
+])
+
+export function closedOcrFailureDiagnostic(value) {
+  return typeof value === 'string' && OCR_FAILURE_DIAGNOSTICS.has(value) ? value : 'unknown'
+}
+
 let sentrySdk = Sentry
 
 /** Test seam — mirrors monitoring.mjs's `setSentryWorkerSdkForTests`. */
@@ -82,9 +100,37 @@ export function logOcrMonitoringEvent(level, event, env) {
       console.error(line)
       break
     }
+    emitOcrSentryLog(level, typeof event.signal === 'string' ? event.signal : 'ocr_monitoring', event)
   } catch {
     // A failed observability sink must never replace a paid OCR result.
   }
+}
+
+function sentryLogAttributes(event) {
+  const attributes = {}
+  for (const [key, value] of Object.entries(event || {})) {
+    if (value === null || value === undefined) continue
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      attributes[key] = value
+    } else {
+      attributes[key] = JSON.stringify(value)
+    }
+  }
+  return attributes
+}
+
+/**
+ * @param {'info' | 'warn' | 'error'} level
+ * @param {string} message
+ * @param {Record<string, unknown>} event
+ * @returns {boolean}
+ */
+export function emitOcrSentryLog(level, message, event) {
+  const logger = sentrySdk && sentrySdk.logger
+  const method = level === 'warn' ? 'warn' : level === 'error' ? 'error' : 'info'
+  if (!logger || typeof logger[method] !== 'function') return false
+  logger[method](message, sentryLogAttributes(event))
+  return true
 }
 
 /**
@@ -190,6 +236,7 @@ export async function captureOcrLlmFailure(context, env) {
   }
 
   return captureBestEffort(() => {
+    const diagnostic = closedOcrFailureDiagnostic(context.diagnostic ?? context.reason)
     sentrySdk.withScope(scope => {
       scope.setLevel('error')
       scope.setTag('surface', SURFACE)
@@ -208,9 +255,7 @@ export async function captureOcrLlmFailure(context, env) {
       if (context.model) {
         scope.setTag('ocr.llm_model', context.model)
       }
-      if (context.reason) {
-        scope.setTag('ocr.llm_reason', context.reason)
-      }
+      scope.setTag('ocr.llm_reason', diagnostic)
       if (context.clientVersion) {
         scope.setTag('ocr.client_version', context.clientVersion)
       }
@@ -219,13 +264,13 @@ export async function captureOcrLlmFailure(context, env) {
         requestId: context.requestId,
         llmStatus: context.llmStatus ?? null,
         httpStatus: context.httpStatus ?? null,
-        reason: context.reason ?? null,
+        reason: diagnostic,
         model: context.model ?? null,
         attest: context.attest,
         totalMs: context.totalMs,
       })
       sentrySdk.captureMessage(
-        `OCR dual-scan llm_error (reason=${context.reason ?? 'unknown'}, http=${context.httpStatus ?? 'unknown'})`
+        `OCR dual-scan llm_error (reason=${diagnostic}, http=${context.httpStatus ?? 'unknown'})`
       )
     })
   })
