@@ -108,6 +108,11 @@ type assertion struct {
 //  4. verify ECDSA-SHA256(authData || SHA256(clientData)) against the stored key.
 //  5. persist the advanced signCount.
 func VerifyAssertion(ctx context.Context, in AssertionInput, store Store) error {
+	keyID, err := CanonicalKeyID(in.KeyID)
+	if err != nil {
+		return err
+	}
+	in.KeyID = keyID
 	raw, err := decodeBase64(in.AssertionB64)
 	if err != nil {
 		return attestErr("ASSERT_B64", "assertion not valid base64: %v", err)
@@ -278,6 +283,17 @@ func parseECDSAPublicKey(spki []byte) (*ecdsa.PublicKey, error) {
 
 // decodeBase64 accepts both standard and URL-safe base64, padded or unpadded —
 // mirroring the Worker's b64ToBytes which normalised -/_ before atob.
+// CanonicalKeyID preserves the standard-base64 identity emitted by iOS while
+// collapsing equivalent URL-safe, unpadded and ignored-newline encodings.
+// Every registration, assertion and accounting path uses this same identity.
+func CanonicalKeyID(keyID string) (string, error) {
+	decoded, err := decodeBase64(keyID)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", attestErr("KEYID", "keyId must encode a 32-byte App Attest key hash")
+	}
+	return base64.StdEncoding.EncodeToString(decoded), nil
+}
+
 func decodeBase64(s string) ([]byte, error) {
 	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
 		return b, nil

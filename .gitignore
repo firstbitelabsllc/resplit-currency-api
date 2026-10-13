@@ -16,3 +16,4 @@ error.log
 ocr-lab/cron.log
 ocr-lab/launchd.err.log
 ocr-lab/launchd.out.log
+.DS_Store

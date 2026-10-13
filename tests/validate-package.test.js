@@ -72,9 +72,9 @@ test('validate-package warns instead of blocking recovery publishes with annual 
   const manifestPath = path.join(temp.packageRoot, 'archive-manifest.json')
   const minManifestPath = path.join(temp.packageRoot, 'archive-manifest.min.json')
   const manifest = fs.readJsonSync(manifestPath)
-  const removableDates = new Set(manifest.availableDates.slice(20, 33))
-  manifest.availableDates = manifest.availableDates.filter((date) => !removableDates.has(date))
-  manifest.gapCount = 14
+  const originalDateCount = manifest.availableDates.length
+  manifest.availableDates = [manifest.availableDates[0], ...manifest.availableDates.slice(-30)]
+  manifest.gapCount += originalDateCount - manifest.availableDates.length
   fs.writeJsonSync(manifestPath, manifest, { spaces: '\t' })
   fs.writeJsonSync(minManifestPath, manifest)
 

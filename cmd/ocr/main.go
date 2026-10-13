@@ -153,15 +153,9 @@ func run(logger *slog.Logger) error {
 	// in-memory store. Production MUST fail closed: MemStore is per-instance, so
 	// a silent fallback would drop cross-instance App Attest replay durability
 	// and the AllowRate/ReserveOCR spend gate (MemStore is not an ocrSpendStore).
-	var store attest.Store
-	if pid := os.Getenv("GCP_PROJECT_ID"); pid != "" {
-		fs, err := firestore.NewFirestoreStore(ctx, pid)
-		if err != nil {
-			return fmt.Errorf("firestore store required when GCP_PROJECT_ID is set: %w", err)
-		}
-		store = fs
-	} else {
-		store = attest.NewMemStore()
+	store, err := newAttestationStore(ctx, os.Getenv("GCP_PROJECT_ID"), os.Getenv("K_SERVICE") != "")
+	if err != nil {
+		return err
 	}
 
 	// Live Azure DI provider (key from Secret Manager via AZURE_OCR_KEY). Falls
@@ -211,6 +205,20 @@ func run(logger *slog.Logger) error {
 		defer cancel()
 		return httpSrv.Shutdown(shutdownCtx)
 	}
+}
+
+func newAttestationStore(ctx context.Context, projectID string, cloudRun bool) (attest.Store, error) {
+	if projectID == "" {
+		if cloudRun {
+			return nil, fmt.Errorf("Firestore project is required on Cloud Run")
+		}
+		return attest.NewMemStore(), nil
+	}
+	store, err := firestore.NewFirestoreStore(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("Firestore store required when GCP_PROJECT_ID is set: %w", err)
+	}
+	return store, nil
 }
 
 type server struct {
@@ -376,6 +384,11 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		assertionB64 := r.Header.Get(headerAssertion)
 		if keyID == "" || assertionB64 == "" {
 			httpx.WriteError(w, http.StatusBadRequest, "missing key id or assertion")
+			return
+		}
+		keyID, err = attest.CanonicalKeyID(keyID)
+		if err != nil {
+			httpx.WriteError(w, attestStatus(err), "invalid key id")
 			return
 		}
 		in := attest.AssertionInput{KeyID: keyID, AssertionB64: assertionB64, ClientData: image, AppID: attest.AppID}

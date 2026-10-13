@@ -103,6 +103,11 @@ type attestationStatement struct {
 //  5. keyId binding: keyId == SHA256(credCert raw P-256 key) == credentialId.
 //  6. Persist the Apple-certified credCert SPKI with signCount 0.
 func VerifyAttestation(ctx context.Context, in AttestationInput, store Store) error {
+	keyID, err := CanonicalKeyID(in.KeyID)
+	if err != nil {
+		return err
+	}
+	in.KeyID = keyID
 	raw, err := decodeBase64(in.AttestationObjectB64)
 	if err != nil {
 		return attestErr("ATT_B64", "attestationObject not valid base64: %v", err)
