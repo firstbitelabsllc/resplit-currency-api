@@ -2,7 +2,6 @@ package firestore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -39,6 +38,39 @@ type clientDocStore struct {
 }
 
 var _ docStore = (*clientDocStore)(nil)
+
+type clientTransaction struct {
+	a  *clientDocStore
+	tx *gfs.Transaction
+}
+
+func (a *clientDocStore) Transact(ctx context.Context, fn func(docTransaction) error) error {
+	return a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error { return fn(&clientTransaction{a, tx}) })
+}
+
+func (t *clientTransaction) GetAll(coll string, ids []string) (map[string]map[string]any, error) {
+	refs := make([]*gfs.DocumentRef, len(ids))
+	for i, id := range ids {
+		refs[i] = t.a.document(coll, id)
+	}
+	snaps, err := t.tx.GetAll(refs)
+	if err != nil {
+		return nil, err
+	}
+	all := map[string]map[string]any{}
+	for i, snap := range snaps {
+		if snap.Exists() {
+			all[ids[i]] = snap.Data()
+		}
+	}
+	return all, nil
+}
+func (t *clientTransaction) Set(coll, id string, fields map[string]any) error {
+	return t.tx.Set(t.a.document(coll, id), fields, gfs.MergeAll)
+}
+func (t *clientTransaction) Create(coll, id string, fields map[string]any) error {
+	return t.tx.Create(t.a.document(coll, id), fields)
+}
 
 // document preserves existing valid SDK paths and escapes slash characters only
 // when the old path could never address a Firestore document. Standard base64
@@ -98,78 +130,4 @@ func (a *clientDocStore) Delete(ctx context.Context, coll, id string) error {
 		return ErrNotFound
 	}
 	return err
-}
-
-// Increment atomically adds delta to an integer field and returns the new value.
-// It runs a Firestore transaction (read-modify-write) rather than the fire-and-
-// forget firestore.Increment so the caller gets the post-increment count back —
-// required by AllowRate to compare against a cap. Firestore retries the closure
-// on contention, keeping the counter correct across concurrent Cloud Run
-// instances.
-func (a *clientDocStore) Increment(ctx context.Context, coll, id, field string, delta int64) (int64, error) {
-	ref := a.document(coll, id)
-	var newVal int64
-	err := a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error {
-		var cur int64
-		snap, err := tx.Get(ref)
-		if err != nil {
-			if status.Code(err) != codes.NotFound {
-				return err
-			}
-			// Absent document: counter starts at zero.
-		} else if v, derr := snap.DataAt(field); derr == nil {
-			switch n := v.(type) {
-			case int64:
-				cur = n
-			case int:
-				cur = int64(n)
-			case float64:
-				cur = int64(n)
-			}
-		}
-		newVal = cur + delta
-		return tx.Set(ref, map[string]any{field: newVal}, gfs.MergeAll)
-	})
-	if err != nil {
-		return 0, fmt.Errorf("firestore increment %s/%s.%s: %w", coll, id, field, err)
-	}
-	return newVal, nil
-}
-
-// AdvanceInt64IfGreater sets field to next only when the document exists and the
-// stored value is strictly less than next. Used by App Attest signCount so two
-// concurrent /ocr/scan assertions cannot both advance (or regress) the counter.
-func (a *clientDocStore) AdvanceInt64IfGreater(ctx context.Context, coll, id, field string, next int64) error {
-	ref := a.document(coll, id)
-	err := a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error {
-		snap, err := tx.Get(ref)
-		if err != nil {
-			if status.Code(err) == codes.NotFound {
-				return ErrNotFound
-			}
-			return err
-		}
-		var cur int64
-		if v, derr := snap.DataAt(field); derr == nil {
-			switch n := v.(type) {
-			case int64:
-				cur = n
-			case int:
-				cur = int64(n)
-			case float64:
-				cur = int64(n)
-			}
-		}
-		if next <= cur {
-			return ErrConflict
-		}
-		return tx.Set(ref, map[string]any{field: next}, gfs.MergeAll)
-	})
-	if err != nil {
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) {
-			return err
-		}
-		return fmt.Errorf("firestore advance %s/%s.%s: %w", coll, id, field, err)
-	}
-	return nil
 }

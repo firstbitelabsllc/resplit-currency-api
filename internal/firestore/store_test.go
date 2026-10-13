@@ -18,6 +18,54 @@ type fakeDocs struct {
 	data map[string]map[string]map[string]any
 }
 
+type fakeTransaction struct{ f *fakeDocs }
+
+func (t *fakeTransaction) GetAll(coll string, ids []string) (map[string]map[string]any, error) {
+	all := map[string]map[string]any{}
+	for _, id := range ids {
+		if doc, ok := t.f.coll(coll)[id]; ok {
+			all[id] = doc
+		}
+	}
+	return all, nil
+}
+func (t *fakeTransaction) Set(coll, id string, fields map[string]any) error {
+	doc, ok := t.f.coll(coll)[id]
+	if !ok {
+		doc = map[string]any{}
+		t.f.coll(coll)[id] = doc
+	}
+	for k, v := range fields {
+		doc[k] = v
+	}
+	return nil
+}
+func (t *fakeTransaction) Create(coll, id string, fields map[string]any) error {
+	if _, ok := t.f.coll(coll)[id]; ok {
+		return ErrAlreadyExists
+	}
+	return t.Set(coll, id, fields)
+}
+func (f *fakeDocs) Transact(ctx context.Context, fn func(docTransaction) error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	copy := newFakeDocs()
+	for coll, docs := range f.data {
+		for id, doc := range docs {
+			fields := map[string]any{}
+			for k, v := range doc {
+				fields[k] = v
+			}
+			copy.coll(coll)[id] = fields
+		}
+	}
+	if err := fn(&fakeTransaction{copy}); err != nil {
+		return err
+	}
+	f.data = copy.data
+	return nil
+}
+
 func newFakeDocs() *fakeDocs {
 	return &fakeDocs{data: make(map[string]map[string]map[string]any)}
 }
@@ -79,49 +127,6 @@ func (f *fakeDocs) Delete(_ context.Context, coll, id string) error {
 		return ErrNotFound
 	}
 	delete(c, id)
-	return nil
-}
-
-func (f *fakeDocs) Increment(_ context.Context, coll, id, field string, delta int64) (int64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	c := f.coll(coll)
-	doc, ok := c[id]
-	if !ok {
-		doc = make(map[string]any)
-		c[id] = doc
-	}
-	var cur int64
-	if v, ok := doc[field].(int64); ok {
-		cur = v
-	}
-	cur += delta
-	doc[field] = cur
-	return cur, nil
-}
-
-func (f *fakeDocs) AdvanceInt64IfGreater(_ context.Context, coll, id, field string, next int64) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	doc, ok := f.coll(coll)[id]
-	if !ok {
-		return ErrNotFound
-	}
-	var cur int64
-	switch v := doc[field].(type) {
-	case int64:
-		cur = v
-	case int:
-		cur = int64(v)
-	case uint32:
-		cur = int64(v)
-	case float64:
-		cur = int64(v)
-	}
-	if next <= cur {
-		return ErrConflict
-	}
-	doc[field] = next
 	return nil
 }
 

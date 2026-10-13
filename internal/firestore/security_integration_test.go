@@ -5,6 +5,11 @@ package firestore
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -16,8 +21,164 @@ import (
 	"testing"
 	"time"
 
+	gfs "cloud.google.com/go/firestore"
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
 )
+
+func TestEmulatorCertifiedAliasHistoryPreservation(t *testing.T) {
+	if !strings.HasPrefix(os.Getenv("FIRESTORE_EMULATOR_HOST"), "127.0.0.1:") {
+		t.Fatal("loopback emulator required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	a, err := NewFirestoreStore(ctx, "resplit-security-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewFirestoreStore(ctx, "resplit-security-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	pub, _ := key.PublicKey.ECDH()
+	hash := sha256.Sum256(pub.Bytes())
+	id := base64.StdEncoding.EncodeToString(hash[:])
+	spki, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	aliases, err := attest.KeyIDAliases(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias1, alias2 := aliases[1], aliases[2] // unpadded and nonzero trailing pad bits
+	cli := a.docs.(*clientDocStore)
+	for alias, count := range map[string]int64{alias1: 17, alias2: 23} {
+		if _, err := cli.document(collAttestKeys, alias).Set(ctx, map[string]any{fieldPubSPKI: spki, fieldSignCount: count}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws := windowStartUnix(time.Now(), time.Hour)
+	for alias, count := range map[string]int64{alias1: 5, alias2: 7} {
+		if _, err := cli.document(collRateCaps, rateCapID("attest:"+alias, ws)).Set(ctx, map[string]any{fieldCount: count}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	identity := "attest:" + id
+	if _, err := cli.document(collOCRIdempotency, idempotencyID("attest:"+alias1, "old-receipt")).Set(ctx, map[string]any{fieldCreatedAt: time.Now(), fieldExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// The production caller supplies SPKI only after current certificate/key binding.
+	if err := a.CreateKey(ctx, id, spki, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, count, err := b.GetKey(ctx, id); err != nil || count != 23 {
+		t.Fatalf("canonical counter=%d/%v", count, err)
+	}
+	if err := b.AdvanceSignCount(ctx, id, 23); err == nil {
+		t.Fatal("legacy counter replay accepted")
+	}
+	var wins atomic.Int64
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := b.CreateKey(ctx, id, spki, 0); err != nil && !errors.Is(err, attest.ErrAlreadyExists) {
+				errs <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			err := a.AdvanceSignCount(ctx, id, 24)
+			if err == nil {
+				wins.Add(1)
+			} else {
+				var e *attest.Error
+				if !errors.As(err, &e) || e.Code != "REPLAY" {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if wins.Load() != 1 {
+		t.Fatalf("atomic advance winners=%d", wins.Load())
+	}
+	if _, count, err := b.GetKey(ctx, id); err != nil || count != 24 {
+		t.Fatalf("re-registration reset=%d/%v", count, err)
+	}
+	if fresh, err := b.ReserveOCR(ctx, identity, "old-receipt", time.Hour); err != nil || fresh {
+		t.Fatalf("legacy billed again=%v/%v", fresh, err)
+	}
+	if exists, err := b.HasOCRReservation(ctx, identity, "old-receipt"); err != nil || !exists {
+		t.Fatalf("legacy recovery reservation=%v/%v", exists, err)
+	}
+	if allowed, count, err := b.AllowRate(ctx, identity, time.Hour, 12); err != nil || allowed || count != 13 {
+		t.Fatalf("alias rate reset=%v/%d/%v", allowed, count, err)
+	}
+	if _, count, err := a.AllowRate(ctx, identity, time.Hour, 100); err != nil || count != 14 {
+		t.Fatalf("rate double copied=%d/%v", count, err)
+	}
+	// A trusted old spelling advancing later is still part of the atomic floor.
+	if _, err := cli.document(collAttestKeys, alias2).Set(ctx, map[string]any{fieldSignCount: int64(31)}, gfs.MergeAll); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AdvanceSignCount(ctx, id, 30); err == nil {
+		t.Fatal("later legacy advance was ignored")
+	}
+	if err := a.AdvanceSignCount(ctx, id, 32); err != nil {
+		t.Fatal(err)
+	}
+	// Original rows remain byte/state authoritative; no deletion or namespace migration.
+	for alias, count := range map[string]uint32{alias1: 17, alias2: 31} {
+		if _, got, err := b.GetKey(ctx, alias); err != nil || got != count {
+			t.Errorf("old alias=%d want%d err%v", got, count, err)
+		}
+	}
+	wins.Store(0)
+	wg = sync.WaitGroup{}
+	errs = make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fresh, err := a.ReserveOCR(ctx, identity, "new-receipt", time.Hour)
+			if err != nil {
+				errs <- err
+			} else if fresh {
+				wins.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if wins.Load() != 1 {
+		t.Fatalf("reservation winners=%d", wins.Load())
+	}
+	// A conflicting legacy SPKI makes the entire certified-registration transaction
+	// refuse; it cannot create a fresh canonical counter over untrusted history.
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	otherPub, _ := other.PublicKey.ECDH()
+	otherHash := sha256.Sum256(otherPub.Bytes())
+	otherID := base64.StdEncoding.EncodeToString(otherHash[:])
+	otherSPKI, _ := x509.MarshalPKIXPublicKey(&other.PublicKey)
+	otherAliases, _ := attest.KeyIDAliases(otherID)
+	if _, err := cli.document(collAttestKeys, otherAliases[1]).Set(ctx, map[string]any{fieldPubSPKI: spki, fieldSignCount: int64(29)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.CreateKey(ctx, otherID, otherSPKI, 0); err == nil {
+		t.Fatal("conflicting key provenance merged")
+	}
+	if _, _, err := b.GetKey(ctx, otherID); !errors.Is(err, attest.ErrUnknownKey) {
+		t.Fatal("conflict minted canonical row")
+	}
+}
 
 func TestEmulatorSecurityPersistence(t *testing.T) {
 	if !strings.HasPrefix(os.Getenv("FIRESTORE_EMULATOR_HOST"), "127.0.0.1:") {

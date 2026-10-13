@@ -92,17 +92,8 @@ func (c *scanCoalescer) Do(ctx context.Context, key string, fn func() ([]byte, e
 	// second one. This is the concurrent-retry path.
 	if call, ok := c.inFlight[key]; ok {
 		c.mu.Unlock()
-		waited := make(chan struct{})
-		go func() { call.wg.Wait(); close(waited) }()
-		select {
-		case <-waited:
-			return call.result, false, call.err
-		case <-ctx.Done():
-			// This caller gave up; the original keeps running so the first
-			// requester still gets its answer. Never cancel a paid provider
-			// call on behalf of a waiter.
-			return nil, false, ctx.Err()
-		}
+		result, err := waitScanCall(ctx, call)
+		return result, false, err
 	}
 
 	call := &scanCall{}
@@ -124,6 +115,35 @@ func (c *scanCoalescer) Do(ctx context.Context, key string, fn func() ([]byte, e
 	c.mu.Unlock()
 
 	return call.result, true, call.err
+}
+
+// Recover can only join or replay existing work. Capturing the call under the
+// same lock as its success entry prevents a capped retry racing into new work.
+func (c *scanCoalescer) Recover(ctx context.Context, key string) ([]byte, bool, error) {
+	c.mu.Lock()
+	if e, ok := c.done[key]; ok && c.now().Before(e.expires) {
+		c.mu.Unlock()
+		return e.result, true, nil
+	}
+	call, ok := c.inFlight[key]
+	c.mu.Unlock()
+	if !ok {
+		return nil, false, nil
+	}
+	result, err := waitScanCall(ctx, call)
+	return result, true, err
+}
+
+func waitScanCall(ctx context.Context, call *scanCall) ([]byte, error) {
+	waited := make(chan struct{})
+	go func() { call.wg.Wait(); close(waited) }()
+	select {
+	case <-waited:
+		return call.result, call.err
+	case <-ctx.Done():
+		// A waiter cannot cancel another request's paid provider execution.
+		return nil, ctx.Err()
+	}
 }
 
 // sweepLocked drops expired entries. Called under c.mu on each completed scan,

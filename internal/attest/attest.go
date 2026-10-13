@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -309,6 +310,37 @@ func CanonicalKeyID(keyID string) (string, error) {
 		return "", attestErr("KEYID", "keyId must encode a 32-byte App Attest key hash")
 	}
 	return base64.StdEncoding.EncodeToString(decoded), nil
+}
+
+// KeyIDAliases enumerates the header-safe spellings previously accepted by
+// decodeBase64, including its ignored trailing pad bits. CR/LF spellings cannot
+// be transmitted as HTTP header values and are not legacy scan identities.
+func KeyIDAliases(keyID string) ([]string, error) {
+	canonical, err := CanonicalKeyID(keyID)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := base64.StdEncoding.DecodeString(canonical)
+	seen := map[string]bool{}
+	var aliases []string
+	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
+		encoded := encoding.EncodeToString(raw)
+		alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+		if encoding == base64.URLEncoding {
+			alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+		}
+		index := strings.IndexByte(alphabet, encoded[len(encoded)-2])
+		for pad := 0; pad < 4; pad++ {
+			spelling := encoded[:len(encoded)-2] + string(alphabet[index&^3|pad])
+			for _, s := range []string{spelling + "=", spelling} {
+				if !seen[s] {
+					seen[s] = true
+					aliases = append(aliases, s)
+				}
+			}
+		}
+	}
+	return aliases, nil
 }
 
 func decodeBase64(s string) ([]byte, error) {

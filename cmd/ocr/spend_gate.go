@@ -18,6 +18,7 @@ import (
 type ocrSpendStore interface {
 	AllowRate(ctx context.Context, deviceID string, window time.Duration, limit int64) (allowed bool, count int64, err error)
 	ReserveOCR(ctx context.Context, deviceID, hash string, ttl time.Duration) (fresh bool, err error)
+	HasOCRReservation(ctx context.Context, deviceID, hash string) (bool, error)
 	// ReleaseOCR drops a prior ReserveOCR claim so a failed provider attempt can
 	// be retried without waiting out the idempotency TTL. Missing keys are OK.
 	ReleaseOCR(ctx context.Context, deviceID, hash string) error
@@ -79,6 +80,10 @@ func (g *ocrSpendGate) Reserve(ctx context.Context, identity string, image []byt
 	return g.spendStore().ReserveOCR(ctx, identity, hex.EncodeToString(hash[:]), g.idempotencyTTL)
 }
 
+func (g *ocrSpendGate) HasReservation(ctx context.Context, identity, imageHash string) (bool, error) {
+	return g.spendStore().HasOCRReservation(ctx, identity, imageHash)
+}
+
 // Release undoes the caller-owned reservation only after a proven submission
 // rejection. An accepted or ambiguous request may already be billed, even when
 // its polling or response failed, so those reservations must remain.
@@ -134,6 +139,13 @@ func (m *memorySpendStore) ReleaseOCR(_ context.Context, deviceID, hash string) 
 	defer m.mu.Unlock()
 	delete(m.seen, deviceID+":"+hash)
 	return nil
+}
+
+func (m *memorySpendStore) HasOCRReservation(_ context.Context, deviceID, hash string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, ok := m.seen[deviceID+":"+hash]
+	return ok && expires.After(m.now()), nil
 }
 
 func (m *memorySpendStore) AllowRate(_ context.Context, deviceID string, window time.Duration, limit int64) (bool, int64, error) {

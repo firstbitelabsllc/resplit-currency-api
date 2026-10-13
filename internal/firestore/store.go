@@ -18,9 +18,11 @@
 package firestore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
@@ -48,19 +50,39 @@ var ErrNotFound = errors.New("firestore: document not found")
 // docStore is the minimal Firestore surface FirestoreStore depends on. Each
 // method targets a single document by (collection, id).
 //
-// Get reads a document's fields. Set overwrites a document. Increment applies an
-// atomic delta to an integer field (the production adapter maps this to
-// firestore.Increment so per-device counters are race-free across instances).
-// Create writes a document only if it does not already exist, returning
-// ErrAlreadyExists otherwise — the idempotency primitive. AdvanceInt64IfGreater
-// is the App Attest signCount CAS: set field to next only when current < next.
+// Get/Set/Create/Delete own single-document I/O; Transact preserves the
+// alias group atomically for registration, counter advance and accounting.
 type docStore interface {
 	Get(ctx context.Context, coll, id string) (map[string]any, error)
 	Set(ctx context.Context, coll, id string, fields map[string]any) error
 	Create(ctx context.Context, coll, id string, fields map[string]any) error
 	Delete(ctx context.Context, coll, id string) error
-	Increment(ctx context.Context, coll, id, field string, delta int64) (int64, error)
-	AdvanceInt64IfGreater(ctx context.Context, coll, id, field string, next int64) error
+	Transact(ctx context.Context, fn func(docTransaction) error) error
+}
+
+type docTransaction interface {
+	GetAll(coll string, ids []string) (map[string]map[string]any, error)
+	Set(coll, id string, fields map[string]any) error
+	Create(coll, id string, fields map[string]any) error
+}
+
+func keyAliases(id string) []string {
+	aliases, err := attest.KeyIDAliases(id)
+	if err != nil {
+		return []string{id}
+	}
+	return aliases
+}
+
+func identityAliases(id string) []string {
+	if !strings.HasPrefix(id, "attest:") {
+		return []string{id}
+	}
+	aliases := keyAliases(strings.TrimPrefix(id, "attest:"))
+	for i := range aliases {
+		aliases[i] = "attest:" + aliases[i]
+	}
+	return aliases
 }
 
 // ErrAlreadyExists is returned by docStore.Create when the document is already
@@ -131,7 +153,41 @@ func (s *FirestoreStore) PutKey(ctx context.Context, keyID string, pubSPKI []byt
 // attest.ErrUnknownKey and a lost race / stale next onto a REPLAY *Error so
 // VerifyAssertion fails closed without regressing the counter.
 func (s *FirestoreStore) AdvanceSignCount(ctx context.Context, keyID string, next uint32) error {
-	err := s.docs.AdvanceInt64IfGreater(ctx, collAttestKeys, keyID, fieldSignCount, int64(next))
+	err := s.docs.Transact(ctx, func(tx docTransaction) error {
+		all, err := tx.GetAll(collAttestKeys, keyAliases(keyID))
+		if err != nil {
+			return err
+		}
+		canonical, ok := all[keyID]
+		if !ok {
+			return ErrNotFound
+		}
+		spki, err := bytesField(canonical, fieldPubSPKI)
+		if err != nil {
+			return err
+		}
+		var maximum uint32
+		for _, fields := range all {
+			old, err := bytesField(fields, fieldPubSPKI)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(old, spki) {
+				return &attest.Error{Code: "ALREADY", Msg: "legacy public key conflict"}
+			}
+			count, err := uint32Field(fields, fieldSignCount)
+			if err != nil {
+				return err
+			}
+			if count > maximum {
+				maximum = count
+			}
+		}
+		if next <= maximum {
+			return ErrConflict
+		}
+		return tx.Set(collAttestKeys, keyID, map[string]any{fieldSignCount: int64(next)})
+	})
 	switch {
 	case err == nil:
 		return nil
@@ -167,15 +223,41 @@ func (s *FirestoreStore) ReserveOCR(ctx context.Context, deviceID, hash string, 
 		fieldCreatedAt: now,
 		fieldExpiresAt: now.Add(ttl),
 	}
-	err = s.docs.Create(ctx, collOCRIdempotency, idempotencyID(deviceID, hash), fields)
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, ErrAlreadyExists):
-		return false, nil
-	default:
-		return false, fmt.Errorf("firestore reserve ocr %q: %w", idempotencyID(deviceID, hash), err)
+	err = s.docs.Transact(ctx, func(tx docTransaction) error {
+		fresh = false
+		ids := identityAliases(deviceID)
+		for i := range ids {
+			ids[i] = idempotencyID(ids[i], hash)
+		}
+		all, err := tx.GetAll(collOCRIdempotency, ids)
+		if err != nil {
+			return err
+		}
+		if len(all) > 0 {
+			return nil
+		}
+		fresh = true
+		return tx.Create(collOCRIdempotency, idempotencyID(deviceID, hash), fields)
+	})
+	if err != nil {
+		return false, fmt.Errorf("firestore reserve ocr: %w", err)
 	}
+	return fresh, nil
+}
+
+// HasOCRReservation reads the same durable record that ReserveOCR treats as
+// authoritative. Expiration alone does not delete a Firestore reservation.
+func (s *FirestoreStore) HasOCRReservation(ctx context.Context, deviceID, hash string) (bool, error) {
+	for _, alias := range identityAliases(deviceID) {
+		_, err := s.docs.Get(ctx, collOCRIdempotency, idempotencyID(alias, hash))
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return false, fmt.Errorf("firestore read ocr reservation: %w", err)
+		}
+	}
+	return false, nil
 }
 
 // ReleaseOCR removes a prior ReserveOCR claim so a failed provider attempt can
@@ -222,7 +304,31 @@ func rateCapID(deviceID string, windowStart int64) string {
 func (s *FirestoreStore) IncrementRate(ctx context.Context, deviceID string, window time.Duration) (int64, error) {
 	ws := windowStartUnix(s.now(), window)
 	id := rateCapID(deviceID, ws)
-	count, err := s.docs.Increment(ctx, collRateCaps, id, fieldCount, 1)
+	var count int64
+	err := s.docs.Transact(ctx, func(tx docTransaction) error {
+		count = 0
+		var canonical int64
+		ids := identityAliases(deviceID)
+		for i := range ids {
+			ids[i] = rateCapID(ids[i], ws)
+		}
+		all, err := tx.GetAll(collRateCaps, ids)
+		if err != nil {
+			return err
+		}
+		for alias, fields := range all {
+			n, ok := fields[fieldCount].(int64)
+			if !ok || n < 0 || n >= int64(^uint64(0)>>1)-count {
+				return errors.New("invalid legacy rate count")
+			}
+			count += n
+			if alias == id {
+				canonical = n
+			}
+		}
+		count++
+		return tx.Set(collRateCaps, id, map[string]any{fieldCount: canonical + 1})
+	})
 	if err != nil {
 		return 0, fmt.Errorf("firestore increment rate %q: %w", id, err)
 	}
@@ -285,17 +391,43 @@ func uint32Field(fields map[string]any, key string) (uint32, error) {
 }
 
 func (s *FirestoreStore) CreateKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
-	fields := map[string]any{
-		fieldPubSPKI:   pubSPKI,
-		fieldSignCount: int64(signCount),
+	// The caller has just verified Apple's certificate and key hash. Reconcile
+	// only equivalent header-safe encodings with that identical certified SPKI;
+	// preserve old records and their largest counter in one transaction.
+	var existing bool
+	err := s.docs.Transact(ctx, func(tx docTransaction) error {
+		existing = false
+		maximum := signCount
+		all, err := tx.GetAll(collAttestKeys, keyAliases(keyID))
+		if err != nil {
+			return err
+		}
+		for alias, fields := range all {
+			if alias == keyID {
+				existing = true
+			}
+			old, err := bytesField(fields, fieldPubSPKI)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(old, pubSPKI) {
+				return &attest.Error{Code: "ALREADY", Msg: "legacy public key conflict"}
+			}
+			count, err := uint32Field(fields, fieldSignCount)
+			if err != nil {
+				return err
+			}
+			if count > maximum {
+				maximum = count
+			}
+		}
+		return tx.Set(collAttestKeys, keyID, map[string]any{fieldPubSPKI: pubSPKI, fieldSignCount: int64(maximum)})
+	})
+	if err != nil {
+		return fmt.Errorf("firestore reconcile certified key: %w", err)
 	}
-	err := s.docs.Create(ctx, collAttestKeys, keyID, fields)
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, ErrAlreadyExists):
+	if existing {
 		return attest.ErrAlreadyExists
-	default:
-		return fmt.Errorf("firestore create key %q: %w", keyID, err)
 	}
+	return nil
 }

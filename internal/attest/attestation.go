@@ -209,6 +209,10 @@ func registerAttestedKey(ctx context.Context, store Store, keyID string, spki []
 			}
 			return attestErr("ALREADY", "keyId already registered to a different public key")
 		}
+		var ae *Error
+		if errors.As(err, &ae) {
+			return ae
+		}
 		return attestErr("STORE", "store CreateKey failed: %v", err)
 	}
 	return nil

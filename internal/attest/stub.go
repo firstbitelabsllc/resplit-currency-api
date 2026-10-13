@@ -1,6 +1,7 @@
 package attest
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 	"sync"
@@ -57,6 +58,17 @@ func (m *MemStore) AdvanceSignCount(_ context.Context, keyID string, next uint32
 	if !ok {
 		return ErrUnknownKey
 	}
+	aliases, _ := KeyIDAliases(keyID)
+	for _, alias := range aliases {
+		if old, ok := m.records[alias]; ok {
+			if !bytes.Equal(old.spki, r.spki) {
+				return attestErr("ALREADY", "legacy public key conflict")
+			}
+			if old.signCount > r.signCount {
+				r.signCount = old.signCount
+			}
+		}
+	}
 	if next <= r.signCount {
 		return attestErr("REPLAY", "signCount %d does not advance stored %d", next, r.signCount)
 	}
@@ -86,9 +98,24 @@ func (StubOCRProvider) Scan(_ context.Context, image []byte) ([]byte, error) {
 func (m *MemStore) CreateKey(_ context.Context, keyID string, pubSPKI []byte, signCount uint32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.records[keyID]; ok {
-		return ErrAlreadyExists
+	_, existing := m.records[keyID]
+	aliases, err := KeyIDAliases(keyID)
+	if err != nil {
+		aliases = []string{keyID}
+	}
+	for _, alias := range aliases {
+		if old, ok := m.records[alias]; ok {
+			if !bytes.Equal(old.spki, pubSPKI) {
+				return attestErr("ALREADY", "legacy public key conflict")
+			}
+			if old.signCount > signCount {
+				signCount = old.signCount
+			}
+		}
 	}
 	m.records[keyID] = memRecord{spki: pubSPKI, signCount: signCount}
+	if existing {
+		return ErrAlreadyExists
+	}
 	return nil
 }

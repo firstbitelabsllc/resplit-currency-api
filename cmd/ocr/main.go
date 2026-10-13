@@ -442,6 +442,7 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	imageKey := scanImageKey(image)
 
 	identity := scanGateIdentity(r, softFail, keyID)
+	identityImageKey := "identity:" + identity + ":" + imageKey
 	allowed, reason, count, err := s.spendGate.CheckRate(r.Context(), identity, softFail)
 	if err != nil {
 		s.recordScan(r.Context(), "rate_limited", attestResult)
@@ -451,7 +452,28 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if !allowed {
+	var result []byte
+	var recovered bool
+	if !allowed && reason == "rate_cap" && !softFail {
+		// Every caller still crosses authentication and rate accounting. Only a
+		// capped authenticated identity's exact existing scan may recover; this
+		// lookup cannot reserve spend or start a provider execution.
+		result, recovered, err = s.coalescer.Recover(r.Context(), identityImageKey)
+		if !recovered {
+			// A different identity's owner may have completed after this
+			// identity's join deadline. Only a retained own reservation plus a
+			// successful shared result admits replay; never mint a reservation.
+			if cached, ok := s.coalescer.Lookup("image:" + imageKey); ok {
+				reserved, lookupErr := s.spendGate.HasReservation(r.Context(), identity, imageKey)
+				if lookupErr != nil {
+					log.Error("ocr spend gate failed closed", slog.Any("error", lookupErr), slog.String("reason", "idempotency_error"))
+				} else if reserved {
+					result, recovered = cached, true
+				}
+			}
+		}
+	}
+	if !allowed && !recovered {
 		s.recordScan(r.Context(), "rate_limited", attestResult)
 		log.Warn("[OCR_MONITORING] scan blocked",
 			slog.String("signal", "scan"), slog.String("status", "rate_limited"),
@@ -467,37 +489,44 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// retry arriving while Firestore is reserving joins this result rather than
 	// racing a completed-only cache lookup. Each identity retains its own durable
 	// reservation; identical images may still share the inner provider execution.
-	result, _, err := s.coalescer.Do(r.Context(), "identity:"+identity+":"+imageKey, func() ([]byte, error) {
-		workCtx, cancelWork := context.WithDeadline(context.WithoutCancel(r.Context()), requestStarted.Add(s.workTimeout))
-		// The server cancels stalled work near the end of graceful drain. A
-		// client disconnect cannot cancel the shared accepted Azure operation.
-		stopShutdown := context.AfterFunc(s.workContext, cancelWork)
-		defer stopShutdown()
-		defer cancelWork()
-		fresh, reserveErr := s.spendGate.Reserve(workCtx, identity, image)
-		if reserveErr != nil {
-			return nil, fmt.Errorf("%w: %w", errScanReservation, reserveErr)
-		}
-		if !fresh {
-			return nil, errScanReservation
-		}
-		result, _, providerErr := s.coalescer.Do(workCtx, "image:"+imageKey, func() ([]byte, error) {
-			return s.provider.Scan(workCtx, image)
-		})
-		if errors.Is(providerErr, azure.ErrNotSubmitted) {
-			// Only the reservation owner releases; a cancelled waiter cannot release
-			// another request's slot. Bound cleanup independently of caller cancellation.
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
-			defer cancel()
-			if releaseErr := s.spendGate.Release(cleanupCtx, identity, image); releaseErr != nil {
-				log.Warn("ocr spend gate failed closed",
-					slog.String("signal", "scan"), slog.String("status", "provider_error"),
-					slog.String("attest", attestResult), slog.String("reason", "idempotency_error"),
-					slog.String("scan_id", scanID), slog.Any("error", releaseErr))
+	if !recovered {
+		result, _, err = s.coalescer.Do(r.Context(), identityImageKey, func() ([]byte, error) {
+			workCtx, cancelWork := context.WithDeadline(context.WithoutCancel(r.Context()), requestStarted.Add(s.workTimeout))
+			// The server cancels stalled work near the end of graceful drain. A
+			// client disconnect cannot cancel the shared accepted Azure operation.
+			stopShutdown := context.AfterFunc(s.workContext, cancelWork)
+			defer stopShutdown()
+			defer cancelWork()
+			fresh, reserveErr := s.spendGate.Reserve(workCtx, identity, image)
+			if reserveErr != nil {
+				return nil, fmt.Errorf("%w: %w", errScanReservation, reserveErr)
 			}
-		}
-		return result, providerErr
-	})
+			if !fresh {
+				if !softFail {
+					if cached, ok := s.coalescer.Lookup("image:" + imageKey); ok {
+						return cached, nil
+					}
+				}
+				return nil, errScanReservation
+			}
+			result, _, providerErr := s.coalescer.Do(workCtx, "image:"+imageKey, func() ([]byte, error) {
+				return s.provider.Scan(workCtx, image)
+			})
+			if errors.Is(providerErr, azure.ErrNotSubmitted) {
+				// Only the reservation owner releases; a cancelled waiter cannot release
+				// another request's slot. Bound cleanup independently of caller cancellation.
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+				defer cancel()
+				if releaseErr := s.spendGate.Release(cleanupCtx, identity, image); releaseErr != nil {
+					log.Warn("ocr spend gate failed closed",
+						slog.String("signal", "scan"), slog.String("status", "provider_error"),
+						slog.String("attest", attestResult), slog.String("reason", "idempotency_error"),
+						slog.String("scan_id", scanID), slog.Any("error", releaseErr))
+				}
+			}
+			return result, providerErr
+		})
+	}
 	if err != nil {
 		status := scanErrorStatus(err)
 		code := http.StatusBadGateway

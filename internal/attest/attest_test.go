@@ -1,6 +1,7 @@
 package attest
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -530,6 +531,66 @@ func TestAttestationReplayCannotResetAssertion(t *testing.T) {
 	var replay *Error
 	if err := VerifyAssertion(ctx, assertion, store); !errors.As(err, &replay) || replay.Code != "REPLAY" {
 		t.Fatalf("consumed assertion replay admitted: %v", err)
+	}
+}
+
+func TestCertifiedRegistrationPreservesLegacyAliasCounter(t *testing.T) {
+	canonical, object, key := testAttestation(t)
+	decoded, _ := base64.StdEncoding.DecodeString(canonical)
+	alias := base64.RawURLEncoding.EncodeToString(decoded)
+	spki, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	store := NewMemStore()
+	ctx := context.Background()
+	if err := store.PutKey(ctx, alias, spki, 17); err != nil {
+		t.Fatal(err)
+	}
+	input := AttestationInput{KeyID: canonical, AttestationObjectB64: object, Challenge: "local challenge", AppID: testAppID}
+	if err := VerifyAttestation(ctx, input, store); err != nil {
+		t.Fatal(err)
+	}
+	if _, count, err := store.GetKey(ctx, canonical); err != nil || count != 17 {
+		t.Errorf("canonical counter=%d/%v", count, err)
+	}
+	if _, count, err := store.GetKey(ctx, alias); err != nil || count != 17 {
+		t.Errorf("legacy counter=%d/%v", count, err)
+	}
+	image := []byte("historical receipt")
+	assertion := AssertionInput{KeyID: canonical, AssertionB64: base64.StdEncoding.EncodeToString(signAssertion(t, key, buildAuthData(testAppID, 17), image)), ClientData: image, AppID: testAppID}
+	if err := VerifyAssertion(ctx, assertion, store); err == nil {
+		t.Error("legacy consumed assertion replay admitted")
+	}
+	assertion.AssertionB64 = base64.StdEncoding.EncodeToString(signAssertion(t, key, buildAuthData(testAppID, 18), image))
+	if err := VerifyAssertion(ctx, assertion, store); err != nil {
+		t.Errorf("fresh post-reconciliation assertion=%v", err)
+	}
+	// A legacy alias with another public key is never blindly trusted or merged.
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	wrongSPKI, _ := x509.MarshalPKIXPublicKey(&other.PublicKey)
+	conflict := NewMemStore()
+	conflict.PutKey(ctx, alias, wrongSPKI, 23)
+	if err := VerifyAttestation(ctx, input, conflict); err == nil {
+		t.Error("conflicting legacy key reconciled")
+	}
+	if _, _, err := conflict.GetKey(ctx, canonical); !errors.Is(err, ErrUnknownKey) {
+		t.Error("conflict minted canonical key")
+	}
+}
+
+func TestKeyIDAliasesCoverAcceptedHeaderSpellings(t *testing.T) {
+	raw := bytes.Repeat([]byte{255}, 32)
+	id := base64.StdEncoding.EncodeToString(raw)
+	aliases, err := KeyIDAliases(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliases) != 16 {
+		t.Fatalf("expected std/url padded/raw and four padbit variants, got%d", len(aliases))
+	}
+	for _, alias := range aliases {
+		got, err := CanonicalKeyID(alias)
+		if err != nil || got != id {
+			t.Fatalf("alias%q -> %q/%v", alias, got, err)
+		}
 	}
 }
 
