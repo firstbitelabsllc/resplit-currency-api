@@ -90,6 +90,7 @@ func TestScanKeyIDAliasesShareAccounting(t *testing.T) {
 }
 
 func TestAttestationStoreFailsClosed(t *testing.T) {
+	t.Setenv("FIRESTORE_EMULATOR_HOST", "")
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", t.TempDir()+"/missing-credentials.json")
 	store, err := newAttestationStore(context.Background(), "synthetic-no-network-project", true)
 	if err == nil || store != nil {

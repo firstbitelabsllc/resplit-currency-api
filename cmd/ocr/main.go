@@ -75,7 +75,13 @@ const (
 	envelopeVersion = 1
 	providerName    = "azure-di"
 
-	shutdownGracePeri = 10 * time.Second
+	shutdownGracePeri  = 10 * time.Second
+	serverWriteTimeout = 90 * time.Second
+	// Reserve+provider work has a finite budget even after client disconnect.
+	// Measured from handler entry, it includes upload/admission time and leaves
+	// the existing shutdown-grace margin below the write budget;
+	// uploaded bodies and lost HTTP responses recover through the success cache.
+	providerWorkTimeout = serverWriteTimeout - shutdownGracePeri
 
 	// meterScope names the OTel meter this binary emits its own instruments
 	// under (the ocr_scans_total counter). otelhttp emits its http.server.*
@@ -173,6 +179,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	srv := newServer(store, provider, logger, scanCounter)
+	srv.workContext = ctx
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -184,7 +191,7 @@ func run(logger *slog.Logger) error {
 		Handler:           srv.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      90 * time.Second,
+		WriteTimeout:      serverWriteTimeout,
 		IdleTimeout:       120 * time.Second,
 	}
 
@@ -228,6 +235,8 @@ type server struct {
 	scanCounter metric.Int64Counter
 	spendGate   *ocrSpendGate
 	coalescer   *scanCoalescer
+	workContext context.Context
+	workTimeout time.Duration
 }
 
 func newServer(store attest.Store, provider OCRProvider, logger *slog.Logger, scanCounter metric.Int64Counter) *server {
@@ -245,8 +254,10 @@ func newServerWithGate(store attest.Store, provider OCRProvider, logger *slog.Lo
 	}
 	return &server{
 		store: store, provider: provider, logger: logger, scanCounter: scanCounter,
-		spendGate: spendGate,
-		coalescer: newScanCoalescer(envDuration("OCR_SCAN_COALESCE_TTL", defaultScanCoalesceTTL), time.Now),
+		spendGate:   spendGate,
+		workContext: context.Background(),
+		workTimeout: providerWorkTimeout,
+		coalescer:   newScanCoalescer(envDuration("OCR_SCAN_COALESCE_TTL", defaultScanCoalesceTTL), time.Now),
 	}
 }
 
@@ -351,6 +362,7 @@ func deployProbeAuthorized(r *http.Request) bool {
 }
 
 func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
+	requestStarted := time.Now()
 	log := httpx.LoggerFrom(r.Context())
 	softFail := r.Header.Get(headerSoftFail) == "true"
 	scanID := newScanID()
@@ -428,12 +440,21 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// racing a completed-only cache lookup. Each identity retains its own durable
 	// reservation; identical images may still share the inner provider execution.
 	result, _, err := s.coalescer.Do(r.Context(), "identity:"+identity+":"+imageKey, func() ([]byte, error) {
-		fresh, reserveErr := s.spendGate.Reserve(r.Context(), identity, image)
-		if reserveErr != nil || !fresh {
+		workCtx, cancelWork := context.WithDeadline(context.WithoutCancel(r.Context()), requestStarted.Add(s.workTimeout))
+		// SIGTERM/SIGINT still cancels all work before the ten-second drain. A
+		// client disconnect cannot cancel the shared accepted Azure operation.
+		stopShutdown := context.AfterFunc(s.workContext, cancelWork)
+		defer stopShutdown()
+		defer cancelWork()
+		fresh, reserveErr := s.spendGate.Reserve(workCtx, identity, image)
+		if reserveErr != nil {
+			return nil, fmt.Errorf("%w: %w", errScanReservation, reserveErr)
+		}
+		if !fresh {
 			return nil, errScanReservation
 		}
-		result, _, providerErr := s.coalescer.Do(r.Context(), "image:"+imageKey, func() ([]byte, error) {
-			return s.provider.Scan(r.Context(), image)
+		result, _, providerErr := s.coalescer.Do(workCtx, "image:"+imageKey, func() ([]byte, error) {
+			return s.provider.Scan(workCtx, image)
 		})
 		if errors.Is(providerErr, azure.ErrNotSubmitted) {
 			// Only the reservation owner releases; a cancelled waiter cannot release

@@ -87,6 +87,30 @@ func TestEmulatorSecurityPersistence(t *testing.T) {
 	if _, count, err := b.GetKey(ctx, legacy); err != nil || count != 17 {
 		t.Fatalf("legacy counter=%d err=%v", count, err)
 	}
+	// Accounting also existed in nested SDK paths before this repair. Preserve
+	// both durable spend reservations and rate counts rather than mint a second
+	// flat namespace that could bill again or reset the daily cap.
+	legacyIdentity := "attest:legacy/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "/key"
+	legacyReservation := a.docs.(*clientDocStore).cli.Collection(collOCRIdempotency).Doc(idempotencyID(legacyIdentity, "old-hash"))
+	_, err = legacyReservation.Set(ctx, map[string]any{fieldCreatedAt: time.Now(), fieldExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh, err := b.ReserveOCR(ctx, legacyIdentity, "old-hash", time.Hour); err != nil || fresh {
+		t.Fatalf("legacy spend reservation lost: %v/%v", fresh, err)
+	}
+	legacyRate := a.docs.(*clientDocStore).cli.Collection(collRateCaps).Doc(rateCapID(legacyIdentity, windowStartUnix(time.Now(), time.Hour)))
+	_, err = legacyRate.Set(ctx, map[string]any{fieldCount: int64(17)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed, count, err := b.AllowRate(ctx, legacyIdentity, time.Hour, 17); err != nil || allowed || count != 18 {
+		t.Fatalf("legacy daily cap reset: %v/%d/%v", allowed, count, err)
+	}
+	if strings.Contains(a.docs.(*clientDocStore).document(collOCRIdempotency, idempotencyID("attest:"+id, "new-hash")).ID, "/") {
+		t.Fatal("invalid base64 accounting ID was not escaped")
+	}
+
 	identity := "attest:" + id
 	fresh, err := a.ReserveOCR(ctx, identity, "receipt-hash", time.Hour)
 	if err != nil || !fresh {
