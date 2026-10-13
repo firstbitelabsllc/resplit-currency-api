@@ -428,7 +428,10 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowed {
 		s.recordScan(r.Context(), "rate_limited", attestResult)
-		log.Warn("ocr spend gate blocked", slog.String("reason", reason), slog.Int64("count", count))
+		log.Warn("[OCR_MONITORING] scan blocked",
+			slog.String("signal", "scan"), slog.String("status", "rate_limited"),
+			slog.String("attest", attestResult), slog.String("reason", reason),
+			slog.Int64("count", count), slog.String("scan_id", scanID))
 		writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
 			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
 		})
@@ -462,7 +465,10 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 			defer cancel()
 			if releaseErr := s.spendGate.Release(cleanupCtx, identity, image); releaseErr != nil {
-				log.Warn("ocr spend gate release failed", slog.Any("error", releaseErr))
+				log.Warn("ocr spend gate failed closed",
+					slog.String("signal", "scan"), slog.String("status", "provider_error"),
+					slog.String("attest", attestResult), slog.String("reason", "idempotency_error"),
+					slog.String("scan_id", scanID), slog.Any("error", releaseErr))
 			}
 		}
 		return result, providerErr

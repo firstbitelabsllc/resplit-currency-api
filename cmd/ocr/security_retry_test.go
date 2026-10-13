@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/azure"
+	"github.com/firstbitelabsllc/resplit-currency-api/internal/ocrloki"
 )
 
 type pausedReservation struct {
@@ -288,4 +291,94 @@ func TestScanReservationFailureIsDiagnosableButResponseIsGeneric(t *testing.T) {
 	if w.Code != 429 || provider.calls != 0 || strings.Contains(w.Body.String(), "synthetic firestore") || !strings.Contains(logs.String(), "synthetic firestore reservation unavailable") {
 		t.Fatalf("status=%d provider=%d body=%s logs=%s", w.Code, provider.calls, w.Body, logs.String())
 	}
+}
+
+// Capture the real producer's record, then deliver it through the actual
+// Pub/Sub handler to a TLS Loki endpoint. Sensitive diagnostics are planted in
+// the producer and envelope; assertions inspect serialized outbound bytes.
+func TestSpendGateProducerRecordsForwardWithRedaction(t *testing.T) {
+	for _, mode := range []string{"blocked", "release-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.MessageKey {
+					a.Key = "message"
+				}
+				return a
+			}}))
+			gate := &ocrSpendGate{mem: newMemorySpendStore(time.Now), idempotencyTTL: time.Hour, killSwitch: mode == "blocked"}
+			provider := &countingProvider{err: azure.ErrNotSubmitted}
+			if mode == "release-failure" {
+				gate.store = &releaseFailureStore{newMemorySpendStore(time.Now)}
+			}
+			w := retryRequest(newServerWithGate(attest.NewMemStore(), provider, logger, nil, gate).routes(), context.Background())
+			want := 429
+			if mode == "release-failure" {
+				want = 502
+			}
+			if w.Code != want {
+				t.Fatalf("scan response=%d", w.Code)
+			}
+			var payload map[string]any
+			for _, line := range bytes.Split(logs.Bytes(), []byte("\n")) {
+				var p map[string]any
+				if json.Unmarshal(line, &p) != nil {
+					continue
+				}
+				m, _ := p["message"].(string)
+				if mode == "blocked" && (m == "ocr spend gate blocked" || m == "[OCR_MONITORING] scan blocked") || mode == "release-failure" && (m == "ocr spend gate release failed" || m == "ocr spend gate failed closed") {
+					payload = p
+					break
+				}
+			}
+			if payload == nil {
+				t.Fatalf("producer event missing: %s", logs.String())
+			}
+			payload["receipt_text"] = "PRIVATE RECEIPT"
+			payload["nested"] = map[string]any{"name": "Alice Secret"}
+			payload["key_id"] = "PRIVATE KEY"
+			payload["remote_ip"] = "203.0.113.31"
+			payload["count"] = float64(7)
+			var sent []byte
+			loki := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { sent, _ = io.ReadAll(r.Body); w.WriteHeader(204) }))
+			defer loki.Close()
+			forwarder, err := ocrloki.NewHandler(ocrloki.Config{LokiURL: loki.URL + "/loki/api/v1/push", AuthorizationHeader: "Authorization=Basic%20dXNlcjp0b2tlbg==", HTTPClient: loki.Client(), AllowTestEndpoint: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := map[string]any{"jsonPayload": payload, "resource": map[string]any{"type": "cloud_run_revision", "labels": map[string]any{"service_name": "ocr"}}, "logName": "projects/test/logs/run.googleapis.com%2Fstdout", "timestamp": time.Now().UTC().Format(time.RFC3339Nano), "severity": "WARNING"}
+			raw, _ := json.Marshal(entry)
+			body, _ := json.Marshal(map[string]any{"message": map[string]any{"data": base64.StdEncoding.EncodeToString(raw), "messageId": "1234567890"}})
+			rec := httptest.NewRecorder()
+			forwarder.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/pubsub/push", bytes.NewReader(body)))
+			if rec.Code != 204 || len(sent) == 0 {
+				t.Fatalf("producer event rejected by forwarder: status=%d record=%v", rec.Code, payload)
+			}
+			for _, secret := range []string{"PRIVATE RECEIPT", "Alice Secret", "PRIVATE KEY", "203.0.113.31", "synthetic release PRIVATE"} {
+				if bytes.Contains(sent, []byte(secret)) {
+					t.Fatalf("Loki payload leaked %q: %s", secret, sent)
+				}
+			}
+			var push struct {
+				Streams []struct{ Values [][2]string }
+			}
+			if err := json.Unmarshal(sent, &push); err != nil {
+				t.Fatal(err)
+			}
+			var out map[string]any
+			if err := json.Unmarshal([]byte(push.Streams[0].Values[0][1]), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out["reason"] == nil || out["status"] == nil || out["signal"] != "scan" || out["count"] != float64(7) {
+				t.Fatalf("safe rollout fields missing: %v", out)
+			}
+		})
+	}
+}
+
+type releaseFailureStore struct{ *memorySpendStore }
+
+func (p *releaseFailureStore) ReleaseOCR(context.Context, string, string) error {
+	return errors.New("synthetic release PRIVATE")
 }
