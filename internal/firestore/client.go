@@ -2,7 +2,9 @@ package firestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	gfs "cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
@@ -16,9 +18,9 @@ import (
 //
 // The returned store holds the *firestore.Client for the lifetime of the
 // process; Cloud Run tears the instance down on scale-to-zero, so no explicit
-// Close is wired. A failure here is surfaced to the caller, which falls back to
-// the in-memory store with a warning (see cmd/ocr/main.go) — telemetry and the
-// scan path keep working; only cross-instance attest replay durability is lost.
+// Close is wired. A failure here is surfaced to the caller. cmd/ocr fails closed
+// when GCP_PROJECT_ID is set: a MemStore fallback would silently disable
+// cross-instance App Attest replay durability and the spend gate.
 func NewFirestoreStore(ctx context.Context, projectID string) (*FirestoreStore, error) {
 	cli, err := gfs.NewClient(ctx, projectID)
 	if err != nil {
@@ -38,10 +40,31 @@ type clientDocStore struct {
 
 var _ docStore = (*clientDocStore)(nil)
 
+// document preserves existing valid SDK paths and escapes slash characters only
+// when the old path could never address a Firestore document. Standard base64
+// App Attest identities contain '/', including in accounting IDs. Blind Doc(id)
+// fails for an even number of path segments or an empty segment. Existing valid
+// nested paths must keep their stored replay counters; this is not a migration.
+// Canonical base64 identities contain no percent characters, so escaped invalid
+// identities cannot collide with the existing canonical identity namespace.
+func (a *clientDocStore) document(coll, id string) *gfs.DocumentRef {
+	parts := strings.Split(id, "/")
+	valid := len(parts)%2 == 1
+	for _, part := range parts {
+		if part == "" {
+			valid = false
+		}
+	}
+	if !valid {
+		id = strings.ReplaceAll(id, "/", "%2F")
+	}
+	return a.cli.Collection(coll).Doc(id)
+}
+
 // Get reads a document's fields, translating a Firestore NotFound into the
 // package's ErrNotFound sentinel.
 func (a *clientDocStore) Get(ctx context.Context, coll, id string) (map[string]any, error) {
-	snap, err := a.cli.Collection(coll).Doc(id).Get(ctx)
+	snap, err := a.document(coll, id).Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return nil, ErrNotFound
@@ -53,7 +76,7 @@ func (a *clientDocStore) Get(ctx context.Context, coll, id string) (map[string]a
 
 // Set overwrites (or creates) a document with the given fields.
 func (a *clientDocStore) Set(ctx context.Context, coll, id string, fields map[string]any) error {
-	_, err := a.cli.Collection(coll).Doc(id).Set(ctx, fields)
+	_, err := a.document(coll, id).Set(ctx, fields)
 	return err
 }
 
@@ -61,7 +84,7 @@ func (a *clientDocStore) Set(ctx context.Context, coll, id string, fields map[st
 // Firestore's AlreadyExists into ErrAlreadyExists — the idempotency primitive
 // ReserveOCR relies on.
 func (a *clientDocStore) Create(ctx context.Context, coll, id string, fields map[string]any) error {
-	_, err := a.cli.Collection(coll).Doc(id).Create(ctx, fields)
+	_, err := a.document(coll, id).Create(ctx, fields)
 	if err != nil && status.Code(err) == codes.AlreadyExists {
 		return ErrAlreadyExists
 	}
@@ -70,7 +93,7 @@ func (a *clientDocStore) Create(ctx context.Context, coll, id string, fields map
 
 // Delete removes a document, mapping Firestore NotFound onto ErrNotFound.
 func (a *clientDocStore) Delete(ctx context.Context, coll, id string) error {
-	_, err := a.cli.Collection(coll).Doc(id).Delete(ctx)
+	_, err := a.document(coll, id).Delete(ctx)
 	if err != nil && status.Code(err) == codes.NotFound {
 		return ErrNotFound
 	}
@@ -84,7 +107,7 @@ func (a *clientDocStore) Delete(ctx context.Context, coll, id string) error {
 // on contention, keeping the counter correct across concurrent Cloud Run
 // instances.
 func (a *clientDocStore) Increment(ctx context.Context, coll, id, field string, delta int64) (int64, error) {
-	ref := a.cli.Collection(coll).Doc(id)
+	ref := a.document(coll, id)
 	var newVal int64
 	err := a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error {
 		var cur int64
@@ -111,4 +134,42 @@ func (a *clientDocStore) Increment(ctx context.Context, coll, id, field string, 
 		return 0, fmt.Errorf("firestore increment %s/%s.%s: %w", coll, id, field, err)
 	}
 	return newVal, nil
+}
+
+// AdvanceInt64IfGreater sets field to next only when the document exists and the
+// stored value is strictly less than next. Used by App Attest signCount so two
+// concurrent /ocr/scan assertions cannot both advance (or regress) the counter.
+func (a *clientDocStore) AdvanceInt64IfGreater(ctx context.Context, coll, id, field string, next int64) error {
+	ref := a.document(coll, id)
+	err := a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error {
+		snap, err := tx.Get(ref)
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return ErrNotFound
+			}
+			return err
+		}
+		var cur int64
+		if v, derr := snap.DataAt(field); derr == nil {
+			switch n := v.(type) {
+			case int64:
+				cur = n
+			case int:
+				cur = int64(n)
+			case float64:
+				cur = int64(n)
+			}
+		}
+		if next <= cur {
+			return ErrConflict
+		}
+		return tx.Set(ref, map[string]any{field: next}, gfs.MergeAll)
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) {
+			return err
+		}
+		return fmt.Errorf("firestore advance %s/%s.%s: %w", coll, id, field, err)
+	}
+	return nil
 }

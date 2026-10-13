@@ -47,6 +47,11 @@ const (
 )
 
 // ErrMissingKey is returned by NewFromEnv when AZURE_OCR_KEY is unset/empty.
+// ErrNotSubmitted marks a proven local failure or explicit rejection before
+// Azure accepted an analysis. Transport errors, 5xx responses, and all polling
+// errors are ambiguous or already accepted and must retain spend reservations.
+var ErrNotSubmitted = errors.New("azure: analysis not submitted")
+
 var ErrMissingKey = errors.New("azure: " + envKey + " not set")
 
 // Config configures a Client. Endpoint and Key are required; the rest default.
@@ -135,7 +140,7 @@ type analyzeStatus struct {
 // by ctx; cancel/deadline aborts the poll loop.
 func (c *Client) Scan(ctx context.Context, image []byte) ([]byte, error) {
 	if len(image) == 0 {
-		return nil, errors.New("azure: empty image")
+		return nil, fmt.Errorf("%w: empty image", ErrNotSubmitted)
 	}
 
 	opLocation, err := c.submit(ctx, image)
@@ -150,7 +155,7 @@ func (c *Client) submit(ctx context.Context, image []byte) (string, error) {
 	url := fmt.Sprintf("%s/%s?api-version=%s", c.endpoint, modelPath, c.apiVersion)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(image))
 	if err != nil {
-		return "", fmt.Errorf("azure: build analyze request: %w", err)
+		return "", fmt.Errorf("%w: build analyze request: %v", ErrNotSubmitted, err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set(headerKey, c.key)
@@ -163,7 +168,13 @@ func (c *Client) submit(ctx context.Context, image []byte) (string, error) {
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return "", fmt.Errorf("azure: analyze returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("azure: analyze returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		switch resp.StatusCode {
+		case 400, 401, 403, 404, 405, 413, 415, 422, 429:
+			return "", fmt.Errorf("%w: %w", ErrNotSubmitted, err)
+		default:
+			return "", err
+		}
 	}
 
 	op := resp.Header.Get(headerOpLocation)

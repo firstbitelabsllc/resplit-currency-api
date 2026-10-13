@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
+	"github.com/firstbitelabsllc/resplit-currency-api/internal/azure"
 )
 
 func newTestServer(t *testing.T) http.Handler {
@@ -336,7 +337,7 @@ func TestScanSpendGateDuplicateAfterCoalesceTTLDoesNotRebill(t *testing.T) {
 // out for the full idempotency TTL after a transient Azure error.
 func TestScanSpendGateProviderFailureReleasesReservationForRetry(t *testing.T) {
 	t.Setenv("OCR_ALLOW_SOFT_FAIL", "true")
-	provider := &countingProvider{err: errors.New("azure: analyze failed")}
+	provider := &countingProvider{err: azure.ErrNotSubmitted}
 	gate := &ocrSpendGate{
 		mem:            newMemorySpendStore(time.Now),
 		window:         time.Hour,

@@ -49,7 +49,7 @@ func newOCRSpendGate(store attest.Store) *ocrSpendGate {
 	}
 }
 
-func (g *ocrSpendGate) Allow(ctx context.Context, identity string, image []byte, softFail bool) (bool, string, int64, error) {
+func (g *ocrSpendGate) CheckRate(ctx context.Context, identity string, softFail bool) (bool, string, int64, error) {
 	if g.killSwitch {
 		return false, "budget_kill_switch", 0, nil
 	}
@@ -71,21 +71,17 @@ func (g *ocrSpendGate) Allow(ctx context.Context, identity string, image []byte,
 		}
 	}
 
-	hash := sha256.Sum256(image)
-	fresh, err := g.spendStore().ReserveOCR(ctx, identity, hex.EncodeToString(hash[:]), g.idempotencyTTL)
-	if err != nil {
-		return false, "idempotency_error", 0, err
-	}
-	if !fresh {
-		return false, "duplicate_scan", 0, nil
-	}
 	return true, "allowed", 0, nil
 }
 
-// Release undoes Allow's ReserveOCR for image under identity. Call only when the
-// provider never produced a billable success, so the client can retry the same
-// bytes. Best-effort: errors are returned for logging, not for failing the
-// already-failed scan response.
+func (g *ocrSpendGate) Reserve(ctx context.Context, identity string, image []byte) (bool, error) {
+	hash := sha256.Sum256(image)
+	return g.spendStore().ReserveOCR(ctx, identity, hex.EncodeToString(hash[:]), g.idempotencyTTL)
+}
+
+// Release undoes the caller-owned reservation only after a proven submission
+// rejection. An accepted or ambiguous request may already be billed, even when
+// its polling or response failed, so those reservations must remain.
 func (g *ocrSpendGate) Release(ctx context.Context, identity string, image []byte) error {
 	if identity == "" {
 		identity = "unknown"

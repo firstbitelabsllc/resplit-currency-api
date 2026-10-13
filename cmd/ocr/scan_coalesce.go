@@ -73,9 +73,8 @@ func newScanCoalescer(ttl time.Duration, now func() time.Time) *scanCoalescer {
 // Do returns the provider result for `key`, running `fn` at most once for any
 // set of overlapping or closely-spaced callers.
 //
-// The bool reports whether this call actually executed `fn` — i.e. whether real
-// provider spend occurred. Callers use it for monitoring so a coalesced hit is
-// distinguishable from a fresh scan in the logs.
+// The bool reports whether this caller executed fn rather than joining or
+// replaying an existing result. Admission and provider calls use distinct keys.
 func (c *scanCoalescer) Do(ctx context.Context, key string, fn func() ([]byte, error)) ([]byte, bool, error) {
 	c.mu.Lock()
 
@@ -119,10 +118,8 @@ func (c *scanCoalescer) Do(ctx context.Context, key string, fn func() ([]byte, e
 	if call.err == nil {
 		c.done[key] = &scanEntry{result: call.result, expires: c.now().Add(c.ttl)}
 	}
-	// A failed call is intentionally NOT cached: a provider error must stay
-	// retryable, and caching it would convert one transient failure into a
-	// window where every retry of that image fails without touching the
-	// provider.
+	// Failed results are not cached. The durable per-identity reservation,
+	// rather than this short-lived cache, decides whether resubmission is safe.
 	c.sweepLocked()
 	c.mu.Unlock()
 

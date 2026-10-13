@@ -187,10 +187,12 @@ unchanged Worker in place: the Worker reads the canonical Pages asset host at
 request time, and the post-publish smoke still proves its public data path.
 Runtime-secret writes run only when a Worker/config/secret-sync input changes.
 GitHub-managed `SENTRY_DSN`, `CRON_SECRET`, and `AZURE_OCR_KEY` are re-synced
-on that path. `ANTHROPIC_API_KEY` intentionally remains Cloudflare-managed:
-rotate it in Cloudflare, then use the Worker-only recovery path to deploy and
-verify its continuity. GitHub does not expose secret value versions, so after
-rotating a GitHub-managed secret run:
+on that path. `ANTHROPIC_API_KEY`, `ZAI_API_KEY`, and `OPENROUTER_API_KEY` remain
+Cloudflare-managed. The workflow checks all four OCR key names and `secret_text`
+types before publication without importing or logging provider key values.
+After rotating a Cloudflare-managed key, use the Worker-only recovery path to
+deploy and verify continuity. GitHub does not expose secret value versions, so
+after rotating a GitHub-managed secret run:
 
 ```bash
 gh workflow run run.yml --repo firstbitelabsllc/resplit-currency-api -f force_worker_release=true
@@ -326,8 +328,40 @@ npx wrangler secret delete LLM_SCAN_KILL_SWITCH --config wrangler.jsonc --env=""
 
 Then scan a fresh image that has not been submitted during the preceding ten-minute
 cache window. Prove both that the response includes the LLM model in `aiModels` and
-that provider/accounting telemetry records one new Anthropic unit; a response alone
-can be a pre-disable cache replay and is not sufficient proof.
+that provider/accounting telemetry records one new LLM unit for the configured
+provider; a response alone can be a pre-disable cache replay and is not sufficient
+proof.
+
+#### Release the paid LLM receipt leg through OpenRouter
+
+The canonical root and named production config select the approved candidate:
+`LLM_SCAN_PROVIDER=zai`, `LLM_SCAN_BASE_URL=https://openrouter.ai/api/v1`,
+`LLM_SCAN_MODEL=google/gemini-2.5-flash-lite`, and `LLM_SCAN_MAX_EDGE=1280`.
+Internal `zai` selects the reused chat-completions transport in
+`worker/src/ocr/llm-provider.mjs`; OpenRouter is the billing provider. This route
+uses only `OPENROUTER_API_KEY` and refuses a missing key even when `ZAI_API_KEY`
+exists. Keep Azure, Anthropic, and Z.AI credentials for rollback. The canonical
+workflow verifies their names and types together with `OPENROUTER_API_KEY`
+before publication; it adds no OpenRouter secret upload path.
+
+After the approved release gate and deployment, `/health` reports the actual
+release in `release` and configured model in `ocr.model`. Compare both to the
+intended release; source config alone does not prove the live posture. The
+client's App Attest authentication and `/ocr/analyze` v2 response envelope remain
+unchanged, as do OCR accounting, caps, kill switches, and permanent migrations.
+A missing OpenRouter key leaves the LLM leg `provider_unavailable`; Azure can
+still return the existing HTTP 200 `partial` response. Monitor the configured
+model and actual LLM input edge (at most 1280). Served-model evidence remains
+unknown (`null`) when the provider omits its response model; neither the requested
+model nor `/health` proves which model served a scan.
+
+Rollback to the incumbent by restoring **both** `LLM_SCAN_MODEL=glm-5.3-flash`
+and `LLM_SCAN_BASE_URL=https://api.z.ai/api/coding/paas/v4` in root and named
+production together. Retain `LLM_SCAN_PROVIDER=zai` and `LLM_SCAN_MAX_EDGE=1280`,
+verify `ZAI_API_KEY` continuity, then use the approved release workflow and read
+back `/health`. Changing only the model or only the endpoint is not a valid
+rollback. Do not remove retained provider secrets, accounting bindings, or
+permanent migrations.
 
 #### Atomic OCR accounting rollout guard
 
