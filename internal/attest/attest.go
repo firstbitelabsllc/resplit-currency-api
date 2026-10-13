@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -64,16 +65,24 @@ func attestErr(code, format string, args ...any) *Error {
 // Store implementations should return this (wrapped or bare) from GetKey.
 var ErrUnknownKey = &Error{Code: "UNKNOWN_KEY", Msg: "attested key not found"}
 
+// ErrAlreadyExists is returned by CreateKey when keyID is already registered.
+// VerifyAttestation treats a matching SPKI as an idempotent success so client
+// retries stay safe, but never resets an advanced signCount via PutKey.
+var ErrAlreadyExists = &Error{Code: "ALREADY", Msg: "attested key already registered"}
+
 // Store abstracts the Firestore-backed attest_keys state.
 //
 // GetKey loads an attested key's SPKI public key and current signCount; it must
 // surface ErrUnknownKey when the keyID is absent. PutKey persists (or replaces)
-// a key with the given SPKI and signCount.
+// a key with the given SPKI and signCount. Production uses CreateKey
+// for registration and atomic AdvanceSignCount for assertion replay protection.
 //
 // TODO(gcp): provide a *firestore.Client-backed implementation in cmd/ocr.
 type Store interface {
 	GetKey(ctx context.Context, keyID string) (pubSPKI []byte, signCount uint32, err error)
 	PutKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error
+	AdvanceSignCount(ctx context.Context, keyID string, next uint32) error
+	CreateKey(ctx context.Context, keyID string, pubSPKI []byte, signCount uint32) error
 }
 
 // AssertionInput is the per-request payload verified at /ocr/scan.
@@ -108,6 +117,11 @@ type assertion struct {
 //  4. verify ECDSA-SHA256(authData || SHA256(clientData)) against the stored key.
 //  5. persist the advanced signCount.
 func VerifyAssertion(ctx context.Context, in AssertionInput, store Store) error {
+	keyID, err := CanonicalKeyID(in.KeyID)
+	if err != nil {
+		return err
+	}
+	in.KeyID = keyID
 	raw, err := decodeBase64(in.AssertionB64)
 	if err != nil {
 		return attestErr("ASSERT_B64", "assertion not valid base64: %v", err)
@@ -142,7 +156,8 @@ func VerifyAssertion(ctx context.Context, in AssertionInput, store Store) error 
 		return attestErr("UNKNOWN_KEY", "store GetKey failed: %v", err)
 	}
 
-	// signCount must strictly advance (replay guard).
+	// Cheap pre-check before ECDSA. The authoritative race-safe advance is
+	// AdvanceSignCount below — this only fails closed on clearly stale counters.
 	if ad.signCount <= signCount {
 		return attestErr("REPLAY", "signCount %d does not advance stored %d", ad.signCount, signCount)
 	}
@@ -160,8 +175,16 @@ func VerifyAssertion(ctx context.Context, in AssertionInput, store Store) error 
 		return attestErr("SIG", "assertion signature invalid")
 	}
 
-	if err := store.PutKey(ctx, in.KeyID, spki, ad.signCount); err != nil {
-		return attestErr("STORE", "store PutKey failed: %v", err)
+	// Atomic counter advance (Worker Durable Object equivalent). Must not be a
+	// blind PutKey: concurrent scans sharing one keyId would otherwise both
+	// bill Azure, and a lower signCount write winning a race would reopen a
+	// higher assertion already consumed.
+	if err := store.AdvanceSignCount(ctx, in.KeyID, ad.signCount); err != nil {
+		var ae *Error
+		if errors.As(err, &ae) {
+			return ae
+		}
+		return attestErr("STORE", "store AdvanceSignCount failed: %v", err)
 	}
 	return nil
 }
@@ -278,6 +301,48 @@ func parseECDSAPublicKey(spki []byte) (*ecdsa.PublicKey, error) {
 
 // decodeBase64 accepts both standard and URL-safe base64, padded or unpadded —
 // mirroring the Worker's b64ToBytes which normalised -/_ before atob.
+// CanonicalKeyID preserves the standard-base64 identity emitted by iOS while
+// collapsing equivalent URL-safe, unpadded and ignored-newline encodings.
+// Every registration, assertion and accounting path uses this same identity.
+func CanonicalKeyID(keyID string) (string, error) {
+	decoded, err := decodeBase64(keyID)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", attestErr("KEYID", "keyId must encode a 32-byte App Attest key hash")
+	}
+	return base64.StdEncoding.EncodeToString(decoded), nil
+}
+
+// KeyIDAliases enumerates the header-safe spellings previously accepted by
+// decodeBase64, including its ignored trailing pad bits. CR/LF spellings cannot
+// be transmitted as HTTP header values and are not legacy scan identities.
+func KeyIDAliases(keyID string) ([]string, error) {
+	canonical, err := CanonicalKeyID(keyID)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := base64.StdEncoding.DecodeString(canonical)
+	seen := map[string]bool{}
+	var aliases []string
+	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
+		encoded := encoding.EncodeToString(raw)
+		alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+		if encoding == base64.URLEncoding {
+			alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+		}
+		index := strings.IndexByte(alphabet, encoded[len(encoded)-2])
+		for pad := 0; pad < 4; pad++ {
+			spelling := encoded[:len(encoded)-2] + string(alphabet[index&^3|pad])
+			for _, s := range []string{spelling + "=", spelling} {
+				if !seen[s] {
+					seen[s] = true
+					aliases = append(aliases, s)
+				}
+			}
+		}
+	}
+	return aliases, nil
+}
+
 func decodeBase64(s string) ([]byte, error) {
 	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
 		return b, nil

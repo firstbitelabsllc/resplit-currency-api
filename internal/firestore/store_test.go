@@ -18,6 +18,54 @@ type fakeDocs struct {
 	data map[string]map[string]map[string]any
 }
 
+type fakeTransaction struct{ f *fakeDocs }
+
+func (t *fakeTransaction) GetAll(coll string, ids []string) (map[string]map[string]any, error) {
+	all := map[string]map[string]any{}
+	for _, id := range ids {
+		if doc, ok := t.f.coll(coll)[id]; ok {
+			all[id] = doc
+		}
+	}
+	return all, nil
+}
+func (t *fakeTransaction) Set(coll, id string, fields map[string]any) error {
+	doc, ok := t.f.coll(coll)[id]
+	if !ok {
+		doc = map[string]any{}
+		t.f.coll(coll)[id] = doc
+	}
+	for k, v := range fields {
+		doc[k] = v
+	}
+	return nil
+}
+func (t *fakeTransaction) Create(coll, id string, fields map[string]any) error {
+	if _, ok := t.f.coll(coll)[id]; ok {
+		return ErrAlreadyExists
+	}
+	return t.Set(coll, id, fields)
+}
+func (f *fakeDocs) Transact(ctx context.Context, fn func(docTransaction) error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	copy := newFakeDocs()
+	for coll, docs := range f.data {
+		for id, doc := range docs {
+			fields := map[string]any{}
+			for k, v := range doc {
+				fields[k] = v
+			}
+			copy.coll(coll)[id] = fields
+		}
+	}
+	if err := fn(&fakeTransaction{copy}); err != nil {
+		return err
+	}
+	f.data = copy.data
+	return nil
+}
+
 func newFakeDocs() *fakeDocs {
 	return &fakeDocs{data: make(map[string]map[string]map[string]any)}
 }
@@ -71,22 +119,15 @@ func (f *fakeDocs) Create(_ context.Context, coll, id string, fields map[string]
 	return nil
 }
 
-func (f *fakeDocs) Increment(_ context.Context, coll, id, field string, delta int64) (int64, error) {
+func (f *fakeDocs) Delete(_ context.Context, coll, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c := f.coll(coll)
-	doc, ok := c[id]
-	if !ok {
-		doc = make(map[string]any)
-		c[id] = doc
+	if _, ok := c[id]; !ok {
+		return ErrNotFound
 	}
-	var cur int64
-	if v, ok := doc[field].(int64); ok {
-		cur = v
-	}
-	cur += delta
-	doc[field] = cur
-	return cur, nil
+	delete(c, id)
+	return nil
 }
 
 func TestFirestoreStore_KeyRoundTrip(t *testing.T) {
@@ -129,6 +170,43 @@ func TestFirestoreStore_KeyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFirestoreStore_AdvanceSignCountIsAtomicAndMonotonic(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(newFakeDocs())
+	const keyID = "advance-once"
+	spki := []byte{0x30, 0x59, 0x02}
+
+	if err := store.PutKey(ctx, keyID, spki, 10); err != nil {
+		t.Fatalf("PutKey: %v", err)
+	}
+	if err := store.AdvanceSignCount(ctx, keyID, 12); err != nil {
+		t.Fatalf("AdvanceSignCount 12: %v", err)
+	}
+	err := store.AdvanceSignCount(ctx, keyID, 12)
+	var ae *attest.Error
+	if !errors.As(err, &ae) || ae.Code != "REPLAY" {
+		t.Fatalf("second AdvanceSignCount 12: want REPLAY, got %v", err)
+	}
+	if err := store.AdvanceSignCount(ctx, keyID, 11); err == nil {
+		t.Fatal("AdvanceSignCount 11 after 12: want error (no regression)")
+	}
+	_, count, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if count != 12 {
+		t.Fatalf("signCount = %d, want 12", count)
+	}
+
+	gotSPKI, _, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey spki: %v", err)
+	}
+	if string(gotSPKI) != string(spki) {
+		t.Fatalf("AdvanceSignCount must not clobber pubSPKI")
+	}
+}
+
 // TestFirestoreStore_SatisfiesAttestStore drives the store through the real
 // attest.Store-consuming attestation flow shape (Put then Get), proving the
 // concrete type is usable wherever the interface is required.
@@ -138,11 +216,14 @@ func TestFirestoreStore_SatisfiesAttestStore(t *testing.T) {
 	if err := s.PutKey(ctx, "k", []byte("spki"), 1); err != nil {
 		t.Fatalf("PutKey via interface: %v", err)
 	}
+	if err := s.AdvanceSignCount(ctx, "k", 2); err != nil {
+		t.Fatalf("AdvanceSignCount via interface: %v", err)
+	}
 	spki, count, err := s.GetKey(ctx, "k")
 	if err != nil {
 		t.Fatalf("GetKey via interface: %v", err)
 	}
-	if string(spki) != "spki" || count != 1 {
+	if string(spki) != "spki" || count != 2 {
 		t.Fatalf("round-trip via interface: got (%q,%d)", spki, count)
 	}
 }
@@ -198,6 +279,37 @@ func TestReserveOCR_Idempotency(t *testing.T) {
 	}
 	if !exp.Equal(fixed.Add(ttl)) {
 		t.Errorf("expiresAt: got %v want %v", exp, fixed.Add(ttl))
+	}
+}
+
+func TestReleaseOCR_AllowsRereserve(t *testing.T) {
+	ctx := context.Background()
+	docs := newFakeDocs()
+	fixed := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	store := NewStore(docs)
+	store.now = func() time.Time { return fixed }
+
+	const (
+		device = "dev-release"
+		hash   = "deadbeef"
+		ttl    = time.Hour
+	)
+
+	if fresh, err := store.ReserveOCR(ctx, device, hash, ttl); err != nil || !fresh {
+		t.Fatalf("ReserveOCR #1: fresh=%v err=%v", fresh, err)
+	}
+	if err := store.ReleaseOCR(ctx, device, hash); err != nil {
+		t.Fatalf("ReleaseOCR: %v", err)
+	}
+	if err := store.ReleaseOCR(ctx, device, hash); err != nil {
+		t.Fatalf("ReleaseOCR missing: %v (want nil)", err)
+	}
+	fresh, err := store.ReserveOCR(ctx, device, hash, ttl)
+	if err != nil {
+		t.Fatalf("ReserveOCR after release: %v", err)
+	}
+	if !fresh {
+		t.Fatal("ReserveOCR after release: want fresh=true")
 	}
 }
 
@@ -288,5 +400,29 @@ func TestWindowStartUnix(t *testing.T) {
 	// Zero/sub-second window falls back to the raw unix timestamp.
 	if got := windowStartUnix(t1, 0); got != 960 {
 		t.Errorf("zero window: got %d want 960", got)
+	}
+}
+
+func TestFirestoreStore_CreateKeyDoesNotOverwrite(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(newFakeDocs())
+	const keyID = "create-once"
+	spki := []byte{0x30, 0x59, 0x01}
+
+	if err := store.CreateKey(ctx, keyID, spki, 0); err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+	if err := store.PutKey(ctx, keyID, spki, 11); err != nil {
+		t.Fatalf("PutKey advance: %v", err)
+	}
+	if err := store.CreateKey(ctx, keyID, spki, 0); !errors.Is(err, attest.ErrAlreadyExists) {
+		t.Fatalf("second CreateKey: want attest.ErrAlreadyExists, got %v", err)
+	}
+	_, count, err := store.GetKey(ctx, keyID)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if count != 11 {
+		t.Fatalf("signCount after failed CreateKey = %d, want 11", count)
 	}
 }

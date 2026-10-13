@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -74,7 +75,18 @@ const (
 	envelopeVersion = 1
 	providerName    = "azure-di"
 
-	shutdownGracePeri = 10 * time.Second
+	shutdownGracePeri  = 10 * time.Second
+	serverWriteTimeout = 90 * time.Second
+	// Within Cloud Run's single ten-second termination window, reserve one
+	// second to finish HTTP responses after cancelling work and one to flush
+	// telemetry. These phases share an absolute deadline, never fresh windows.
+	shutdownResponseBudget = time.Second
+	shutdownFlushBudget    = time.Second
+	// Reserve+provider work has a finite budget even after client disconnect.
+	// Measured from handler entry, it includes upload/admission time and leaves
+	// the existing shutdown-grace margin below the write budget;
+	// uploaded bodies and lost HTTP responses recover through the success cache.
+	providerWorkTimeout = serverWriteTimeout - shutdownGracePeri
 
 	// meterScope names the OTel meter this binary emits its own instruments
 	// under (the ocr_scans_total counter). otelhttp emits its http.server.*
@@ -106,6 +118,7 @@ func main() {
 func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	var shutdownDeadline time.Time
 
 	// OpenTelemetry: when OTEL_EXPORTER_OTLP_ENDPOINT is set (Cloud Run / Grafana
 	// Cloud), stand up OTLP/HTTP trace + metric providers reading the standard
@@ -130,7 +143,10 @@ func run(logger *slog.Logger) error {
 	}
 	// Flush trace + metric providers on shutdown (SIGINT/SIGTERM). nil-safe.
 	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeri)
+		if shutdownDeadline.IsZero() {
+			shutdownDeadline = time.Now().Add(shutdownGracePeri)
+		}
+		flushCtx, cancel := context.WithDeadline(context.Background(), shutdownDeadline)
 		defer cancel()
 		if err := tel.Shutdown(flushCtx); err != nil {
 			logger.Warn("otel shutdown error", slog.Any("error", err))
@@ -148,19 +164,13 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// Live device-key store (Firestore) with a graceful fallback to an in-memory
-	// store when no project / credentials are present (local dev, tests).
-	var store attest.Store
-	if pid := os.Getenv("GCP_PROJECT_ID"); pid != "" {
-		fs, err := firestore.NewFirestoreStore(ctx, pid)
-		if err != nil {
-			logger.Warn("firestore store unavailable, using in-memory", slog.Any("error", err))
-			store = attest.NewMemStore()
-		} else {
-			store = fs
-		}
-	} else {
-		store = attest.NewMemStore()
+	// Live device-key store (Firestore). Local/dev (no GCP_PROJECT_ID) keeps the
+	// in-memory store. Production MUST fail closed: MemStore is per-instance, so
+	// a silent fallback would drop cross-instance App Attest replay durability
+	// and the AllowRate/ReserveOCR spend gate (MemStore is not an ocrSpendStore).
+	store, err := newAttestationStore(ctx, os.Getenv("GCP_PROJECT_ID"), os.Getenv("K_SERVICE") != "")
+	if err != nil {
+		return err
 	}
 
 	// Live Azure DI provider (key from Secret Manager via AZURE_OCR_KEY). Falls
@@ -178,6 +188,9 @@ func run(logger *slog.Logger) error {
 	}
 
 	srv := newServer(store, provider, logger, scanCounter)
+	workCtx, cancelWork := context.WithCancel(context.Background())
+	defer cancelWork()
+	srv.workContext = workCtx
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -189,7 +202,7 @@ func run(logger *slog.Logger) error {
 		Handler:           srv.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      90 * time.Second,
+		WriteTimeout:      serverWriteTimeout,
 		IdleTimeout:       120 * time.Second,
 	}
 
@@ -205,11 +218,39 @@ func run(logger *slog.Logger) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
+		shutdownDeadline = time.Now().Add(shutdownGracePeri)
 		logger.Info("shutdown signal received, draining")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeri)
+		// SIGTERM stops new HTTP admission first. Accepted scans may finish
+		// until the work cutoff; stalled polling is then cancelled in time to
+		// write its terminal response and flush telemetry before platform kill.
+		drainCtx, cancelDrain := context.WithDeadline(context.Background(), shutdownDeadline.Add(-shutdownResponseBudget-shutdownFlushBudget))
+		defer cancelDrain()
+		stopCancel := context.AfterFunc(drainCtx, cancelWork)
+		defer stopCancel()
+		shutdownCtx, cancel := context.WithDeadline(context.Background(), shutdownDeadline.Add(-shutdownFlushBudget))
 		defer cancel()
-		return httpSrv.Shutdown(shutdownCtx)
+		err := httpSrv.Shutdown(shutdownCtx)
+		cancelWork()
+		if err != nil {
+			// Shutdown's deadline does not close active connections itself.
+			return errors.Join(err, httpSrv.Close())
+		}
+		return nil
 	}
+}
+
+func newAttestationStore(ctx context.Context, projectID string, cloudRun bool) (attest.Store, error) {
+	if projectID == "" {
+		if cloudRun {
+			return nil, fmt.Errorf("Firestore project is required on Cloud Run")
+		}
+		return attest.NewMemStore(), nil
+	}
+	store, err := firestore.NewFirestoreStore(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("Firestore store required when GCP_PROJECT_ID is set: %w", err)
+	}
+	return store, nil
 }
 
 type server struct {
@@ -219,6 +260,8 @@ type server struct {
 	scanCounter metric.Int64Counter
 	spendGate   *ocrSpendGate
 	coalescer   *scanCoalescer
+	workContext context.Context
+	workTimeout time.Duration
 }
 
 func newServer(store attest.Store, provider OCRProvider, logger *slog.Logger, scanCounter metric.Int64Counter) *server {
@@ -236,8 +279,10 @@ func newServerWithGate(store attest.Store, provider OCRProvider, logger *slog.Lo
 	}
 	return &server{
 		store: store, provider: provider, logger: logger, scanCounter: scanCounter,
-		spendGate: spendGate,
-		coalescer: newScanCoalescer(envDuration("OCR_SCAN_COALESCE_TTL", defaultScanCoalesceTTL), time.Now),
+		spendGate:   spendGate,
+		workContext: context.Background(),
+		workTimeout: providerWorkTimeout,
+		coalescer:   newScanCoalescer(envDuration("OCR_SCAN_COALESCE_TTL", defaultScanCoalesceTTL), time.Now),
 	}
 }
 
@@ -342,6 +387,7 @@ func deployProbeAuthorized(r *http.Request) bool {
 }
 
 func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
+	requestStarted := time.Now()
 	log := httpx.LoggerFrom(r.Context())
 	softFail := r.Header.Get(headerSoftFail) == "true"
 	scanID := newScanID()
@@ -377,6 +423,11 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, "missing key id or assertion")
 			return
 		}
+		keyID, err = attest.CanonicalKeyID(keyID)
+		if err != nil {
+			httpx.WriteError(w, attestStatus(err), "invalid key id")
+			return
+		}
 		in := attest.AssertionInput{KeyID: keyID, AssertionB64: assertionB64, ClientData: image, AppID: attest.AppID}
 		if err := attest.VerifyAssertion(r.Context(), in, s.store); err != nil {
 			log.Warn("scan rejected", slog.Any("error", err))
@@ -391,7 +442,8 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	imageKey := scanImageKey(image)
 
 	identity := scanGateIdentity(r, softFail, keyID)
-	allowed, reason, count, err := s.spendGate.Allow(r.Context(), identity, image, softFail)
+	identityImageKey := "identity:" + identity + ":" + imageKey
+	allowed, reason, count, err := s.spendGate.CheckRate(r.Context(), identity, softFail)
 	if err != nil {
 		s.recordScan(r.Context(), "rate_limited", attestResult)
 		log.Error("ocr spend gate failed closed", slog.Any("error", err), slog.String("scan_id", scanID), slog.String("reason", reason))
@@ -400,48 +452,81 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if !allowed {
-		// A same-image repeat is a RECOVERY attempt, not abuse. The reservation
-		// that produces `duplicate_scan` is taken before the provider runs and is
-		// never released, so a client whose transport died mid-upload used to get
-		// 429 on every retry (prod event 82d20dc195dd466a80ba6c552434d486). Serve
-		// the coalesced/cached answer instead — still exactly one provider
-		// execution, but the retry now completes. Genuine rate caps
-		// (`rate_cap`, `budget_kill_switch`, `rate_error`) still block.
-		if reason == "duplicate_scan" {
-			if cached, ok := s.coalescer.Lookup(imageKey); ok {
-				s.recordScan(r.Context(), "ok", attestResult)
-				log.Info("[OCR_MONITORING] scan",
-					slog.String("signal", "scan"), slog.String("status", "ok"),
-					slog.String("attest", attestResult), slog.String("provider", providerName),
-					slog.String("scan_id", scanID), slog.Bool("coalesced", true),
-					slog.String("client_version", r.Header.Get("X-Resplit-Client-Version")))
-				writeEnvelope(w, http.StatusOK, scanEnvelope{
-					V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "ok",
-					Raw: json.RawMessage(cached),
-				})
-				return
+	var result []byte
+	var recovered bool
+	if !allowed && reason == "rate_cap" && !softFail {
+		// Every caller still crosses authentication and rate accounting. Only a
+		// capped authenticated identity's exact existing scan may recover; this
+		// lookup cannot reserve spend or start a provider execution.
+		result, recovered, err = s.coalescer.Recover(r.Context(), identityImageKey)
+		if !recovered {
+			// A different identity's owner may have completed after this
+			// identity's join deadline. Only a retained own reservation plus a
+			// successful shared result admits replay; never mint a reservation.
+			if cached, ok := s.coalescer.Lookup("image:" + imageKey); ok {
+				reserved, lookupErr := s.spendGate.HasReservation(r.Context(), identity, imageKey)
+				if lookupErr != nil {
+					log.Error("ocr spend gate failed closed", slog.Any("error", lookupErr), slog.String("reason", "idempotency_error"))
+				} else if reserved {
+					result, recovered = cached, true
+				}
 			}
-			// No answer to replay: the first attempt never completed (body never
-			// fully arrived, or it failed). Fall through to the provider via the
-			// coalescer, which still guarantees one execution per image.
-		} else {
-			s.recordScan(r.Context(), "rate_limited", attestResult)
-			log.Warn("[OCR_MONITORING] scan blocked",
-				slog.String("signal", "scan"), slog.String("status", "rate_limited"),
-				slog.String("attest", attestResult), slog.String("reason", reason),
-				slog.Int64("count", count), slog.String("scan_id", scanID))
-			writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
-				V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
-			})
-			return
 		}
 	}
+	if !allowed && !recovered {
+		s.recordScan(r.Context(), "rate_limited", attestResult)
+		log.Warn("[OCR_MONITORING] scan blocked",
+			slog.String("signal", "scan"), slog.String("status", "rate_limited"),
+			slog.String("attest", attestResult), slog.String("reason", reason),
+			slog.Int64("count", count), slog.String("scan_id", scanID))
+		writeEnvelope(w, http.StatusTooManyRequests, scanEnvelope{
+			V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "rate_limited",
+		})
+		return
+	}
 
-	result, executed, err := s.coalescer.Do(r.Context(), imageKey, func() ([]byte, error) {
-		return s.provider.Scan(r.Context(), image)
-	})
-	_ = executed
+	// Publish the identity's in-flight call BEFORE reserving its spend slot. A
+	// retry arriving while Firestore is reserving joins this result rather than
+	// racing a completed-only cache lookup. Each identity retains its own durable
+	// reservation; identical images may still share the inner provider execution.
+	if !recovered {
+		result, _, err = s.coalescer.Do(r.Context(), identityImageKey, func() ([]byte, error) {
+			workCtx, cancelWork := context.WithDeadline(context.WithoutCancel(r.Context()), requestStarted.Add(s.workTimeout))
+			// The server cancels stalled work near the end of graceful drain. A
+			// client disconnect cannot cancel the shared accepted Azure operation.
+			stopShutdown := context.AfterFunc(s.workContext, cancelWork)
+			defer stopShutdown()
+			defer cancelWork()
+			fresh, reserveErr := s.spendGate.Reserve(workCtx, identity, image)
+			if reserveErr != nil {
+				return nil, fmt.Errorf("%w: %w", errScanReservation, reserveErr)
+			}
+			if !fresh {
+				if !softFail {
+					if cached, ok := s.coalescer.Lookup("image:" + imageKey); ok {
+						return cached, nil
+					}
+				}
+				return nil, errScanReservation
+			}
+			result, _, providerErr := s.coalescer.Do(workCtx, "image:"+imageKey, func() ([]byte, error) {
+				return s.provider.Scan(workCtx, image)
+			})
+			if errors.Is(providerErr, azure.ErrNotSubmitted) {
+				// Only the reservation owner releases; a cancelled waiter cannot release
+				// another request's slot. Bound cleanup independently of caller cancellation.
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+				defer cancel()
+				if releaseErr := s.spendGate.Release(cleanupCtx, identity, image); releaseErr != nil {
+					log.Warn("ocr spend gate failed closed",
+						slog.String("signal", "scan"), slog.String("status", "provider_error"),
+						slog.String("attest", attestResult), slog.String("reason", "idempotency_error"),
+						slog.String("scan_id", scanID), slog.Any("error", releaseErr))
+				}
+			}
+			return result, providerErr
+		})
+	}
 	if err != nil {
 		status := scanErrorStatus(err)
 		code := http.StatusBadGateway
@@ -504,7 +589,12 @@ func (s *server) recordScan(ctx context.Context, status, attestResult string) {
 // The Azure DI provider surfaces a 429 as "azure: analyze returned 429: …", so
 // a rate-limit shows up as status="rate_limited"; everything else is a generic
 // provider_error.
+var errScanReservation = errors.New("ocr: existing or unavailable spend reservation")
+
 func scanErrorStatus(err error) string {
+	if errors.Is(err, errScanReservation) {
+		return "rate_limited"
+	}
 	if err != nil && strings.Contains(err.Error(), "429") {
 		return "rate_limited"
 	}
@@ -524,7 +614,7 @@ func attestStatus(err error) int {
 	switch ae.Code {
 	case "UNKNOWN_KEY":
 		return http.StatusUnauthorized
-	case "REPLAY", "SIG", "NONCE", "RPID", "CHAIN", "COUNT", "NOKEY", "FMT":
+	case "REPLAY", "SIG", "NONCE", "RPID", "CHAIN", "COUNT", "NOKEY", "FMT", "ALREADY", "KEYID", "AAGUID":
 		return http.StatusForbidden
 	case "CBOR_BAD", "ASSERT_B64", "ASSERT_SHAPE", "ATT_B64", "ATT_SHAPE", "AUTHDATA":
 		return http.StatusBadRequest

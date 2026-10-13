@@ -3,6 +3,7 @@ package firestore
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gfs "cloud.google.com/go/firestore"
 	"google.golang.org/grpc/codes"
@@ -16,9 +17,9 @@ import (
 //
 // The returned store holds the *firestore.Client for the lifetime of the
 // process; Cloud Run tears the instance down on scale-to-zero, so no explicit
-// Close is wired. A failure here is surfaced to the caller, which falls back to
-// the in-memory store with a warning (see cmd/ocr/main.go) — telemetry and the
-// scan path keep working; only cross-instance attest replay durability is lost.
+// Close is wired. A failure here is surfaced to the caller. cmd/ocr fails closed
+// when GCP_PROJECT_ID is set: a MemStore fallback would silently disable
+// cross-instance App Attest replay durability and the spend gate.
 func NewFirestoreStore(ctx context.Context, projectID string) (*FirestoreStore, error) {
 	cli, err := gfs.NewClient(ctx, projectID)
 	if err != nil {
@@ -38,10 +39,64 @@ type clientDocStore struct {
 
 var _ docStore = (*clientDocStore)(nil)
 
+type clientTransaction struct {
+	a  *clientDocStore
+	tx *gfs.Transaction
+}
+
+func (a *clientDocStore) Transact(ctx context.Context, fn func(docTransaction) error) error {
+	return a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error { return fn(&clientTransaction{a, tx}) })
+}
+
+func (t *clientTransaction) GetAll(coll string, ids []string) (map[string]map[string]any, error) {
+	refs := make([]*gfs.DocumentRef, len(ids))
+	for i, id := range ids {
+		refs[i] = t.a.document(coll, id)
+	}
+	snaps, err := t.tx.GetAll(refs)
+	if err != nil {
+		return nil, err
+	}
+	all := map[string]map[string]any{}
+	for i, snap := range snaps {
+		if snap.Exists() {
+			all[ids[i]] = snap.Data()
+		}
+	}
+	return all, nil
+}
+func (t *clientTransaction) Set(coll, id string, fields map[string]any) error {
+	return t.tx.Set(t.a.document(coll, id), fields, gfs.MergeAll)
+}
+func (t *clientTransaction) Create(coll, id string, fields map[string]any) error {
+	return t.tx.Create(t.a.document(coll, id), fields)
+}
+
+// document preserves existing valid SDK paths and escapes slash characters only
+// when the old path could never address a Firestore document. Standard base64
+// App Attest identities contain '/', including in accounting IDs. Blind Doc(id)
+// fails for an even number of path segments or an empty segment. Existing valid
+// nested paths must keep their stored replay counters; this is not a migration.
+// Canonical base64 identities contain no percent characters, so escaped invalid
+// identities cannot collide with the existing canonical identity namespace.
+func (a *clientDocStore) document(coll, id string) *gfs.DocumentRef {
+	parts := strings.Split(id, "/")
+	valid := len(parts)%2 == 1
+	for _, part := range parts {
+		if part == "" {
+			valid = false
+		}
+	}
+	if !valid {
+		id = strings.ReplaceAll(id, "/", "%2F")
+	}
+	return a.cli.Collection(coll).Doc(id)
+}
+
 // Get reads a document's fields, translating a Firestore NotFound into the
 // package's ErrNotFound sentinel.
 func (a *clientDocStore) Get(ctx context.Context, coll, id string) (map[string]any, error) {
-	snap, err := a.cli.Collection(coll).Doc(id).Get(ctx)
+	snap, err := a.document(coll, id).Get(ctx)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
 			return nil, ErrNotFound
@@ -53,7 +108,7 @@ func (a *clientDocStore) Get(ctx context.Context, coll, id string) (map[string]a
 
 // Set overwrites (or creates) a document with the given fields.
 func (a *clientDocStore) Set(ctx context.Context, coll, id string, fields map[string]any) error {
-	_, err := a.cli.Collection(coll).Doc(id).Set(ctx, fields)
+	_, err := a.document(coll, id).Set(ctx, fields)
 	return err
 }
 
@@ -61,45 +116,18 @@ func (a *clientDocStore) Set(ctx context.Context, coll, id string, fields map[st
 // Firestore's AlreadyExists into ErrAlreadyExists — the idempotency primitive
 // ReserveOCR relies on.
 func (a *clientDocStore) Create(ctx context.Context, coll, id string, fields map[string]any) error {
-	_, err := a.cli.Collection(coll).Doc(id).Create(ctx, fields)
+	_, err := a.document(coll, id).Create(ctx, fields)
 	if err != nil && status.Code(err) == codes.AlreadyExists {
 		return ErrAlreadyExists
 	}
 	return err
 }
 
-// Increment atomically adds delta to an integer field and returns the new value.
-// It runs a Firestore transaction (read-modify-write) rather than the fire-and-
-// forget firestore.Increment so the caller gets the post-increment count back —
-// required by AllowRate to compare against a cap. Firestore retries the closure
-// on contention, keeping the counter correct across concurrent Cloud Run
-// instances.
-func (a *clientDocStore) Increment(ctx context.Context, coll, id, field string, delta int64) (int64, error) {
-	ref := a.cli.Collection(coll).Doc(id)
-	var newVal int64
-	err := a.cli.RunTransaction(ctx, func(_ context.Context, tx *gfs.Transaction) error {
-		var cur int64
-		snap, err := tx.Get(ref)
-		if err != nil {
-			if status.Code(err) != codes.NotFound {
-				return err
-			}
-			// Absent document: counter starts at zero.
-		} else if v, derr := snap.DataAt(field); derr == nil {
-			switch n := v.(type) {
-			case int64:
-				cur = n
-			case int:
-				cur = int64(n)
-			case float64:
-				cur = int64(n)
-			}
-		}
-		newVal = cur + delta
-		return tx.Set(ref, map[string]any{field: newVal}, gfs.MergeAll)
-	})
-	if err != nil {
-		return 0, fmt.Errorf("firestore increment %s/%s.%s: %w", coll, id, field, err)
+// Delete removes a document, mapping Firestore NotFound onto ErrNotFound.
+func (a *clientDocStore) Delete(ctx context.Context, coll, id string) error {
+	_, err := a.document(coll, id).Delete(ctx)
+	if err != nil && status.Code(err) == codes.NotFound {
+		return ErrNotFound
 	}
-	return newVal, nil
+	return err
 }
