@@ -1031,6 +1031,64 @@ test('inspectRepoBackedMcpCatalog flags package catalog command failures', () =>
   assert.match(probe.summary, /failed/)
 })
 
+test('missing legacy package offers read-only native discovery without executable legacy recovery', () => {
+  const readOnlyManifestCommand = 'node \'/installed/Everything/apps/moussey/bin/mci\' lanes resplit-currency-api --repo-path \'/repo\''
+  const probe = inspectRepoBackedMcpCatalog({
+    artifact: {
+      checkedAt: '2026-10-14T18:38:00.000Z',
+      error: 'package.json not found at /retired/firstbite-local-ci',
+      packageMissing: true,
+      readOnlyManifestCommand,
+    },
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: ['resplit_currency_api_unit'],
+  })
+  assert.equal(probe.status, 'red')
+  assert.equal(probe.packageMissing, true)
+  assert.equal(probe.readOnlyManifestCommand, readOnlyManifestCommand)
+
+  const readiness = assessCleanProofReadiness({
+    trackedSource: { status: 'green' },
+    repoBackedMcpProbe: probe,
+  })
+  assert.equal(readiness.status, 'red')
+  assert.equal(readiness.commands.cleanWorktree, '')
+  assert.equal(readiness.commands.dirtySupporting, '')
+  assert.match(readiness.nextAction, /read-only/i)
+  assert.match(readiness.nextAction, /does not prove/i)
+})
+
+test('missing legacy package guidance retains loaded-host and release trust holds', () => {
+  const readOnlyManifestCommand = 'node \'/installed/Everything/apps/moussey/bin/mci\' lanes resplit-currency-api --repo-path \'/repo\''
+  const localCi = {
+    repoBackedMcpProbe: {
+      status: 'red', packageMissing: true, readOnlyManifestCommand,
+      summary: 'Legacy package absent',
+    },
+    loadedMcpProbe: { status: 'red', summary: 'No installed legacy MCP catalog' },
+    cleanProofReadiness: { status: 'red', commands: { cleanWorktree: '' } },
+    sourcePromotionBundle: { status: 'green' },
+  }
+  const contracts = buildTrustContracts({
+    git: { dirtyCount: 0, behindOriginMain: 0 }, localCi,
+    telemetry: {}, nurseLog: {}, ledger: {},
+  })
+  assert.equal(contracts.find(row => row.gate === 'Loaded MCP host catalog').status, 'red')
+  const nativeGuidance = contracts.find(row => row.gate === 'Repo-backed MCP package')
+  assert.equal(nativeGuidance.status, 'red')
+  assert.match(nativeGuidance.nextAction, /apps\/moussey\/bin\/mci/)
+  assert.match(nativeGuidance.nextAction, /release owner/i)
+
+  const actions = buildOperatorActionQueue({ contracts, localCi })
+  const host = actions.find(row => row.id === 'loaded-mcp-refresh')
+  assert.equal(host.command, readOnlyManifestCommand)
+  assert.match(host.nextAction, /does not prove/i)
+  assert.doesNotMatch(host.command, /run_lanes|--reuse-existing|lib\/mci\/cli/)
+  const execution = actions.find(row => row.id === 'clean-firstbite-proof')
+  assert.equal(execution.canRunNow, false)
+  assert.equal(execution.command, '')
+})
+
 test('buildMcpCatalogDelta explains loaded host drift against repo-backed catalog', () => {
   const delta = buildMcpCatalogDelta({
     expectedRepo: 'resplit_currency_api',

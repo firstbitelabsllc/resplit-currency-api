@@ -15,6 +15,7 @@ const SOURCE_PROMOTION_PACKET_BASENAME = 'resplit-fx-source-promotion-packet.jso
 const SOURCE_PROMOTION_PACKET_MARKDOWN = 'resplit-fx-source-promotion-packet.md'
 const PROOF_FRESHNESS_LIMIT_MINUTES = 60
 const DEFAULT_FIRSTBITE_LOCAL_CI_DIR = path.join(os.homedir(), 'Development', 'ai-leo', 'skills', 'resplit-watch', 'mcp', 'firstbite-local-ci')
+const DEFAULT_NATIVE_MCI_BIN = path.join(os.homedir(), 'Development', 'skillbox-sources', 'everything-host-runtime', 'apps', 'moussey', 'bin', 'mci')
 const DEFAULT_FIRSTBITE_SOURCE_REF = 'refs/remotes/origin/main'
 const DEFAULT_FIRSTBITE_OPERATING_READOUT_DIR = path.join(os.homedir(), '.agent-ledger', 'firstbite-operating-readout')
 const FIRSTBITE_OPERATING_READOUT_FRESHNESS_LIMIT_MINUTES = 60
@@ -64,6 +65,7 @@ async function main(argv, options = {}) {
     ? null
     : options.repoBackedMcpProbe || captureRepoBackedMcpCatalog({
       generatedAt,
+      repoDir,
       packageDir: options.repoBackedMcpPackageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
     })
   const report = buildReport({
@@ -632,6 +634,10 @@ function assessCleanProofReadiness({
   const dirtyCommand = `cd ${DEFAULT_FIRSTBITE_LOCAL_CI_DIR} && npm run --silent call -- run_lanes '{"mode":"execute","group":"resplit_currency_api_all","worktree":false,"run_id":"verify-resplit-fx-current-manifest-YYYYMMDD"}'`
   const proofUsesPinnedOriginMain = usesPinnedOriginMainSourceRef(proof)
 
+  if (repoBackedMcpProbe?.packageMissing) {
+    reasons.push({ status: 'red', area: 'runner availability', detail: 'The legacy FirstBite MCP package is absent; its execute commands cannot run.' })
+  }
+
   if (trackedSource?.status && trackedSource.status !== 'green') {
     reasons.push({
       status: trackedSource.status,
@@ -743,7 +749,9 @@ function assessCleanProofReadiness({
   const summary = status === 'green'
     ? `Clean worktree proof ${proof.runId} matches the current tracked manifest contract.`
     : `${reasons.length} clean-proof readiness issue(s); current lane count ${lanes.length}.`
-  const nextAction = status === 'green'
+  const nextAction = repoBackedMcpProbe?.packageMissing
+    ? missingPackageNextAction(repoBackedMcpProbe)
+    : status === 'green'
     ? 'Keep this proof fresh before launch claims.'
     : trackedSource?.status === 'green'
       ? 'Rerun the clean worktree command and keep the report attached to this cockpit.'
@@ -767,8 +775,8 @@ function assessCleanProofReadiness({
       source: currentManifestProof.sourceSummary || null,
     } : null,
     commands: {
-      cleanWorktree: cleanCommand,
-      dirtySupporting: dirtyCommand,
+      cleanWorktree: repoBackedMcpProbe?.packageMissing ? '' : cleanCommand,
+      dirtySupporting: repoBackedMcpProbe?.packageMissing ? '' : dirtyCommand,
     },
     nextAction,
   }
@@ -2193,6 +2201,8 @@ function inspectRepoBackedMcpCatalog({
   if (artifact.error) {
     return {
       ...statusBase,
+      packageMissing: artifact.packageMissing === true,
+      readOnlyManifestCommand: artifact.readOnlyManifestCommand || '',
       checkedAt: artifact.checkedAt || null,
       ageMinutes: ageMinutesBetween(artifact.checkedAt || null, generatedAt),
       status: 'red',
@@ -2334,6 +2344,7 @@ function buildMcpCatalogDelta({
 
 function captureRepoBackedMcpCatalog({
   packageDir = DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
+  repoDir = process.cwd(),
   generatedAt = new Date().toISOString(),
 } = {}) {
   if (!fs.existsSync(path.join(packageDir, 'package.json'))) {
@@ -2341,6 +2352,10 @@ function captureRepoBackedMcpCatalog({
       checkedAt: generatedAt,
       source: 'repo-backed package:list_lanes',
       error: `package.json not found at ${packageDir}`,
+      packageMissing: true,
+      readOnlyManifestCommand: fs.existsSync(DEFAULT_NATIVE_MCI_BIN)
+        ? `node ${shellQuotePaths([DEFAULT_NATIVE_MCI_BIN])} lanes resplit-currency-api --repo-path ${shellQuotePaths([repoDir])}`
+        : '',
     }
   }
 
@@ -2369,6 +2384,13 @@ function captureRepoBackedMcpCatalog({
       stderr: error.stderr ? String(error.stderr) : '',
     }
   }
+}
+
+function missingPackageNextAction(probe) {
+  const discovery = probe.readOnlyManifestCommand
+    ? `Read current native lane definitions with ${probe.readOnlyManifestCommand}.`
+    : 'The current native bin/mci discovery command is not available on this host.'
+  return `Legacy MCP package absent. ${discovery} This read-only discovery does not prove execution or loaded-host admission. The existing release owner must qualify the current native admission contract; do not recreate the retired MCP package or adapter.`
 }
 
 function normalizeLoadedMcpPayload(artifact) {
@@ -3181,6 +3203,8 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
       proof: loadedMcp?.path || 'reports/firstbite-loaded-mcp-lanes.json',
       nextAction: loadedMcp?.status === 'green'
         ? 'Use the in-app MCP tool only while its catalog age and lane count remain current.'
+        : repoBackedMcp?.packageMissing
+          ? missingPackageNextAction(repoBackedMcp)
         : 'Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes.',
     },
     {
@@ -3190,6 +3214,8 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
       proof: repoBackedMcp?.packageDir || DEFAULT_FIRSTBITE_LOCAL_CI_DIR,
       nextAction: repoBackedMcp?.status === 'green'
         ? 'Treat this as the control-plane source until loaded host catches up.'
+        : repoBackedMcp?.packageMissing
+          ? missingPackageNextAction(repoBackedMcp)
         : 'Run the repo-backed FirstBite list_lanes call and fix manifest parsing before executing lanes.',
     },
     {
@@ -3229,6 +3255,7 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
   const sourcePromotion = localCi.sourcePromotionBundle || {}
   const cleanProof = localCi.cleanProofReadiness || {}
   const loadedMcp = localCi.loadedMcpProbe || {}
+  const repoBackedMcp = localCi.repoBackedMcpProbe || {}
   const operatingReadout = localCi.operatingReadout || {}
   const grafanaEvidence = telemetry.grafana?.evidence || {}
   const actions = []
@@ -3264,8 +3291,8 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       nextAction: cleanProof.nextAction || byGate.get('Selected local-CI proof')?.nextAction || 'Run clean worktree local CI from the landed contract.',
       evidenceRequired: 'A fresh worktree=true execute report with all resplit_currency_api lanes passing and commands matching .firstbite/local-ci.json.',
       unblocks: 'Selected local-CI proof',
-      canRunNow: sourcePromotion.status === 'green',
-      blockedBy: sourcePromotion.status === 'green' ? '' : 'Source promotion bundle must land first.',
+      canRunNow: sourcePromotion.status === 'green' && !repoBackedMcp.packageMissing,
+      blockedBy: repoBackedMcp.packageMissing ? 'Legacy MCP runner is absent; current native admission remains unproved.' : sourcePromotion.status === 'green' ? '' : 'Source promotion bundle must land first.',
       boundary: 'local-ci',
     }))
   }
@@ -3278,12 +3305,12 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       gate: 'Loaded MCP host catalog',
       status: byGate.get('Loaded MCP host catalog')?.status || loadedMcp.status || 'yellow',
       proof: loadedMcp.path || 'reports/firstbite-loaded-mcp-lanes.json',
-      command: LOADED_MCP_REUSE_COMMAND,
+      command: repoBackedMcp.packageMissing ? repoBackedMcp.readOnlyManifestCommand || '' : LOADED_MCP_REUSE_COMMAND,
       blocker: loadedMcp.summary || byGate.get('Loaded MCP host catalog')?.current || 'Loaded MCP catalog was not captured.',
-      nextAction: 'Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.',
+      nextAction: repoBackedMcp.packageMissing ? missingPackageNextAction(repoBackedMcp) : 'Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.',
       evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2, 15 lanes, and all resplit_currency_api lanes present.',
       unblocks: 'In-app local coding agent trust',
-      canRunNow: true,
+      canRunNow: !repoBackedMcp.packageMissing || Boolean(repoBackedMcp.readOnlyManifestCommand),
       blockedBy: '',
       boundary: 'local-agent-host',
     }))
@@ -3520,7 +3547,7 @@ function buildEvidenceFreshnessLedger({
       ageMinutes: localCi?.repoBackedMcpProbe?.ageMinutes ?? ageMinutesBetween(localCi?.repoBackedMcpProbe?.checkedAt || null, generatedAt),
       trustStatus: localCi?.repoBackedMcpProbe?.status || 'missing',
       summary: localCi?.repoBackedMcpProbe?.summary || 'Repo-backed FirstBite MCP catalog probe was not run.',
-      nextAction: 'cd ~/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- list_lanes {}',
+      nextAction: localCi?.repoBackedMcpProbe?.packageMissing ? missingPackageNextAction(localCi.repoBackedMcpProbe) : 'cd ~/Development/ai-leo/skills/resplit-watch/mcp/firstbite-local-ci && npm run --silent call -- list_lanes {}',
       missingStatus: 'red',
       missingSummary: 'Repo-backed MCP catalog proof is missing.',
     }),
