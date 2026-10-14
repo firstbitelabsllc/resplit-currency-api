@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -53,6 +54,13 @@ const (
 var ErrNotSubmitted = errors.New("azure: analysis not submitted")
 
 var ErrMissingKey = errors.New("azure: " + envKey + " not set")
+
+// Preserve cancellation/error identity without putting credential-bearing
+// operation URLs from net/http's *url.Error into structured diagnostics.
+type pollTransportError struct{ cause error }
+
+func (e pollTransportError) Error() string { return "azure: poll transport failed" }
+func (e pollTransportError) Unwrap() error { return e.cause }
 
 // Config configures a Client. Endpoint and Key are required; the rest default.
 type Config struct {
@@ -139,6 +147,12 @@ type analyzeStatus struct {
 // returns the raw succeeded analyzeResults JSON. The full operation is bounded
 // by ctx; cancel/deadline aborts the poll loop.
 func (c *Client) Scan(ctx context.Context, image []byte) ([]byte, error) {
+	return c.ScanWithAcceptance(ctx, image, nil)
+}
+
+// ScanWithAcceptance records the validated accepted operation before polling.
+// A failed durable write retains the spend fence and never submits again.
+func (c *Client) ScanWithAcceptance(ctx context.Context, image []byte, accepted func(string) error) ([]byte, error) {
 	if len(image) == 0 {
 		return nil, fmt.Errorf("%w: empty image", ErrNotSubmitted)
 	}
@@ -147,7 +161,43 @@ func (c *Client) Scan(ctx context.Context, image []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := c.validateOperation(opLocation); err != nil {
+		return nil, err
+	}
+	if accepted != nil {
+		if err := accepted(opLocation); err != nil {
+			return nil, fmt.Errorf("azure: record accepted operation: %w", err)
+		}
+	}
 	return c.poll(ctx, opLocation)
+}
+
+// Resume only polls an already accepted operation on this configured resource.
+// It cannot upload an image or mint another billable analysis.
+func (c *Client) Resume(ctx context.Context, operation string) ([]byte, error) {
+	if err := c.validateOperation(operation); err != nil {
+		return nil, err
+	}
+	return c.poll(ctx, operation)
+}
+
+func (c *Client) validateOperation(operation string) error {
+	base, baseErr := url.Parse(c.endpoint)
+	op, err := url.Parse(operation)
+	prefix := "/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/"
+	if baseErr != nil || err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") || op.Scheme != base.Scheme || op.Host != base.Host || op.User != nil || op.Fragment != "" || op.RawPath != "" || len(operation) > 2048 || !strings.HasPrefix(op.Path, prefix) {
+		return errors.New("azure: invalid accepted operation reference")
+	}
+	id := strings.TrimPrefix(op.Path, prefix)
+	if id == "" || strings.ContainsAny(id, "/.\\") || op.Query().Get("api-version") != c.apiVersion || len(op.Query()) != 1 || len(op.Query()["api-version"]) != 1 {
+		return errors.New("azure: invalid accepted operation reference")
+	}
+	for _, ch := range id {
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_') {
+			return errors.New("azure: invalid accepted operation reference")
+		}
+	}
+	return nil
 }
 
 // submit POSTs the image and returns the Operation-Location poll URL.
@@ -160,7 +210,11 @@ func (c *Client) submit(ctx context.Context, image []byte) (string, error) {
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set(headerKey, c.key)
 
-	resp, err := c.httpClient.Do(req)
+	// Submission redirects must never forward the key to another resource.
+	// Copy the configured client; preserve its transport and timeout.
+	hc := *c.httpClient
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := hc.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("azure: analyze POST: %w", err)
 	}
@@ -225,9 +279,11 @@ func (c *Client) pollOnce(ctx context.Context, opLocation string) ([]byte, error
 	}
 	req.Header.Set(headerKey, c.key)
 
-	resp, err := c.httpClient.Do(req)
+	hc := *c.httpClient
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("azure: poll GET: %w", err)
+		return nil, pollTransportError{err}
 	}
 	defer drainClose(resp.Body)
 

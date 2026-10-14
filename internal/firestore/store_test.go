@@ -10,6 +10,56 @@ import (
 	"github.com/firstbitelabsllc/resplit-currency-api/internal/attest"
 )
 
+func TestOCROperationPreservesAliasReservationExpiryAndFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	docs := newFakeDocs()
+	store := NewStore(docs)
+	store.now = func() time.Time { return now }
+	canonical := "attest:" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	alias := "attest:" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	for _, id := range []string{canonical, alias} {
+		docs.Set(ctx, collOCRIdempotency, idempotencyID(id, "image"), map[string]any{fieldCreatedAt: now.Add(-time.Minute), fieldExpiresAt: now.Add(time.Hour)})
+	}
+	if err := store.RecordOCROperation(ctx, canonical, "image", "accepted-operation"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{canonical, alias} {
+		fields, _ := docs.Get(ctx, collOCRIdempotency, idempotencyID(id, "image"))
+		if fields[fieldExpiresAt] != now.Add(time.Hour) || fields[fieldCreatedAt] != now.Add(-time.Minute) || fields[fieldOperation] != "accepted-operation" {
+			t.Fatalf("reservation history changed: %v", fields)
+		}
+	}
+	if op, err := store.GetOCROperation(ctx, alias, "image"); err != nil || op != "accepted-operation" {
+		t.Fatalf("alias recovery=%q/%v", op, err)
+	}
+	if err := store.RecordOCROperation(ctx, canonical, "image", "conflicting-operation"); !errors.Is(err, ErrOCRRecovery) {
+		t.Fatalf("conflict=%v", err)
+	}
+	for _, tc := range []struct{ identity, image string }{{"another-identity", "image"}, {canonical, "another-image"}} {
+		if op, err := store.GetOCROperation(ctx, tc.identity, tc.image); err != nil || op != "" {
+			t.Fatalf("foreign recovery=%q/%v", op, err)
+		}
+		if err := store.RecordOCROperation(ctx, tc.identity, tc.image, "accepted-operation"); !errors.Is(err, ErrOCRRecovery) {
+			t.Fatalf("record without reservation=%v", err)
+		}
+	}
+	store.now = func() time.Time { return now.Add(2 * time.Hour) }
+	if _, err := store.GetOCROperation(ctx, canonical, "image"); !errors.Is(err, ErrOCRRecovery) {
+		t.Fatalf("expired recovery=%v", err)
+	}
+	if fresh, err := store.ReserveOCR(ctx, canonical, "image", time.Hour); err != nil || fresh {
+		t.Fatalf("expired record resubmitted=%v/%v", fresh, err)
+	}
+	store.now = func() time.Time { return now }
+	docs.Transact(ctx, func(tx docTransaction) error {
+		return tx.Set(collOCRIdempotency, idempotencyID(alias, "image"), map[string]any{fieldOperation: 42})
+	})
+	if _, err := store.GetOCROperation(ctx, canonical, "image"); !errors.Is(err, ErrOCRRecovery) {
+		t.Fatalf("malformed state=%v", err)
+	}
+}
+
 // fakeDocs is an in-memory docStore: collection -> id -> fields. It mirrors the
 // Firestore semantics FirestoreStore relies on (NotFound, AlreadyExists, atomic
 // increment) so the store round-trips identically against it and the real SDK.

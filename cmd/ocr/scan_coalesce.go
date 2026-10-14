@@ -31,11 +31,9 @@ import (
 // Together they give the property the row demands: one provider execution per
 // image, while a retry still returns a completed receipt.
 //
-// Deliberately NOT persisted across instances. This is a recovery window for a
-// transport blip measured in seconds, not a durable cache; a cross-instance
-// store would add a failure mode (stale/poisoned results surviving a deploy)
-// far worse than the occasional duplicate it would prevent. The existing
-// per-identity spend reservation remains the durable spend guard.
+// This cache is only an optimization. Cross-instance recovery polls the
+// validated accepted operation stored in the caller's durable reservation.
+// Raw receipt results are not persisted here or in Firestore.
 type scanCoalescer struct {
 	mu       sync.Mutex
 	inFlight map[string]*scanCall
@@ -45,14 +43,16 @@ type scanCoalescer struct {
 }
 
 type scanCall struct {
-	wg     sync.WaitGroup
-	result []byte
-	err    error
+	wg        sync.WaitGroup
+	result    []byte
+	err       error
+	operation string
 }
 
 type scanEntry struct {
-	result  []byte
-	expires time.Time
+	result    []byte
+	expires   time.Time
+	operation string
 }
 
 func newScanCoalescer(ttl time.Duration, now func() time.Time) *scanCoalescer {
@@ -80,7 +80,7 @@ func (c *scanCoalescer) Do(ctx context.Context, key string, fn func() ([]byte, e
 
 	// Completed recently: serve it. This is the lost-response retry path.
 	if e, ok := c.done[key]; ok {
-		if c.now().Before(e.expires) {
+		if e.result != nil && c.now().Before(e.expires) {
 			result := e.result
 			c.mu.Unlock()
 			return result, false, nil
@@ -106,8 +106,12 @@ func (c *scanCoalescer) Do(ctx context.Context, key string, fn func() ([]byte, e
 
 	c.mu.Lock()
 	delete(c.inFlight, key)
-	if call.err == nil {
-		c.done[key] = &scanEntry{result: call.result, expires: c.now().Add(c.ttl)}
+	if call.err == nil || call.operation != "" {
+		entry := &scanEntry{expires: c.now().Add(c.ttl), operation: call.operation}
+		if call.err == nil {
+			entry.result = call.result
+		}
+		c.done[key] = entry
 	}
 	// Failed results are not cached. The durable per-identity reservation,
 	// rather than this short-lived cache, decides whether resubmission is safe.
@@ -121,7 +125,7 @@ func (c *scanCoalescer) Do(ctx context.Context, key string, fn func() ([]byte, e
 // same lock as its success entry prevents a capped retry racing into new work.
 func (c *scanCoalescer) Recover(ctx context.Context, key string) ([]byte, bool, error) {
 	c.mu.Lock()
-	if e, ok := c.done[key]; ok && c.now().Before(e.expires) {
+	if e, ok := c.done[key]; ok && e.result != nil && c.now().Before(e.expires) {
 		c.mu.Unlock()
 		return e.result, true, nil
 	}
@@ -167,11 +171,36 @@ func (c *scanCoalescer) Lookup(key string) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
+	if e.result == nil {
+		return nil, false
+	}
 	if !c.now().Before(e.expires) {
 		delete(c.done, key)
 		return nil, false
 	}
 	return e.result, true
+}
+
+// RecordOperation lets same-image joiners retain the accepted reference in
+// their own existing reservations, including after an accepted polling error.
+func (c *scanCoalescer) RecordOperation(key, operation string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if call := c.inFlight[key]; call != nil {
+		call.operation = operation
+	}
+}
+
+func (c *scanCoalescer) Operation(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if call := c.inFlight[key]; call != nil {
+		return call.operation
+	}
+	if entry := c.done[key]; entry != nil && c.now().Before(entry.expires) {
+		return entry.operation
+	}
+	return ""
 }
 
 // scanImageKey is the coalescing key: sha256 over the exact image bytes.

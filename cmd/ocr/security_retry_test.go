@@ -107,7 +107,7 @@ func TestScanAzureFailureReservationBoundary(t *testing.T) {
 						w.WriteHeader(tc.submit)
 						return
 					}
-					w.Header().Set("Operation-Location", "http://"+r.Host+"/poll")
+					w.Header().Set("Operation-Location", "http://"+r.Host+"/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/local-operation?api-version=2024-11-30")
 					w.WriteHeader(202)
 					return
 				}
@@ -187,7 +187,7 @@ func TestScanInitiatorDisconnectKeepsAcceptedWorkForJoinerAndRetry(t *testing.T)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			posts.Add(1)
-			w.Header().Set("Operation-Location", "http://"+r.Host+"/poll")
+			w.Header().Set("Operation-Location", "http://"+r.Host+"/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/local-operation?api-version=2024-11-30")
 			w.WriteHeader(202)
 			return
 		}
@@ -290,7 +290,7 @@ func TestScanSIGTERMDrainsAcceptedWork(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost {
 					posts.Add(1)
-					w.Header().Set("Operation-Location", "http://"+r.Host+"/poll")
+					w.Header().Set("Operation-Location", "http://"+r.Host+"/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/local-operation?api-version=2024-11-30")
 					w.WriteHeader(202)
 					return
 				}

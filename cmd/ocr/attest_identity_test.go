@@ -102,6 +102,10 @@ func (s *unavailableReservationReadStore) HasOCRReservation(context.Context, str
 	return false, errors.New("synthetic reservation read unavailable")
 }
 
+func (s *unavailableReservationReadStore) GetOCROperation(context.Context, string, string) (string, error) {
+	return "", errors.New("synthetic reservation read unavailable")
+}
+
 func (s *unavailableRateStore) AllowRate(context.Context, string, time.Duration, int64) (bool, int64, error) {
 	return false, 0, errors.New("synthetic rate store unavailable")
 }
@@ -252,7 +256,7 @@ func TestScanReservedJoinerRecoversSharedSuccessAfterEarlierDeadline(t *testing.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			posts.Add(1)
-			w.Header().Set("Operation-Location", "http://"+r.Host+"/poll")
+			w.Header().Set("Operation-Location", "http://"+r.Host+"/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/local-operation?api-version=2024-11-30")
 			w.WriteHeader(202)
 			return
 		}
@@ -295,19 +299,18 @@ func TestScanReservedJoinerRecoversSharedSuccessAfterEarlierDeadline(t *testing.
 	if w := <-joiner; w.Code != 502 {
 		t.Errorf("earlier joiner=%d", w.Code)
 	}
-	// A missing shared result cannot release or resubmit the accepted work.
-	if w := request(0, 2, bytes.NewReader(image)); w.Code != 429 {
-		t.Errorf("unfinished retry=%d", w.Code)
-	}
+	// The earlier waiter keeps its own accepted-operation reference. Completing
+	// the provider then discarding the entire coalescer must still recover it.
 	close(finish)
 	if w := <-owner; w.Code != 200 {
 		t.Errorf("owner=%d", w.Code)
 	}
+	srv.coalescer = newScanCoalescer(defaultScanCoalesceTTL, time.Now)
 	if w := request(0, 3, bytes.NewReader(image)); w.Code != 200 {
 		t.Errorf("reserved completed retry=%d", w.Code)
 	}
-	// This outer failed identity has no completed entry, so a durable read
-	// failure must prevent recovery even though the shared image succeeded.
+	// Force a durable lookup; store failures cannot admit polling/recovery.
+	srv.coalescer = newScanCoalescer(defaultScanCoalesceTTL, time.Now)
 	gate.store = &unavailableReservationReadStore{gate.mem}
 	if w := request(0, 4, bytes.NewReader(image)); w.Code != 429 {
 		t.Errorf("reservation-error recovery=%d", w.Code)
@@ -323,18 +326,27 @@ func TestScanReservedJoinerRecoversSharedSuccessAfterEarlierDeadline(t *testing.
 		t.Errorf("store-error recovery=%d", w.Code)
 	}
 	gate.store = nil
-	// Expiration and process/cache loss cannot turn a retained reservation into spend.
+	// Local-cache expiry/loss now recover the retained accepted operation, but
+	// expiry of the reservation itself must still deny recovery and new spend.
 	srv.coalescer.now = func() time.Time { return time.Now().Add(2 * defaultScanCoalesceTTL) }
-	if w := request(0, 7, bytes.NewReader(image)); w.Code != 429 {
+	if w := request(0, 7, bytes.NewReader(image)); w.Code != 200 {
 		t.Errorf("expired result=%d", w.Code)
 	}
 	srv.coalescer = newScanCoalescer(time.Minute, nil)
 	gate.attestedLimit = 100
-	if w := request(0, 8, bytes.NewReader(image)); w.Code != 429 {
+	if w := request(0, 8, bytes.NewReader(image)); w.Code != 200 {
 		t.Errorf("cache-loss retry=%d", w.Code)
 	}
 	if fresh, err := gate.Reserve(ctx, "attest:"+ids[0], image); err != nil || fresh {
 		t.Errorf("reservation released=%v/%v", fresh, err)
+	}
+	srv.coalescer = newScanCoalescer(time.Minute, nil)
+	gate.mem.mu.Lock()
+	gate.mem.seen["attest:"+ids[0]+":"+scanImageKey(image)] = time.Now().Add(-time.Second)
+	gate.mem.mu.Unlock()
+	gate.attestedLimit = 1
+	if w := request(0, 9, bytes.NewReader(image)); w.Code != 429 {
+		t.Errorf("expired reservation recovery=%d", w.Code)
 	}
 	if posts.Load() != 1 {
 		t.Errorf("provider POSTs=%d", posts.Load())

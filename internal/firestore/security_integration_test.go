@@ -180,6 +180,64 @@ func TestEmulatorCertifiedAliasHistoryPreservation(t *testing.T) {
 	}
 }
 
+func TestEmulatorOCROperationReservationContinuity(t *testing.T) {
+	if !strings.HasPrefix(os.Getenv("FIRESTORE_EMULATOR_HOST"), "127.0.0.1:") {
+		t.Fatal("loopback emulator required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	a, err := NewFirestoreStore(ctx, "resplit-security-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewFirestoreStore(ctx, "resplit-security-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.docs.(*clientDocStore).cli.Close()
+	defer b.docs.(*clientDocStore).cli.Close()
+	now := time.Now().Truncate(time.Microsecond)
+	raw := bytes.Repeat([]byte{255}, 32)
+	binary.BigEndian.PutUint64(raw[24:], uint64(now.UnixNano()))
+	flatID := "attest:" + base64.StdEncoding.EncodeToString(raw)
+	nestedID := "attest:legacy/" + strconv.FormatInt(now.UnixNano(), 10) + "/key"
+	for _, identity := range []string{flatID, nestedID} {
+		ref := a.docs.(*clientDocStore).document(collOCRIdempotency, idempotencyID(identity, "accepted-image"))
+		expires := now.Add(time.Hour)
+		if _, err := ref.Set(ctx, map[string]any{fieldCreatedAt: now, fieldExpiresAt: expires}); err != nil {
+			t.Fatal(err)
+		}
+		if op, err := b.GetOCROperation(ctx, identity, "accepted-image"); err != nil || op != "" {
+			t.Fatalf("old reservation invented recovery=%q/%v", op, err)
+		}
+		if fresh, err := b.ReserveOCR(ctx, identity, "accepted-image", time.Hour); err != nil || fresh {
+			t.Fatalf("old reservation rebilled=%v/%v", fresh, err)
+		}
+		if err := a.RecordOCROperation(ctx, identity, "accepted-image", "known-local-accepted-operation"); err != nil {
+			t.Fatal(err)
+		}
+		if op, err := b.GetOCROperation(ctx, identity, "accepted-image"); err != nil || op != "known-local-accepted-operation" {
+			t.Fatalf("separate SDK reference=%q/%v", op, err)
+		}
+		snap, err := ref.Get(ctx)
+		if err != nil || !snap.Data()[fieldExpiresAt].(time.Time).Equal(expires) || !snap.Data()[fieldCreatedAt].(time.Time).Equal(now) {
+			t.Fatalf("existing path/expiry changed: %v", err)
+		}
+		if err := b.RecordOCROperation(ctx, identity, "accepted-image", "conflicting-operation"); !errors.Is(err, ErrOCRRecovery) {
+			t.Fatalf("conflicting operation accepted=%v", err)
+		}
+		b.now = func() time.Time { return expires.Add(time.Second) }
+		if _, err := b.GetOCROperation(ctx, identity, "accepted-image"); !errors.Is(err, ErrOCRRecovery) {
+			t.Fatalf("expired operation recovered=%v", err)
+		}
+		if fresh, err := b.ReserveOCR(ctx, identity, "accepted-image", time.Hour); err != nil || fresh {
+			t.Fatalf("expired document rebilled=%v/%v", fresh, err)
+		}
+		b.now = time.Now
+	}
+	t.Log("separate real SDK clients preserve flat/nested reservations, old no-reference fence, accepted reference, original expiry, conflict refusal and no-resubmit after expiry")
+}
+
 func TestEmulatorSecurityPersistence(t *testing.T) {
 	if !strings.HasPrefix(os.Getenv("FIRESTORE_EMULATOR_HOST"), "127.0.0.1:") {
 		t.Fatal("explicit loopback emulator required; never production")
