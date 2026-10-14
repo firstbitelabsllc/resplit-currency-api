@@ -301,7 +301,6 @@ function writeArtifacts({
     archiveEarliestDate: archiveManifest.earliestDate,
     archiveLatestDate: archiveManifest.latestDate,
     archiveGapCount: archiveManifest.gapCount,
-    // Slim cross-source summary for downstream diagnostics.
     sources: reconciliation ? reconciliation.sources.map((source) => source.source) : ['er-api'],
     crossSource: reconciliation
       ? {
@@ -433,7 +432,6 @@ async function fetchHistoricalSnapshot(date) {
         return toLowerSorted(data.eur)
       }
     } catch (_) {
-      // Keep trying next candidate URL.
     }
   }
 
