@@ -472,6 +472,21 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if !recovered {
+			operation, lookupErr := s.spendGate.Operation(r.Context(), identity, imageKey)
+			if lookupErr != nil {
+				log.Error("ocr spend gate failed closed", slog.Any("error", lookupErr), slog.String("reason", "idempotency_error"))
+			} else if operation != "" {
+				if provider, ok := s.provider.(recoverableOCRProvider); ok {
+					result, _, err = s.coalescer.Do(r.Context(), identityImageKey, func() ([]byte, error) {
+						workCtx, cancel := s.scanWorkContext(r.Context(), requestStarted)
+						defer cancel()
+						return provider.Resume(workCtx, operation)
+					})
+					recovered = true // admitted existing work, including a poll error
+				}
+			}
+		}
 	}
 	if !allowed && !recovered {
 		s.recordScan(r.Context(), "rate_limited", attestResult)
@@ -491,11 +506,7 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// reservation; identical images may still share the inner provider execution.
 	if !recovered {
 		result, _, err = s.coalescer.Do(r.Context(), identityImageKey, func() ([]byte, error) {
-			workCtx, cancelWork := context.WithDeadline(context.WithoutCancel(r.Context()), requestStarted.Add(s.workTimeout))
-			// The server cancels stalled work near the end of graceful drain. A
-			// client disconnect cannot cancel the shared accepted Azure operation.
-			stopShutdown := context.AfterFunc(s.workContext, cancelWork)
-			defer stopShutdown()
+			workCtx, cancelWork := s.scanWorkContext(r.Context(), requestStarted)
 			defer cancelWork()
 			fresh, reserveErr := s.spendGate.Reserve(workCtx, identity, image)
 			if reserveErr != nil {
@@ -504,14 +515,48 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 			if !fresh {
 				if !softFail {
 					if cached, ok := s.coalescer.Lookup("image:" + imageKey); ok {
+						if operation := s.coalescer.Operation("image:" + imageKey); operation != "" {
+							if err := s.spendGate.RecordOperation(workCtx, identity, imageKey, operation); err != nil {
+								return nil, fmt.Errorf("%w: %w", errScanReservation, err)
+							}
+						}
 						return cached, nil
+					}
+					operation, err := s.spendGate.Operation(workCtx, identity, imageKey)
+					if err != nil {
+						return nil, fmt.Errorf("%w: %w", errScanReservation, err)
+					}
+					if provider, ok := s.provider.(recoverableOCRProvider); ok && operation != "" {
+						return provider.Resume(workCtx, operation)
 					}
 				}
 				return nil, errScanReservation
 			}
-			result, _, providerErr := s.coalescer.Do(workCtx, "image:"+imageKey, func() ([]byte, error) {
+			result, providerOwner, providerErr := s.coalescer.Do(workCtx, "image:"+imageKey, func() ([]byte, error) {
+				if provider, ok := s.provider.(recoverableOCRProvider); ok && !softFail {
+					return provider.ScanWithAcceptance(workCtx, image, func(operation string) error {
+						if err := s.spendGate.RecordOperation(workCtx, identity, imageKey, operation); err != nil {
+							return fmt.Errorf("%w: %w", errScanReservation, err)
+						}
+						s.coalescer.RecordOperation("image:"+imageKey, operation)
+						return nil
+					})
+				}
 				return s.provider.Scan(workCtx, image)
 			})
+			if !softFail && !providerOwner {
+				if operation := s.coalescer.Operation("image:" + imageKey); operation != "" {
+					// A waiter may reach its earlier deadline while the accepted
+					// image owner keeps polling. Retain that waiter's own reference
+					// with a bounded write, still cancelled by server shutdown.
+					persistCtx, cancelPersist := context.WithTimeout(s.workContext, 5*time.Second)
+					err := s.spendGate.RecordOperation(persistCtx, identity, imageKey, operation)
+					cancelPersist()
+					if err != nil {
+						return nil, fmt.Errorf("%w: %w", errScanReservation, err)
+					}
+				}
+			}
 			if errors.Is(providerErr, azure.ErrNotSubmitted) {
 				// Only the reservation owner releases; a cancelled waiter cannot release
 				// another request's slot. Bound cleanup independently of caller cancellation.
@@ -553,6 +598,20 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		V: envelopeVersion, Mode: "raw", Provider: providerName, ScanID: scanID, Status: "ok",
 		Raw: json.RawMessage(result),
 	})
+}
+
+type recoverableOCRProvider interface {
+	ScanWithAcceptance(context.Context, []byte, func(string) error) ([]byte, error)
+	Resume(context.Context, string) ([]byte, error)
+}
+
+// Admission/upload time remains part of the normal 80-second budget, and
+// graceful shutdown retains its separate absolute cutoff. Client cancellation
+// cannot destroy shared accepted work or its durable recovery reference.
+func (s *server) scanWorkContext(ctx context.Context, started time.Time) (context.Context, context.CancelFunc) {
+	work, cancel := context.WithDeadline(context.WithoutCancel(ctx), started.Add(s.workTimeout))
+	stop := context.AfterFunc(s.workContext, cancel)
+	return work, func() { stop(); cancel() }
 }
 
 func writeEnvelope(w http.ResponseWriter, code int, env scanEnvelope) {

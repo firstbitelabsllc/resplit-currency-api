@@ -40,6 +40,7 @@ const (
 	fieldCreatedAt = "createdAt"
 	fieldExpiresAt = "expiresAt" // Firestore TTL policy field on ocr_idempotency
 	fieldCount     = "count"
+	fieldOperation = "acceptedOperation"
 )
 
 // ErrNotFound is the sentinel a docStore returns when a document is absent. It
@@ -92,6 +93,10 @@ var ErrAlreadyExists = errors.New("firestore: document already exists")
 // ErrConflict is returned by AdvanceInt64IfGreater when the stored value is
 // already greater than or equal to next (lost race or stale assertion).
 var ErrConflict = errors.New("firestore: advance conflict")
+
+// ErrOCRRecovery retains the spend fence when durable recovery state is
+// expired, malformed or inconsistent. It never authorizes another submission.
+var ErrOCRRecovery = errors.New("firestore: ocr recovery state unavailable")
 
 // FirestoreStore implements attest.Store and hosts the idempotency + rate-cap
 // helpers over a docStore.
@@ -258,6 +263,73 @@ func (s *FirestoreStore) HasOCRReservation(ctx context.Context, deviceID, hash s
 		}
 	}
 	return false, nil
+}
+
+// RecordOCROperation attaches the accepted provider reference to existing own
+// reservations atomically. Neither their namespace nor expiry is changed.
+func (s *FirestoreStore) RecordOCROperation(ctx context.Context, deviceID, hash, operation string) error {
+	if operation == "" || len(operation) > 2048 {
+		return ErrOCRRecovery
+	}
+	_, err := s.ocrOperation(ctx, deviceID, hash, operation)
+	return err
+}
+
+// GetOCROperation reads only the authenticated principal's reservation group.
+// Old reservations without an accepted reference remain a no-resubmit fence.
+func (s *FirestoreStore) GetOCROperation(ctx context.Context, deviceID, hash string) (string, error) {
+	return s.ocrOperation(ctx, deviceID, hash, "")
+}
+
+func (s *FirestoreStore) ocrOperation(ctx context.Context, deviceID, hash, record string) (string, error) {
+	var operation string
+	err := s.docs.Transact(ctx, func(tx docTransaction) error {
+		operation = ""
+		ids := identityAliases(deviceID)
+		for i := range ids {
+			ids[i] = idempotencyID(ids[i], hash)
+		}
+		all, err := tx.GetAll(collOCRIdempotency, ids)
+		if err != nil {
+			return err
+		}
+		if len(all) == 0 {
+			if record != "" {
+				return ErrOCRRecovery
+			}
+			return nil
+		}
+		for _, fields := range all {
+			expires, ok := fields[fieldExpiresAt].(time.Time)
+			if !ok || !expires.After(s.now()) {
+				return ErrOCRRecovery
+			}
+			if value, exists := fields[fieldOperation]; exists {
+				op, ok := value.(string)
+				if !ok || op == "" || len(op) > 2048 || (operation != "" && operation != op) {
+					return ErrOCRRecovery
+				}
+				operation = op
+			}
+		}
+		if record == "" {
+			return nil
+		}
+		if operation != "" && operation != record {
+			return ErrOCRRecovery
+		}
+		for id := range all {
+			if err := tx.Set(collOCRIdempotency, id, map[string]any{fieldOperation: record}); err != nil {
+				return err
+			}
+		}
+		operation = record
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("firestore ocr recovery: %w", err)
+	}
+	return operation, nil
 }
 
 // ReleaseOCR removes a prior ReserveOCR claim so a failed provider attempt can

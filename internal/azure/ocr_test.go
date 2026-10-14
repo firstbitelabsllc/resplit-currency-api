@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,70 @@ import (
 	"testing"
 	"time"
 )
+
+func TestAcceptedOperationRecordedBeforePollAndRecoveryOnlyGets(t *testing.T) {
+	var posts, gets atomic.Int64
+	var recorded atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+			w.Header().Set(headerOpLocation, "http://"+r.Host+"/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/recovery?api-version=2024-11-30")
+			w.WriteHeader(202)
+			return
+		}
+		gets.Add(1)
+		if !recorded.Load() {
+			t.Error("poll started before durable acceptance")
+		}
+		w.Write([]byte(cannedSuccess))
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv.URL)
+	var operation string
+	a, err := c.ScanWithAcceptance(context.Background(), []byte("fixture"), func(op string) error {
+		operation = op
+		recorded.Store(true)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := newTestClient(t, srv.URL).Resume(context.Background(), operation)
+	if err != nil || string(a) != string(b) || posts.Load() != 1 || gets.Load() != 2 {
+		t.Fatalf("recovery err=%v POST=%d GET=%d", err, posts.Load(), gets.Load())
+	}
+	_, err = c.ScanWithAcceptance(context.Background(), []byte("second"), func(string) error { return errors.New("synthetic durable write failure") })
+	if err == nil || errors.Is(err, ErrNotSubmitted) || gets.Load() != 2 {
+		t.Fatalf("record failure must retain spend before any poll: %v GET=%d", err, gets.Load())
+	}
+}
+
+func TestResumeRejectsUntrustedReferenceAndRedirectWithoutLeakingKey(t *testing.T) {
+	var leaked atomic.Int64
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked.Add(1)
+	}))
+	defer foreign.Close()
+	var gets atomic.Int64
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets.Add(1)
+		http.Redirect(w, r, foreign.URL, http.StatusTemporaryRedirect)
+	}))
+	defer resource.Close()
+	c := newTestClient(t, resource.URL)
+	valid := resource.URL + "/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op?api-version=2024-11-30"
+	for _, op := range []string{foreign.URL + "/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op?api-version=2024-11-30", resource.URL + "/unrelated?api-version=2024-11-30", valid + "&unexpected=1", valid + "#fragment", strings.Replace(valid, "/op?", "/%2e%2e?", 1)} {
+		if _, err := c.Resume(context.Background(), op); err == nil || strings.Contains(err.Error(), op) {
+			t.Fatalf("untrusted reference accepted or exposed: %v", err)
+		}
+	}
+	if gets.Load() != 0 || leaked.Load() != 0 {
+		t.Fatal("invalid reference reached transport")
+	}
+	if _, err := c.Resume(context.Background(), valid); err == nil || gets.Load() != 1 || leaked.Load() != 0 {
+		t.Fatalf("redirect followed: err=%v GET=%d leaked=%d", err, gets.Load(), leaked.Load())
+	}
+}
 
 const cannedSuccess = `{
   "status": "succeeded",
@@ -40,11 +105,11 @@ func newAzureTestServer(t *testing.T, runningPolls int) (*httptest.Server, *int3
 			http.Error(w, "missing key", http.StatusUnauthorized)
 			return
 		}
-		w.Header().Set(headerOpLocation, srv.URL+"/operations/op-123")
+		w.Header().Set(headerOpLocation, srv.URL+"/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-123?api-version=2024-11-30")
 		w.WriteHeader(http.StatusAccepted)
 	})
 
-	mux.HandleFunc("/operations/op-123", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-123", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(headerKey) == "" {
 			http.Error(w, "missing key", http.StatusUnauthorized)
 			return
@@ -115,10 +180,10 @@ func TestClient_Scan_Failed(t *testing.T) {
 	defer srv.Close()
 
 	mux.HandleFunc("/documentintelligence/documentModels/prebuilt-receipt:analyze", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set(headerOpLocation, srv.URL+"/operations/op-fail")
+		w.Header().Set(headerOpLocation, srv.URL+"/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-fail?api-version=2024-11-30")
 		w.WriteHeader(http.StatusAccepted)
 	})
-	mux.HandleFunc("/operations/op-fail", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/documentintelligence/documentModels/prebuilt-receipt/analyzeResults/op-fail", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"failed","error":{"code":"InvalidImage","message":"bad image"}}`))
 	})
 

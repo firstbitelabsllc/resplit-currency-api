@@ -19,6 +19,8 @@ type ocrSpendStore interface {
 	AllowRate(ctx context.Context, deviceID string, window time.Duration, limit int64) (allowed bool, count int64, err error)
 	ReserveOCR(ctx context.Context, deviceID, hash string, ttl time.Duration) (fresh bool, err error)
 	HasOCRReservation(ctx context.Context, deviceID, hash string) (bool, error)
+	RecordOCROperation(ctx context.Context, deviceID, hash, operation string) error
+	GetOCROperation(ctx context.Context, deviceID, hash string) (string, error)
 	// ReleaseOCR drops a prior ReserveOCR claim so a failed provider attempt can
 	// be retried without waiting out the idempotency TTL. Missing keys are OK.
 	ReleaseOCR(ctx context.Context, deviceID, hash string) error
@@ -84,6 +86,14 @@ func (g *ocrSpendGate) HasReservation(ctx context.Context, identity, imageHash s
 	return g.spendStore().HasOCRReservation(ctx, identity, imageHash)
 }
 
+func (g *ocrSpendGate) RecordOperation(ctx context.Context, identity, imageHash, operation string) error {
+	return g.spendStore().RecordOCROperation(ctx, identity, imageHash, operation)
+}
+
+func (g *ocrSpendGate) Operation(ctx context.Context, identity, imageHash string) (string, error) {
+	return g.spendStore().GetOCROperation(ctx, identity, imageHash)
+}
+
 // Release undoes the caller-owned reservation only after a proven submission
 // rejection. An accepted or ambiguous request may already be billed, even when
 // its polling or response failed, so those reservations must remain.
@@ -110,13 +120,14 @@ type memorySpendStore struct {
 	now   func() time.Time
 	rates map[string]int64
 	seen  map[string]time.Time
+	ops   map[string]string
 }
 
 func newMemorySpendStore(now func() time.Time) *memorySpendStore {
 	if now == nil {
 		now = time.Now
 	}
-	return &memorySpendStore{now: now, rates: make(map[string]int64), seen: make(map[string]time.Time)}
+	return &memorySpendStore{now: now, rates: make(map[string]int64), seen: make(map[string]time.Time), ops: make(map[string]string)}
 }
 
 func (m *memorySpendStore) ReserveOCR(_ context.Context, deviceID, hash string, ttl time.Duration) (bool, error) {
@@ -131,6 +142,7 @@ func (m *memorySpendStore) ReserveOCR(_ context.Context, deviceID, hash string, 
 		ttl = defaultIdempotencyTTL
 	}
 	m.seen[key] = now.Add(ttl)
+	delete(m.ops, key)
 	return true, nil
 }
 
@@ -138,6 +150,7 @@ func (m *memorySpendStore) ReleaseOCR(_ context.Context, deviceID, hash string) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.seen, deviceID+":"+hash)
+	delete(m.ops, deviceID+":"+hash)
 	return nil
 }
 
@@ -146,6 +159,30 @@ func (m *memorySpendStore) HasOCRReservation(_ context.Context, deviceID, hash s
 	defer m.mu.Unlock()
 	expires, ok := m.seen[deviceID+":"+hash]
 	return ok && expires.After(m.now()), nil
+}
+
+func (m *memorySpendStore) RecordOCROperation(_ context.Context, deviceID, hash, operation string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := deviceID + ":" + hash
+	if !m.seen[key].After(m.now()) || operation == "" || (m.ops[key] != "" && m.ops[key] != operation) {
+		return errScanReservation
+	}
+	m.ops[key] = operation
+	return nil
+}
+
+func (m *memorySpendStore) GetOCROperation(_ context.Context, deviceID, hash string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := deviceID + ":" + hash
+	if _, exists := m.seen[key]; !exists {
+		return "", nil
+	}
+	if !m.seen[key].After(m.now()) {
+		return "", errScanReservation
+	}
+	return m.ops[key], nil
 }
 
 func (m *memorySpendStore) AllowRate(_ context.Context, deviceID string, window time.Duration, limit int64) (bool, int64, error) {
