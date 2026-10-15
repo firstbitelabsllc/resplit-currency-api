@@ -240,6 +240,17 @@ async function settleTasks(ctx) {
   await Promise.allSettled(ctx.tasks)
 }
 
+// Advance a mocked setTimeout clock in small steps, yielding to the event loop
+// between steps so a timer armed after Azure settles is created before it can
+// come due. Replaces a multi-second wall-clock wait with the same simulated span.
+async function advanceMockedClock(t, totalMs, stepMs = 100) {
+  for (let elapsed = 0; elapsed < totalMs; elapsed += stepMs) {
+    await new Promise((resolve) => setImmediate(resolve))
+    t.mock.timers.tick(stepMs)
+  }
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
 test('OCR returns the combined result when the LLM wins the Azure grace race', async () => {
   const llm = deferred()
   const calls = stubProviders({ llm })
@@ -343,6 +354,7 @@ test('OCR does not release early when Azure fails, even if the grace timer expir
 for (const route of ['/ocr/dual-scan', '/ocr/analyze']) {
   for (const outcome of ['success', 'failure']) {
     test(`${route} keeps the caller until the delayed zero-grace Astra LLM ${outcome}`, async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] })
       const llm = deferred()
       t.after(() => llm.resolve())
       const azureReady = deferred()
@@ -354,8 +366,9 @@ for (const route of ['/ocr/dual-scan', '/ocr/analyze']) {
       let settled = false
       void pending.then(() => { settled = true })
       await azureReady.promise
-      // Cross the previous production 3-second grace while the useful LLM is pending.
-      await new Promise((resolve) => setTimeout(resolve, 3_200))
+      // Cross the previous production 3-second grace (on a simulated clock) while the useful LLM is pending.
+      await advanceMockedClock(t, 4_000)
+      t.mock.timers.reset()
       assert.equal(settled, false, 'Azure success must not discard the pending LLM result')
       assert.equal(accounting.records.commits.length, 0)
 
