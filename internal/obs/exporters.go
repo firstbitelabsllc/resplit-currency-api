@@ -52,34 +52,6 @@ func NewExporters(span sdktrace.SpanExporter, metric sdkmetric.Exporter) Exporte
 	return staticExporters{span: span, metric: metric}
 }
 
-// GCPExporters builds the live Cloud Trace + Google Managed Prometheus
-// exporters. In Cloud Run, Application Default Credentials and the project id
-// come from the metadata server, so no key material is handled here.
-//
-// TODO(gcp): construct the real exporters once the GCP exporter modules are
-// added to go.mod. The intended wiring is:
-//
-//	import (
-//	    texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
-//	    mexporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric"
-//	)
-//
-//	tExp, err := texporter.New(texporter.WithProjectID(projectID))
-//	if err != nil { return nil, err }
-//	mExp, err := mexporter.New(mexporter.WithProjectID(projectID))
-//	if err != nil { return nil, err }
-//	return NewExporters(tExp, mExp), nil
-//
-// Until those deps land, GCPExporters returns NoopExporters so callers can be
-// written against the real signature today and the binary keeps building. The
-// graceful-degradation contract is preserved: missing credentials never break
-// Setup, they just mean nothing is exported.
-func GCPExporters(_ context.Context, projectID string) (Exporters, error) {
-	_ = projectID // consumed by the real exporters; see TODO(gcp) above.
-	// TODO(gcp): replace with texporter.New / mexporter.New wiring above.
-	return NoopExporters(), nil
-}
-
 // OTLPHTTPExporters builds OTLP/HTTP trace + metric exporters for any
 // OTLP-compatible backend (Grafana Cloud, the OpenTelemetry Collector, etc.).
 //

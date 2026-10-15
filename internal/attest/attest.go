@@ -28,7 +28,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/big"
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
@@ -254,30 +253,6 @@ type coseEC2Key struct {
 	Crv int    `cbor:"-1,keyasint"`
 	X   []byte `cbor:"-2,keyasint"`
 	Y   []byte `cbor:"-3,keyasint"`
-}
-
-// publicKeyFromCOSE converts a COSE EC2 P-256 key (from authData) into an
-// *ecdsa.PublicKey.
-func publicKeyFromCOSE(coseKey []byte) (*ecdsa.PublicKey, error) {
-	var k coseEC2Key
-	if err := cbor.Unmarshal(coseKey, &k); err != nil {
-		return nil, attestErr("COSE", "cose key decode failed: %v", err)
-	}
-	if k.Kty != 2 || k.Crv != 1 {
-		return nil, attestErr("COSE", "not an EC2 P-256 key (kty=%d crv=%d)", k.Kty, k.Crv)
-	}
-	if len(k.X) != 32 || len(k.Y) != 32 {
-		return nil, attestErr("COSE", "bad EC point length (x=%d y=%d)", len(k.X), len(k.Y))
-	}
-	pub := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(k.X),
-		Y:     new(big.Int).SetBytes(k.Y),
-	}
-	if !pub.Curve.IsOnCurve(pub.X, pub.Y) {
-		return nil, attestErr("COSE", "point not on P-256")
-	}
-	return pub, nil
 }
 
 // parseECDSAPublicKey parses a DER SPKI public key into an *ecdsa.PublicKey,

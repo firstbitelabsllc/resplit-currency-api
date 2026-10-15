@@ -9,7 +9,7 @@
 // Go's crypto/x509 + crypto/ecdsa. No third-party X.509 dependency — this file is
 // the proof that the Go standard library replaces the @peculiar/x509 hack
 // cleanly. The shared primitives (parseAuthData, nonceFromCert, decodeBase64,
-// publicKeyFromCOSE, the nonce OID, concat, the Error type) live in attest.go.
+// the nonce OID, concat, the Error type) live in attest.go.
 
 package attest
 
