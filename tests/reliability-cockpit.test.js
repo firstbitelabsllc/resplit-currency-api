@@ -1065,7 +1065,8 @@ test('missing legacy package guidance retains loaded-host and release trust hold
       status: 'red', packageMissing: true, readOnlyManifestCommand,
       summary: 'Legacy package absent',
     },
-    loadedMcpProbe: { status: 'red', summary: 'No installed legacy MCP catalog' },
+    loadedMcpProbe: { status: 'green', freshnessStatus: 'green', summary: 'Captured artifact lists all expected lanes' },
+    mcpCatalogDelta: { status: 'green', nextAction: 'Keep using loaded MCP host only while this delta and freshness remain green.' },
     cleanProofReadiness: { status: 'red', commands: { cleanWorktree: '' } },
     sourcePromotionBundle: { status: 'green' },
   }
@@ -1073,7 +1074,14 @@ test('missing legacy package guidance retains loaded-host and release trust hold
     git: { dirtyCount: 0, behindOriginMain: 0 }, localCi,
     telemetry: {}, nurseLog: {}, ledger: {},
   })
-  assert.equal(contracts.find(row => row.gate === 'Loaded MCP host catalog').status, 'red')
+  const loadedHost = contracts.find(row => row.gate === 'Loaded MCP host catalog')
+  assert.equal(loadedHost.status, 'red')
+  assert.match(loadedHost.nextAction, /Legacy MCP package absent/)
+  const audit = buildLaunchTrustAudit({ contracts, localCi })
+  const loadedAudit = audit.rows.find(row => row.id === 'loaded-agent-mcp')
+  assert.equal(loadedAudit.status, 'red')
+  assert.equal(loadedAudit.claimAllowed, false)
+  assert.match(loadedAudit.nextAction, /Legacy MCP package absent/)
   const nativeGuidance = contracts.find(row => row.gate === 'Repo-backed MCP package')
   assert.equal(nativeGuidance.status, 'red')
   assert.match(nativeGuidance.nextAction, /apps\/moussey\/bin\/mci/)
@@ -1081,12 +1089,21 @@ test('missing legacy package guidance retains loaded-host and release trust hold
 
   const actions = buildOperatorActionQueue({ contracts, localCi })
   const host = actions.find(row => row.id === 'loaded-mcp-refresh')
-  assert.equal(host.command, readOnlyManifestCommand)
+  assert.equal(host.command, '')
+  assert.equal(host.canRunNow, false)
+  assert.match(host.blockedBy, /admission/)
   assert.match(host.nextAction, /does not prove/i)
-  assert.doesNotMatch(host.command, /run_lanes|--reuse-existing|lib\/mci\/cli/)
+  const discovery = actions.find(row => row.id === 'native-lane-discovery')
+  assert.equal(discovery.command, readOnlyManifestCommand)
+  assert.equal(discovery.unblocks, '')
+  assert.notEqual(discovery.gate, 'Loaded MCP host catalog')
   const execution = actions.find(row => row.id === 'clean-firstbite-proof')
   assert.equal(execution.canRunNow, false)
   assert.equal(execution.command, '')
+
+  const ledger = buildEvidenceFreshnessLedger({ repoDir: '/repo', generatedAt: '2026-10-14T18:40:00.000Z', localCi })
+  assert.equal(ledger.rows.find(row => row.id === 'selected-firstbite-execute-proof').nextAction, '')
+  assert.equal(ledger.rows.find(row => row.id === 'loaded-mcp-host-probe').nextAction, '')
 })
 
 test('buildMcpCatalogDelta explains loaded host drift against repo-backed catalog', () => {

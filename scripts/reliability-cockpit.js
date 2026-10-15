@@ -3198,13 +3198,15 @@ function buildTrustContracts({ git, localCi, telemetry, nurseLog, ledger }) {
     },
     {
       gate: 'Loaded MCP host catalog',
-      status: loadedMcp?.status || 'yellow',
+      status: repoBackedMcp?.packageMissing && (loadedMcp?.status || 'yellow') === 'green'
+        ? 'red'
+        : loadedMcp?.status || 'yellow',
       current: loadedMcp?.summary || 'No loaded-host MCP probe artifact was found.',
       proof: loadedMcp?.path || 'reports/firstbite-loaded-mcp-lanes.json',
-      nextAction: loadedMcp?.status === 'green'
-        ? 'Use the in-app MCP tool only while its catalog age and lane count remain current.'
-        : repoBackedMcp?.packageMissing
-          ? missingPackageNextAction(repoBackedMcp)
+      nextAction: repoBackedMcp?.packageMissing
+        ? missingPackageNextAction(repoBackedMcp)
+        : loadedMcp?.status === 'green'
+          ? 'Use the in-app MCP tool only while its catalog age and lane count remain current.'
         : 'Restart or reload Codex/Cursor MCP host, capture a fresh list_lanes artifact, and require all resplit_currency_api lanes.',
     },
     {
@@ -3305,12 +3307,31 @@ function buildOperatorActionQueue({ localCi = {}, telemetry = {}, nurseLog = {},
       gate: 'Loaded MCP host catalog',
       status: byGate.get('Loaded MCP host catalog')?.status || loadedMcp.status || 'yellow',
       proof: loadedMcp.path || 'reports/firstbite-loaded-mcp-lanes.json',
-      command: repoBackedMcp.packageMissing ? repoBackedMcp.readOnlyManifestCommand || '' : LOADED_MCP_REUSE_COMMAND,
+      command: repoBackedMcp.packageMissing ? '' : LOADED_MCP_REUSE_COMMAND,
       blocker: loadedMcp.summary || byGate.get('Loaded MCP host catalog')?.current || 'Loaded MCP catalog was not captured.',
       nextAction: repoBackedMcp.packageMissing ? missingPackageNextAction(repoBackedMcp) : 'Use --reuse-existing only to refresh the previous artifact; true green still requires a Codex/Cursor MCP host restart or reload plus a live list_lanes capture.',
       evidenceRequired: 'Fresh loaded-host list_lanes artifact with repo-manifest-v2, 15 lanes, and all resplit_currency_api lanes present.',
       unblocks: 'In-app local coding agent trust',
-      canRunNow: !repoBackedMcp.packageMissing || Boolean(repoBackedMcp.readOnlyManifestCommand),
+      canRunNow: !repoBackedMcp.packageMissing,
+      blockedBy: repoBackedMcp.packageMissing ? 'Legacy MCP runner is absent; no supported loaded-host admission route is qualified.' : '',
+      boundary: 'local-agent-host',
+    }))
+  }
+
+  if (repoBackedMcp.packageMissing && repoBackedMcp.readOnlyManifestCommand) {
+    actions.push(operatorAction({
+      id: 'native-lane-discovery',
+      priority: 3,
+      owner: 'FirstBite release owner',
+      gate: 'Repo-backed MCP package',
+      status: 'yellow',
+      proof: repoBackedMcp.readOnlyManifestCommand,
+      command: repoBackedMcp.readOnlyManifestCommand,
+      blocker: repoBackedMcp.summary || 'Legacy MCP package absent.',
+      nextAction: 'Diagnostic only: read current native lane definitions. This does not refresh the loaded host or prove execution.',
+      evidenceRequired: 'Read-only native lane listing; does not satisfy the loaded-host list_lanes artifact or any trust gate.',
+      unblocks: '',
+      canRunNow: true,
       blockedBy: '',
       boundary: 'local-agent-host',
     }))
@@ -3520,7 +3541,7 @@ function buildEvidenceFreshnessLedger({
         ? 'red'
         : localCi?.proofFreshness?.status || localCi?.status || 'missing',
       summary: localCi?.proofFreshness?.summary || 'No selected FirstBite execute proof was found.',
-      nextAction: localCi?.cleanProofReadiness?.commands?.cleanWorktree || 'mcp__firstbite_local_ci.run_lanes execute',
+      nextAction: localCi?.repoBackedMcpProbe?.packageMissing ? '' : localCi?.cleanProofReadiness?.commands?.cleanWorktree || 'mcp__firstbite_local_ci.run_lanes execute',
       freshnessStatus: localCi?.proofFreshness?.status,
       freshForMinutes: 6 * 60,
       missingStatus: 'yellow',
@@ -3534,7 +3555,7 @@ function buildEvidenceFreshnessLedger({
       ageMinutes: localCi?.loadedMcpProbe?.ageMinutes ?? ageMinutesBetween(localCi?.loadedMcpProbe?.checkedAt || null, generatedAt),
       trustStatus: localCi?.loadedMcpProbe?.status || 'missing',
       summary: localCi?.loadedMcpProbe?.freshnessSummary || localCi?.loadedMcpProbe?.summary || 'No loaded MCP host probe was found.',
-      nextAction: LOADED_MCP_REUSE_COMMAND,
+      nextAction: localCi?.repoBackedMcpProbe?.packageMissing ? '' : LOADED_MCP_REUSE_COMMAND,
       freshnessStatus: localCi?.loadedMcpProbe?.freshnessStatus,
       missingStatus: 'yellow',
       missingSummary: 'Loaded MCP host probe is missing.',
@@ -3665,7 +3686,9 @@ function buildLaunchTrustAudit({ contracts = [], localCi = {}, telemetry = {}, n
         localCi?.loadedMcpProbe?.summary,
         localCi?.mcpCatalogDelta?.summary,
       ]),
-      nextAction: localCi?.mcpCatalogDelta?.nextAction || byGate.get('Loaded MCP host catalog')?.nextAction || 'Restart/reload the MCP host and capture live list_lanes.',
+      nextAction: localCi?.repoBackedMcpProbe?.packageMissing
+        ? missingPackageNextAction(localCi.repoBackedMcpProbe)
+        : localCi?.mcpCatalogDelta?.nextAction || byGate.get('Loaded MCP host catalog')?.nextAction || 'Restart/reload the MCP host and capture live list_lanes.',
     }),
     trustAuditRow({
       id: 'repo-backed-mcp-source',
