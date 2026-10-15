@@ -1031,6 +1031,81 @@ test('inspectRepoBackedMcpCatalog flags package catalog command failures', () =>
   assert.match(probe.summary, /failed/)
 })
 
+test('missing legacy package offers read-only native discovery without executable legacy recovery', () => {
+  const readOnlyManifestCommand = 'node \'/installed/Everything/apps/moussey/bin/mci\' lanes resplit-currency-api --repo-path \'/repo\''
+  const probe = inspectRepoBackedMcpCatalog({
+    artifact: {
+      checkedAt: '2026-10-14T18:38:00.000Z',
+      error: 'package.json not found at /retired/firstbite-local-ci',
+      packageMissing: true,
+      readOnlyManifestCommand,
+    },
+    expectedRepo: 'resplit_currency_api',
+    expectedLaneIds: ['resplit_currency_api_unit'],
+  })
+  assert.equal(probe.status, 'red')
+  assert.equal(probe.packageMissing, true)
+  assert.equal(probe.readOnlyManifestCommand, readOnlyManifestCommand)
+
+  const readiness = assessCleanProofReadiness({
+    trackedSource: { status: 'green' },
+    repoBackedMcpProbe: probe,
+  })
+  assert.equal(readiness.status, 'red')
+  assert.equal(readiness.commands.cleanWorktree, '')
+  assert.equal(readiness.commands.dirtySupporting, '')
+  assert.match(readiness.nextAction, /read-only/i)
+  assert.match(readiness.nextAction, /does not prove/i)
+})
+
+test('missing legacy package guidance retains loaded-host and release trust holds', () => {
+  const readOnlyManifestCommand = 'node \'/installed/Everything/apps/moussey/bin/mci\' lanes resplit-currency-api --repo-path \'/repo\''
+  const localCi = {
+    repoBackedMcpProbe: {
+      status: 'red', packageMissing: true, readOnlyManifestCommand,
+      summary: 'Legacy package absent',
+    },
+    loadedMcpProbe: { status: 'green', freshnessStatus: 'green', summary: 'Captured artifact lists all expected lanes' },
+    mcpCatalogDelta: { status: 'green', nextAction: 'Keep using loaded MCP host only while this delta and freshness remain green.' },
+    cleanProofReadiness: { status: 'red', commands: { cleanWorktree: '' } },
+    sourcePromotionBundle: { status: 'green' },
+  }
+  const contracts = buildTrustContracts({
+    git: { dirtyCount: 0, behindOriginMain: 0 }, localCi,
+    telemetry: {}, nurseLog: {}, ledger: {},
+  })
+  const loadedHost = contracts.find(row => row.gate === 'Loaded MCP host catalog')
+  assert.equal(loadedHost.status, 'red')
+  assert.match(loadedHost.nextAction, /Legacy MCP package absent/)
+  const audit = buildLaunchTrustAudit({ contracts, localCi })
+  const loadedAudit = audit.rows.find(row => row.id === 'loaded-agent-mcp')
+  assert.equal(loadedAudit.status, 'red')
+  assert.equal(loadedAudit.claimAllowed, false)
+  assert.match(loadedAudit.nextAction, /Legacy MCP package absent/)
+  const nativeGuidance = contracts.find(row => row.gate === 'Repo-backed MCP package')
+  assert.equal(nativeGuidance.status, 'red')
+  assert.match(nativeGuidance.nextAction, /apps\/moussey\/bin\/mci/)
+  assert.match(nativeGuidance.nextAction, /release owner/i)
+
+  const actions = buildOperatorActionQueue({ contracts, localCi })
+  const host = actions.find(row => row.id === 'loaded-mcp-refresh')
+  assert.equal(host.command, '')
+  assert.equal(host.canRunNow, false)
+  assert.match(host.blockedBy, /admission/)
+  assert.match(host.nextAction, /does not prove/i)
+  const discovery = actions.find(row => row.id === 'native-lane-discovery')
+  assert.equal(discovery.command, readOnlyManifestCommand)
+  assert.equal(discovery.unblocks, '')
+  assert.notEqual(discovery.gate, 'Loaded MCP host catalog')
+  const execution = actions.find(row => row.id === 'clean-firstbite-proof')
+  assert.equal(execution.canRunNow, false)
+  assert.equal(execution.command, '')
+
+  const ledger = buildEvidenceFreshnessLedger({ repoDir: '/repo', generatedAt: '2026-10-14T18:40:00.000Z', localCi })
+  assert.equal(ledger.rows.find(row => row.id === 'selected-firstbite-execute-proof').nextAction, '')
+  assert.equal(ledger.rows.find(row => row.id === 'loaded-mcp-host-probe').nextAction, '')
+})
+
 test('buildMcpCatalogDelta explains loaded host drift against repo-backed catalog', () => {
   const delta = buildMcpCatalogDelta({
     expectedRepo: 'resplit_currency_api',
