@@ -79,14 +79,6 @@ func LoggerFrom(ctx context.Context) *slog.Logger {
 	return slog.Default()
 }
 
-// RequestIDFrom returns the request id bound to the context, if any.
-func RequestIDFrom(ctx context.Context) string {
-	if id, ok := ctx.Value(ctxKeyRequestID).(string); ok {
-		return id
-	}
-	return ""
-}
-
 // Middleware composes request-id assignment, trace-aware logging, and panic
 // recovery around an http.Handler. base is the root logger (from NewLogger).
 func Middleware(base *slog.Logger) func(http.Handler) http.Handler {

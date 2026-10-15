@@ -35,7 +35,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -111,15 +110,6 @@ type Telemetry struct {
 	rec            *Recorder
 	tracerProvider *sdktrace.TracerProvider
 	meterProvider  *sdkmetric.MeterProvider
-}
-
-// Recorder returns the underlying golden-signal recorder, or nil if telemetry
-// is disabled. A nil *Recorder is itself safe to call.
-func (t *Telemetry) Recorder() *Recorder {
-	if t == nil {
-		return nil
-	}
-	return t.rec
 }
 
 // RecordHTTPRequest forwards to the recorder; nil-safe on the receiver.
@@ -205,11 +195,11 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 // OTel globals (so otel.Tracer/otel.Meter and propagation work everywhere), and
 // returns a Telemetry handle whose Shutdown the caller must defer.
 //
-// exp supplies the OTLP-to-GCP exporters. Pass NoopExporters() (or a zero
-// Exporters with nil fields) for local dev/tests: the providers are then built
-// with no reader / no span processor and record nothing — no credentials, no
-// network. In Cloud Run, pass GCPExporters(ctx) (see exporters.go) to push
-// traces to Cloud Trace and metrics to Google Managed Prometheus.
+// exp supplies the exporters. Pass NoopExporters() (or a zero Exporters with
+// nil fields) for local dev/tests: the providers are then built with no reader /
+// no span processor and record nothing — no credentials, no network. Pass
+// OTLPHTTPExporters(ctx) (see exporters.go) to push traces and metrics to an
+// OTLP backend.
 //
 // Setup never returns an error for the no-op path; it only errors if a supplied
 // exporter or the resource fails to construct.
@@ -533,11 +523,4 @@ func AbuseReasonFromError(err error) string {
 		}
 	}
 	return "internal"
-}
-
-// FormatUSD is a tiny helper for log lines that want to echo a recorded scan
-// cost; kept here so callers don't re-implement money formatting. It is not on
-// the hot metric path.
-func FormatUSD(usd float64) string {
-	return "$" + strconv.FormatFloat(usd, 'f', 4, 64)
 }
