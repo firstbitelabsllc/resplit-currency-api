@@ -18,11 +18,10 @@ fi
 go mod download
 
 # SessionStart also fires on resume, clear and compact. Skip the install when
-# node_modules is newer than both manifests, so `npm ci` (which deletes
-# node_modules) never wipes a working tree mid-session.
-if [ -f node_modules/.package-lock.json ] \
-  && [ node_modules/.package-lock.json -nt package-lock.json ] \
-  && [ node_modules/.package-lock.json -nt package.json ]; then
+# the installed tree already matches package-lock.json, so `npm ci` (which
+# deletes node_modules) never wipes a working tree mid-session. `npm ls` also
+# fails when a package directory is missing, which a timestamp check cannot see.
+if npm ls --depth=0 >/dev/null 2>&1; then
   exit 0
 fi
 
