@@ -121,7 +121,7 @@ Auth:
 
 Purpose:
 - runs representative `quote` + `history` + `coverage` probes against the retained archive window
-- emits Sentry check-ins/incidents for scheduler-driven health monitoring
+- emits Sentry check-ins/incidents; the Worker also runs it itself daily at 13:00 UTC through its cron trigger (no `CRON_SECRET` needed for that path)
 
 ## Examples
 
@@ -173,7 +173,7 @@ Current coverage:
 - structured Sentry logs for monitoring signals
 - release and environment tagging
 - dependency-free Worker liveness at `/health` for GET/HEAD probes
-- cron monitor check-ins for the daily publish job, plus Worker canary check-ins when `/cron/fx-canary` is invoked by an external scheduler or manual probe
+- cron monitor check-ins for the daily publish job, plus Worker canary check-ins from the built-in `0 13 * * *` (13:00 UTC) cron trigger in `wrangler.jsonc`, or a manual `/cron/fx-canary` probe
 
 This is not identical to `resplit-web` in implementation because this repo is a Node cron publisher, not a browser/server app. It is equivalent in intent: release/environment tagging, error capture, structured logs, and runtime health monitoring.
 
