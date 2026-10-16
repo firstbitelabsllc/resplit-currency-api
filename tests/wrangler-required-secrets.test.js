@@ -83,3 +83,19 @@ test('the optional LLM emergency stop is secret-managed and cannot be reset by s
     /wrangler secret delete LLM_SCAN_KILL_SWITCH --config wrangler\.jsonc --env=""/,
   )
 })
+
+test('canary docs describe the Worker cron trigger declared in wrangler.jsonc', () => {
+  const crons = wrangler.triggers?.crons
+  assert.deepEqual(crons, ['0 13 * * *'], 'canary cron trigger is the 13:00 UTC schedule')
+
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8')
+  const infrastructure = fs.readFileSync(path.join(__dirname, '..', 'INFRASTRUCTURE.md'), 'utf8')
+  for (const [name, text] of [['README.md', readme], ['INFRASTRUCTURE.md', infrastructure], ['RUNBOOK.md', runbook]]) {
+    assert.doesNotMatch(
+      text,
+      /does not schedule the route on its own|invoked by an external scheduler or manual probe/,
+      `${name} must not say the canary lacks a built-in schedule`
+    )
+    assert.match(text, /13:00 UTC/, `${name} must name the Worker cron schedule`)
+  }
+})
