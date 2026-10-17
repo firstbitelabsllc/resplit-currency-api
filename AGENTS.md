@@ -1,16 +1,6 @@
-# Agent Ledger
+# resplit-currency-api
 
-This repo uses `.agent-ledger/activity.jsonl` as a shared activity log for Claude Code, Cursor, and Codex.
+Daily FX rates (static package on Cloudflare Pages and GitHub Pages), a Cloudflare Worker (`worker/src`) serving rate endpoints and OCR routing, and Go services in `cmd/` and `internal/`. See README.md and RUNBOOK.md.
 
-## How It Works
-- **Write**: Automatic on agent Stop hook
-- **Read**: Claude can auto-inject recent entries on SessionStart; Codex should query the ledger manually before substantial work
-- **Schema**: `{"ts":"ISO8601","eid":"evt_1234abcd","agent_id":"codex/abc123","repo":"repo-name","lane":"","skills":[],"event":"stop","stop_reason":"","summary":"2-3 sentences","files":["path"]}`
-
-## Quick Commands
-```bash
-tail -10 .agent-ledger/activity.jsonl
-tail -n 20 .agent-ledger/activity.jsonl | jq -r '"  \(.ts[11:16]) \(.agent_id // ((.agent // "unknown") + "/" + ((.sid // "unknown") | .[0:8]))) — \(.summary // "(no summary)") [\((.files // []) | join(", "))]"'
-jq -r 'select((.files // []) | map(test("path-fragment")) | any) | "\(.ts) [\(.agent_id)] \(.summary)"' .agent-ledger/activity.jsonl
-jq -r 'select(.agent_id | startswith("codex/")) | "\(.ts) \(.summary)"' .agent-ledger/activity.jsonl
-```
+- `npm run check` generates, validates and runs the smoke tests in `tests/`.
+- `.github/workflows/run.yml` publishes twice daily; do not break its script entry points in `scripts/`.
