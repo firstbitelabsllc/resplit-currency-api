@@ -32,6 +32,7 @@ const expectedFxTelemetryEnv = {
   OTEL_SERVICE_NAME: fxTelemetryInput.OTEL_SERVICE_NAME,
   OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
 }
+const expectedFxStateEnv = { SAFE: '1', ...expectedFxTelemetryEnv }
 const expectedFxTelemetrySecrets = {
   OTEL_EXPORTER_OTLP_HEADERS: { name: fxTelemetryInput.OTEL_HEADERS_SECRET, key: 'latest' },
 }
@@ -55,7 +56,7 @@ function makeHarness(mode, scenario) {
       image: `${fxPrefix}${'a'.repeat(64)}`,
       drift: false,
       describeCount: 0,
-      env: {},
+      env: { SAFE: '1' },
       secrets: {},
       events: [],
     }
@@ -199,7 +200,7 @@ for (const scenario of ['contract_fail', 'readback_mismatch']) {
     assert.deepEqual(state.events, ['update-target', 'rollback-image'])
     // Rollback restores the digest only: telemetry is deliberately outside the
     // compared contract, so the applied variables survive the restore.
-    assert.deepEqual(state.env, expectedFxTelemetryEnv)
+    assert.deepEqual(state.env, expectedFxStateEnv)
     assert.deepEqual(state.secrets, expectedFxTelemetrySecrets)
   })
 }
@@ -213,7 +214,7 @@ test('FX success applies the telemetry contract and never executes the dormant j
   assert.equal(state.image, `${fxPrefix}${'b'.repeat(64)}`)
   assert.equal(state.drift, false)
   assert.deepEqual(state.events, ['update-target'])
-  assert.deepEqual(state.env, expectedFxTelemetryEnv)
+  assert.deepEqual(state.env, expectedFxStateEnv)
   assert.deepEqual(state.secrets, expectedFxTelemetrySecrets)
 })
 
@@ -226,7 +227,7 @@ test('FX accepts the exact linux/amd64 child of a reviewed OCI index', (t) => {
   assert.equal(state.image, `${fxPrefix}${'c'.repeat(64)}`)
   assert.equal(state.drift, false)
   assert.deepEqual(state.events, ['update-target'])
-  assert.deepEqual(state.env, expectedFxTelemetryEnv)
+  assert.deepEqual(state.env, expectedFxStateEnv)
   assert.deepEqual(state.secrets, expectedFxTelemetrySecrets)
 })
 
@@ -250,7 +251,7 @@ test('FX rejects an ambiguous OCI index before mutating the dormant job', (t) =>
   assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
   assert.equal(state.drift, false)
   assert.deepEqual(state.events, [])
-  assert.deepEqual(state.env, {})
+  assert.deepEqual(state.env, { SAFE: '1' })
   assert.deepEqual(state.secrets, {})
 })
 
@@ -263,7 +264,7 @@ test('FX rejects a parseable manifest delivered by a failed registry transport',
   assert.equal(state.image, `${fxPrefix}${'a'.repeat(64)}`)
   assert.equal(state.drift, false)
   assert.deepEqual(state.events, [])
-  assert.deepEqual(state.env, {})
+  assert.deepEqual(state.env, { SAFE: '1' })
   assert.deepEqual(state.secrets, {})
 })
 
@@ -351,7 +352,7 @@ if (state.mode === 'fx') {
     }
     // Cloud Run keeps every previously applied env var and secret binding on the
     // job; --update-env-vars/--update-secrets only add or overwrite entries.
-    const env = [{ name: 'SAFE', value: '1' }]
+    const env = []
     for (const [name, value] of Object.entries(state.env)) {
       env.push({ name, value })
     }
@@ -384,6 +385,11 @@ if (state.mode === 'fx') {
   }
   if (args[0] === 'run' && args[1] === 'jobs' && args[2] === 'update') {
     const image = arg('--image=').slice('--image='.length)
+    const destructive = args.find(value => /^--(set-env-vars|remove-env-vars|clear-env-vars|set-secrets|remove-secrets|clear-secrets)(=|$)/.test(value))
+    if (destructive) {
+      console.error('fake gcloud rejects destructive env flag: ' + destructive)
+      process.exit(64)
+    }
     const flagPairs = (prefix) => {
       const raw = arg(prefix)
       if (!raw) return []

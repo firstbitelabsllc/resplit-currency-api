@@ -134,7 +134,9 @@ func PublishLatest(ctx context.Context, sources []Source, w ObjectWriter, cfg Pu
 	// snapshots, else quorum can never be reached. This is the gate that turns a
 	// single-source day into a no-publish day instead of a wrong-rate day.
 	if len(snaps) < cfg.MinAgree {
-		return PublishResult{Sources: fetched}, fmt.Errorf("%w: %d usable sources, need %d",
+		// Only fresh survivors count as available: a stale snapshot would have
+		// been rejected by the freshness gate had coverage passed.
+		return PublishResult{Sources: snapshotSources(freshSnapshots(snaps, cfg.now(), cfg.maxRateAge()))}, fmt.Errorf("%w: %d usable sources, need %d",
 			ErrCoverageGate, len(snaps), cfg.MinAgree)
 	}
 
@@ -282,16 +284,18 @@ func fetchAll(ctx context.Context, sources []Source) []SourceSnapshot {
 // A blank/unparseable date counts as fresh (provenance unknown, not provably
 // stale) so a date-less provider can still anchor a publish.
 func anyFresh(snaps []SourceSnapshot, now time.Time, maxAge time.Duration) bool {
+	return len(freshSnapshots(snaps, now, maxAge)) > 0
+}
+
+// freshSnapshots returns the snapshots anyFresh would accept.
+func freshSnapshots(snaps []SourceSnapshot, now time.Time, maxAge time.Duration) []SourceSnapshot {
+	var out []SourceSnapshot
 	for _, snap := range snaps {
-		d, ok := parseSnapshotDate(snap.Date)
-		if !ok {
-			return true
-		}
-		if now.Sub(d) <= maxAge {
-			return true
+		if d, ok := parseSnapshotDate(snap.Date); !ok || now.Sub(d) <= maxAge {
+			out = append(out, snap)
 		}
 	}
-	return false
+	return out
 }
 
 // parseSnapshotDate parses a snapshot Date as an ISO-8601 date (or RFC3339),

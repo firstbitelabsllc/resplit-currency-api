@@ -209,6 +209,15 @@ func TestPublishLatest_ReportsFetchedSourcesWhenGatesFail(t *testing.T) {
 			want: []string{"frankfurter"},
 		},
 		{
+			name: "coverage gate drops a stale survivor",
+			sources: []Source{
+				fakeSource{err: errors.New("upstream 503")},
+				fakeSource{snap: eurBaseSnap("frankfurter", "2026-01-01", 1.0853, 0.8548, 168.30)},
+			},
+			cfg:  PublishConfig{MinAgree: 2, MaxRateAge: 96 * time.Hour, Now: fixedNow(today)},
+			want: nil,
+		},
+		{
 			// The freshness gate excludes every snapshot, so no provider is
 			// contributing: naming them here would report a stale-data outage as
 			// two healthy sources.
