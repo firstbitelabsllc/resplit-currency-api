@@ -219,17 +219,17 @@ jobs:
       # presence, so a red `tests-workers/` or `tests/` suite shipped on the 00:00/03:00 UTC
       # cron. The 60+ existing suites only ran if a human remembered.
       #
-      # Deliberately `test:ci` (node --test + vitest) and NOT `npm run check`: check also runs
+      # Deliberately `npm test` and NOT `npm run check`: check also runs
       # `generate`, which WRITES the snapshot package this workflow has already built and
       # committed upstream of here. Re-generating mid-run could alter the very artifact being
       # deployed, so the gate verifies without mutating.
       #
       # Shares the deploy step's condition so it costs nothing on runs that ship no Worker,
       # and a failure here stops the job before `wrangler deploy` executes.
-      - name: Gate the FX Worker release on its test suites
+      - name: Gate the FX Worker release on the smoke tests
         id: worker_release_test_gate
         if: ${{ (steps.commit_snapshot_archive.outputs.stale_run != 'true' || steps.commit_snapshot_archive.outputs.continue_stale_deploy == 'true') && steps.worker_release_needed.outputs.worker_release_required == 'true' }}
-        run: npm run test:ci
+        run: npm test
 
       - name: Report FX Worker test-gate failure to Sentry
         if: ${{ failure() && steps.worker_release_test_gate.outcome == 'failure' }}
