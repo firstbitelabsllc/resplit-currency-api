@@ -1,1 +1,0 @@
-{"hooks":{"stop":[{"command":"~/Development/ai/hooks/ledger-append.sh","async":true}]}}
