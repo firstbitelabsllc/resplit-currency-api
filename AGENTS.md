@@ -1,6 +1,10 @@
-# resplit-currency-api
+# Resplit currency source moved
 
-Daily FX rates (static package on Cloudflare Pages and GitHub Pages), a Cloudflare Worker (`worker/src`) serving rate endpoints and OCR routing, and Go services in `cmd/` and `internal/`. See README.md and RUNBOOK.md.
+Develop Resplit in https://github.com/firstbitelabsllc/resplit-ios under
+`services/currency/`. Follow the monorepo's `AGENTS.md` and the currency
+package's instructions.
 
-- `npm run check` generates, validates and runs the smoke tests in `tests/`.
-- `.github/workflows/run.yml` publishes twice daily; do not break its script entry points in `scripts/`.
+This repository retains history and the public `gh-pages` fallback used by
+existing clients. Do not delete that branch or change its published URLs.
+The daily publisher now runs from the monorepo; keep this repository's old
+scheduled publisher disabled. Move worthwhile open changes into the monorepo.
