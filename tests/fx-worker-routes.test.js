@@ -863,8 +863,11 @@ test('worker cron route returns canary report for authorized requests', async ()
 // the 180-day window, every quote still resolving exactly. That single hole made
 // all three pairs report 2 mismatches each and the cron had been red daily for
 // weeks. Coverage holes must stay visible without paging.
-test('a historical archive hole is reported but does not fail the canary', async () => {
+test('a historical archive hole is reported but does not fail the canary', async t => {
   const { handleRequest } = await import('../worker/src/index.mjs')
+  // Freeze Date so the fixture and the route's default anchors share one clock,
+  // even if the test straddles UTC midnight.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
   const now = new Date()
   const today = now.toISOString().slice(0, 10)
   const anchorDates = [0, 7, 30, 180].map(days => {
