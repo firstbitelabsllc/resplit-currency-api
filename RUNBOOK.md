@@ -584,7 +584,7 @@ Optional Worker canary secret:
 gh secret set CRON_SECRET --repo firstbitelabsllc/resplit-currency-api --body "LONG_RANDOM_SECRET"
 ```
 
-Note: this repo exposes `/cron/fx-canary` and reports Sentry canary check-ins when that route is called, but it does not schedule the route on its own. Wire an external scheduler before treating the Worker canary as live recurring coverage.
+Note: the Worker schedules its own canary through the `0 13 * * *` (13:00 UTC) cron trigger in `wrangler.jsonc`; that path skips `CRON_SECRET`, which only guards the HTTP `/cron/fx-canary` route. The Sentry monitor `resplit-currency-api-fx-canary` expects that 13:00 UTC check-in, so a missed check-in means the Worker trigger did not run, not that an external scheduler is missing.
 
 Current monitor + signal model:
 - Cron monitor slug: `resplit-currency-api-daily-publish`
